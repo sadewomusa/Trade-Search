@@ -1,91 +1,97 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 
-const FREIGHT_RATES = { light: 3, medium: 4, heavy: 6 };
+// ══════════ CONSTANTS ══════════
+const DEFAULT_FX = { AEDUSD: 0.2723, IDRUSD: 0.0000613, IDRAED: 0.0000613/0.2723, AEDIDR: 0.2723/0.0000613 };
+const DEFAULT_FREIGHT = {
+  air: { rate_per_kg: 4, min_kg: 100, transit: { port_port: "3-5 days", port_door: "5-7 days", door_door: "7-10 days" }},
+  ocean: { rate_20ft: 800, rate_40ft: 1400, rate_per_cbm: 45, transit: { port_port: "14-18 days", port_door: "18-25 days", door_door: "21-30 days" }},
+  source: "default", updated: null
+};
 const CUSTOMS_DUTY = 0.05;
 const LAST_MILE_AED = 20;
-const AED_TO_USD = 0.2723;
-const IDR_TO_USD = 0.0000613;
 const MIN_MARGIN = 0.40;
 const WEIGHT_KG = { light: 0.3, medium: 1.0, heavy: 3.0 };
-const WEIGHT_CLASSES = {
-  electronics: "medium", kitchen: "medium", beauty: "light", fashion: "light",
-  home: "heavy", toys: "medium", sports: "medium", baby: "medium", office: "light", other: "medium",
-};
 const STATUS_COLORS = {
-  Candidate: { bg: "#1a3a2a", text: "#4ade80", border: "#2d5a3d" },
-  Investigated: { bg: "#1a2a3a", text: "#60a5fa", border: "#2d4a6d" },
+  Candidate: { bg: "#0D2E1A", text: "#2EAA5A", border: "#1A5C32" },
+  Investigated: { bg: "#0D1F15", text: "#5BAD6E", border: "#1A4A2D" },
   Rejected: { bg: "#3a1a1a", text: "#f87171", border: "#5a2d2d" },
-  Active: { bg: "#3a3a1a", text: "#facc15", border: "#5a5a2d" },
+  Active: { bg: "#2A2210", text: "#D4A843", border: "#4A3D18" },
 };
 
-function calcMargin(uaePriceAED, indoPriceIDR, weightClass) {
-  const uaeUSD = uaePriceAED * AED_TO_USD;
-  const indoUSD = indoPriceIDR * IDR_TO_USD;
-  const wkg = WEIGHT_KG[weightClass] || 1.0;
-  const freight = (FREIGHT_RATES[weightClass] || 4) * wkg;
-  const cif = indoUSD + freight;
-  const duty = cif * CUSTOMS_DUTY;
-  const lastMile = LAST_MILE_AED * AED_TO_USD;
-  const totalCost = indoUSD + freight + duty + lastMile;
-  const margin = uaeUSD > 0 ? ((uaeUSD - totalCost) / uaeUSD) * 100 : 0;
-  return { uaeUSD, indoUSD, freight, duty, lastMile, totalCost, margin };
-}
-
-function marginColor(m) { return m >= 40 ? "#4ade80" : m >= 20 ? "#facc15" : "#f87171"; }
+function marginColor(m) { return m >= 40 ? "#2EAA5A" : m >= 20 ? "#D4A843" : "#f87171"; }
+function fmtIDR(n) { return n ? "IDR " + Math.round(n).toLocaleString() : "—"; }
+function fmtAED(n) { return n ? "AED " + n.toFixed(2) : "—"; }
+function fmtUSD(n) { return n ? "$" + n.toFixed(2) : "—"; }
 
 function parseCSV(text) {
-  const lines = text.trim().split("\n");
-  if (lines.length < 2) return [];
+  const lines = text.trim().split("\n"); if (lines.length < 2) return [];
   const headers = lines[0].split(",").map(h => h.trim().replace(/^"|"$/g, ""));
   return lines.slice(1).map(line => {
-    const vals = []; let current = ""; let inQuotes = false;
-    for (const ch of line) {
-      if (ch === '"') inQuotes = !inQuotes;
-      else if (ch === "," && !inQuotes) { vals.push(current.trim()); current = ""; }
-      else current += ch;
-    }
-    vals.push(current.trim());
-    const obj = {};
-    headers.forEach((h, i) => (obj[h] = vals[i] || ""));
-    return obj;
+    const vals = []; let cur = ""; let inQ = false;
+    for (const ch of line) { if (ch === '"') inQ = !inQ; else if (ch === "," && !inQ) { vals.push(cur.trim()); cur = ""; } else cur += ch; }
+    vals.push(cur.trim()); const obj = {}; headers.forEach((h, i) => (obj[h] = vals[i] || "")); return obj;
   });
 }
 
-function guessCategory(name) {
-  const n = name.toLowerCase();
-  if (/phone|charger|cable|headphone|earphone|speaker|power bank|usb|bluetooth|smart watch/i.test(n)) return "electronics";
-  if (/pan|pot|kitchen|cook|bake|knife|cutting|blender|mixer|spatula|plate/i.test(n)) return "kitchen";
-  if (/cream|serum|lotion|shampoo|perfume|makeup|lipstick|mascara|skincare|sunscreen/i.test(n)) return "beauty";
-  if (/shirt|dress|shoe|bag|wallet|belt|hat|socks|jacket|hoodie/i.test(n)) return "fashion";
-  if (/pillow|curtain|lamp|rug|mat|towel|organizer|storage|shelf|decor/i.test(n)) return "home";
-  if (/toy|game|puzzle|doll|lego|figure/i.test(n)) return "toys";
-  if (/ball|fitness|gym|yoga|exercise|water bottle/i.test(n)) return "sports";
-  if (/baby|diaper|pacifier|stroller|bottle feed/i.test(n)) return "baby";
-  if (/pen|notebook|stapler|tape|folder|desk/i.test(n)) return "office";
+function guessCategory(n) {
+  const l = n.toLowerCase();
+  if (/phone|charger|cable|headphone|speaker|power bank|usb|bluetooth|watch/i.test(l)) return "electronics";
+  if (/pan|pot|kitchen|cook|bake|knife|blender|mixer|plate/i.test(l)) return "kitchen";
+  if (/cream|serum|lotion|shampoo|perfume|makeup|lipstick|skincare/i.test(l)) return "beauty";
+  if (/shirt|dress|shoe|bag|wallet|belt|hat|socks|jacket/i.test(l)) return "fashion";
+  if (/pillow|curtain|lamp|rug|mat|towel|organizer|shelf/i.test(l)) return "home";
+  if (/toy|game|puzzle|doll|lego|figure/i.test(l)) return "toys";
+  if (/ball|fitness|gym|yoga|exercise|bottle/i.test(l)) return "sports";
+  if (/baby|diaper|pacifier|stroller/i.test(l)) return "baby";
+  if (/pen|notebook|stapler|tape|folder|desk/i.test(l)) return "office";
   return "other";
 }
 
-const Badge = ({ text, color = "#4ade80", bg = "#1a3a2a" }) => (
-  <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: "3px", fontSize: "10px", fontFamily: "monospace", background: bg, color, border: `1px solid ${color}33`, letterSpacing: "0.5px" }}>{text}</span>
+const Badge = ({ text, color = "#2EAA5A", bg = "#0D2E1A" }) => (
+  <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: "3px", fontSize: "10px", fontFamily: "monospace", background: bg, color, border: `1px solid ${color}33` }}>{text}</span>
 );
+const Spinner = () => <div style={{ width: "14px", height: "14px", border: "2px solid #C9A84C", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite", display: "inline-block" }} />;
 
-const Spinner = () => (
-  <div style={{ width: "14px", height: "14px", border: "2px solid #e8d5b5", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite", display: "inline-block" }} />
-);
-
+// ══════════ MAIN APP ══════════
 export default function ArbitragePlatform() {
+  // Auth
+  const [unlocked, setUnlocked] = useState(false);
+  const [pinInput, setPinInput] = useState("");
+  const [pinError, setPinError] = useState("");
+  const [attempts, setAttempts] = useState(0);
+  const [lockedOut, setLockedOut] = useState(false);
+  // Theme
+  const [dark, setDark] = useState(() => { try { return localStorage.getItem("arb-theme") !== "light"; } catch(e) { return true; } });
+  const toggleTheme = () => { const n = !dark; setDark(n); localStorage.setItem("arb-theme", n ? "dark" : "light"); };
+  // Core
   const [mode, setMode] = useState("auto");
   const [apiKey, setApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
   const [apiKeyStatus, setApiKeyStatus] = useState("");
   const [history, setHistory] = useState([]);
+  // FX rates
+  const [fx, setFx] = useState(DEFAULT_FX);
+  const [fxUpdated, setFxUpdated] = useState(null);
+  // Freight rates
+  const [freight, setFreight] = useState(DEFAULT_FREIGHT);
+  const [freightLoading, setFreightLoading] = useState(false);
+  // Auto lookup
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [stage, setStage] = useState("");
-  const [uaeProduct, setUaeProduct] = useState(null);
+  const [progress, setProgress] = useState(0); // 0-100
+  const [dryRunData, setDryRunData] = useState(null);
+  const [uaeSimilar, setUaeSimilar] = useState(null);
   const [indoResults, setIndoResults] = useState(null);
   const [marginData, setMarginData] = useState(null);
   const [autoError, setAutoError] = useState("");
+  const [editableQueries, setEditableQueries] = useState([]);
+  const [newQueryInput, setNewQueryInput] = useState("");
+  const [cooldown, setCooldown] = useState(0);
+  const [activeSection, setActiveSection] = useState(0); // 0-3 toggle
+  const [qty, setQty] = useState(1);
+  const [qtyMode, setQtyMode] = useState("unit"); // unit|custom|container
+  // Bulk
   const [bulkTab, setBulkTab] = useState(0);
   const [uaeProducts, setUaeProducts] = useState([]);
   const [normalized, setNormalized] = useState([]);
@@ -98,562 +104,830 @@ export default function ArbitragePlatform() {
   const fileRef = useRef(null);
   const indoFileRef = useRef(null);
 
-  useEffect(() => {
-    try {
-      const k = localStorage.getItem("arb-api-key"); if (k) { setApiKey(k); setApiKeyStatus("loaded"); }
-      const h = localStorage.getItem("arb-auto-history"); if (h) setHistory(JSON.parse(h));
-      const db = localStorage.getItem("arb-database"); if (db) setDatabase(JSON.parse(db));
-      const uae = localStorage.getItem("arb-uae-products"); if (uae) setUaeProducts(JSON.parse(uae));
-      const norm = localStorage.getItem("arb-normalized"); if (norm) setNormalized(JSON.parse(norm));
-    } catch (e) {}
-  }, []);
+  // Theme colors
+  const c = dark ? {
+    bg:"#0a0a0a",surface:"#0C0F0C",surface2:"#0E120E",input:"#1a1a1a",
+    border:"#222",border2:"#333",text:"#d4d4d4",dim:"#888",dimmer:"#555",dimmest:"#444",
+    gold:"#C9A84C",green:"#2EAA5A",red:"#f87171",darkGold:"#D4A843",
+    cardBg:"#080808",btnText:"#0f0f0f",sectionBg:"#0D1F15",
+  } : {
+    bg:"#F5F2EB",surface:"#FFFFFF",surface2:"#F0EDE4",input:"#FFFFFF",
+    border:"#D4CFC4",border2:"#C0BAB0",text:"#1A1A1A",dim:"#555",dimmer:"#888",dimmest:"#AAA",
+    gold:"#8B6914",green:"#1A7A3A",red:"#DC2626",darkGold:"#9A7A1C",
+    cardBg:"#F8F6F0",btnText:"#FFFFFF",sectionBg:"#E8F5EC",
+  };
+
+  // PIN
+  const hashPin = async (pin) => { const e = new TextEncoder().encode(pin + "arb-salt-2026"); const b = await crypto.subtle.digest("SHA-256", e); return Array.from(new Uint8Array(b)).map(x => x.toString(16).padStart(2, "0")).join(""); };
+  const [correctHash, setCorrectHash] = useState("");
+  useEffect(() => { hashPin(String.fromCharCode(55,54,54,57,49,49)).then(h => setCorrectHash(h)); }, []);
+  const handleUnlock = async () => { if (lockedOut) return; const h = await hashPin(pinInput); if (h === correctHash) { setUnlocked(true); setPinError(""); setPinInput(""); } else { const n = attempts + 1; setAttempts(n); setPinInput(""); if (n >= 3) setLockedOut(true); else setPinError("Wrong PIN (" + (3-n) + " left)"); }};
+
+  // Load data after unlock
+  useEffect(() => { if (!unlocked) return; try { const k=localStorage.getItem("arb-api-key");if(k){setApiKey(k);setApiKeyStatus("loaded")} const h=localStorage.getItem("arb-auto-history");if(h)setHistory(JSON.parse(h)); const db=localStorage.getItem("arb-database");if(db)setDatabase(JSON.parse(db)); const f=localStorage.getItem("arb-freight");if(f){const fd=JSON.parse(f);setFreight(fd);} } catch(e){} }, [unlocked]);
   useEffect(() => { if (history.length > 0) localStorage.setItem("arb-auto-history", JSON.stringify(history)); }, [history]);
   useEffect(() => { if (database.length > 0) localStorage.setItem("arb-database", JSON.stringify(database)); }, [database]);
 
+  // Auto-save API key
   const saveApiKey = () => { localStorage.setItem("arb-api-key", apiKey); setApiKeyStatus("saved"); setTimeout(() => setApiKeyStatus(""), 2000); };
+  useEffect(() => { if (!apiKey || apiKey.length < 10) return; const t = setTimeout(() => { localStorage.setItem("arb-api-key", apiKey); setApiKeyStatus("saved"); setTimeout(() => setApiKeyStatus(""), 1500); }, 1000); return () => clearTimeout(t); }, [apiKey]);
 
-  // ─── API CALL WITH RETRY ───
   const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  useEffect(() => { if (cooldown <= 0) return; const t = setInterval(() => setCooldown(x => x <= 1 ? 0 : x - 1), 1000); return () => clearInterval(t); }, [cooldown]);
 
-  const callClaude = async (prompt, model = "claude-haiku-4-5-20251001", useSearch = false, retries = 2) => {
+  // ══════════ FX RATES (free, daily) ══════════
+  useEffect(() => {
+    if (!unlocked) return;
+    const fetchFx = async () => {
+      const cached = localStorage.getItem("arb-fx");
+      if (cached) { const d = JSON.parse(cached); if (Date.now() - d.ts < 86400000) { setFx(d.rates); setFxUpdated(new Date(d.ts)); return; } }
+      try {
+        const r = await fetch("https://api.frankfurter.app/latest?from=USD&to=AED,IDR");
+        const d = await r.json();
+        const aedusd = 1 / d.rates.AED; const idrusd = 1 / d.rates.IDR;
+        const rates = { AEDUSD: aedusd, IDRUSD: idrusd, IDRAED: idrusd / aedusd, AEDIDR: aedusd / idrusd };
+        setFx(rates); setFxUpdated(new Date());
+        localStorage.setItem("arb-fx", JSON.stringify({ rates, ts: Date.now() }));
+      } catch(e) { console.log("FX fetch failed, using defaults"); }
+    };
+    fetchFx();
+  }, [unlocked]);
+
+  // ══════════ CLAUDE API ══════════
+  const callClaude = async (prompt, model, useSearch = false, retries = 2) => {
     const body = { model, max_tokens: 2000, messages: [{ role: "user", content: prompt }] };
     if (useSearch) body.tools = [{ type: "web_search_20250305", name: "web_search" }];
-
+    const delay = useSearch ? 15000 : 8000;
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
         const r = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
+          method: "POST", headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
           body: JSON.stringify(body),
         });
-
         if (r.status === 429) {
-          if (attempt < retries) {
-            const waitTime = (attempt + 1) * 15000; // 15s, 30s
-            setStage(prev => prev + ` (rate limited, retrying in ${waitTime/1000}s...)`);
-            await wait(waitTime);
-            continue;
-          }
-          throw new Error("Rate limited. Please wait 1 minute and try again.");
+          let detail = ""; try { const e = await r.json(); detail = e.error?.message || ""; } catch(e) {}
+          if (attempt < retries) { setStage(s => s.replace(/ \(retry.*/, "") + ` (retry in ${Math.round((attempt+1)*delay/1000)}s...)`); await wait((attempt+1)*delay); continue; }
+          throw new Error("Rate limited. " + (detail.includes("acceleration") ? "Wait 2 min between lookups." : "Wait 30s and retry.") + " No cost charged.");
         }
-        if (!r.ok) throw new Error("API error: " + r.status);
+        if (!r.ok) { let d=""; try{const e=await r.json();d=e.error?.message||""}catch(e){} throw new Error(`API ${r.status}: ${d||"error"}`); }
         const data = await r.json();
         return data.content?.map(b => b.text || "").filter(Boolean).join("\n") || "";
-      } catch (err) {
-        if (attempt === retries) throw err;
-        await wait((attempt + 1) * 10000);
-      }
+      } catch(err) { if (attempt === retries) throw err; await wait((attempt+1)*10000); }
     }
   };
 
   const parseJSON = (text) => {
-    const c = text.replace(/```json|```/g, "").trim();
-    const m = c.match(/\{[\s\S]*\}/);
-    return JSON.parse(m ? m[0] : c);
+    let s = text.replace(/```json/g, "").replace(/```/g, "").trim();
+    const matches = []; let depth = 0, start = -1;
+    for (let i = 0; i < s.length; i++) { if (s[i]==='{'){if(depth===0)start=i;depth++} if(s[i]==='}'){depth--;if(depth===0&&start>=0){matches.push(s.substring(start,i+1));start=-1}} }
+    for (const m of matches.sort((a,b) => b.length - a.length)) { try { const p = JSON.parse(m); if (p.product_name||p.results||p.clean_name_en||p.similar) return p; } catch(e){} }
+    try { return JSON.parse(s); } catch(e) {} throw new Error("No valid JSON");
   };
 
-  // ─── AUTO LOOKUP ───
-  const runAutoLookup = async () => {
-    if (!apiKey) { setApiKeyStatus("missing"); return; }
-    const input = url.trim();
-    if (!input) return;
+  // ══════════ PROGRESS TIMER ══════════
+  const runWithProgress = async (fn, estimatedSec) => {
+    setProgress(0);
+    const interval = setInterval(() => { setProgress(p => { const next = p + (100/estimatedSec/4); return next > 95 ? 95 : next; }); }, 250);
+    try { const result = await fn(); setProgress(100); clearInterval(interval); return result; }
+    catch(e) { clearInterval(interval); setProgress(0); throw e; }
+  };
 
-    // Validate URL format
-    if (input.includes("amzn.eu") || input.includes("amzn.to") || input.includes("a.co/")) {
-      setAutoError("Shortened link detected. Please open this link in your browser first, then copy the full URL from the address bar (should start with https://www.amazon.ae/...)");
-      return;
-    }
-
-    setLoading(true); setAutoError(""); setUaeProduct(null); setIndoResults(null); setMarginData(null);
-
+  // ══════════ FETCH FREIGHT RATES ══════════
+  const fetchFreightRates = async () => {
+    if (!apiKey) return;
+    setFreightLoading(true);
     try {
-      // ── STEP 1: Extract product (Sonnet + web search) ──
-      setStage("Step 1/3 — Reading product from URL...");
-      const ex = await callClaude(
-        `You are a product data extraction engine. Use web search to visit this UAE marketplace product page and extract its details.
-
-URL: ${input}
-
-Search the web for this exact product URL. Return ONLY valid JSON (no markdown, no backticks, no explanation before or after):
-{
-  "product_name": "full product name as listed on the page",
-  "price_aed": numeric price in AED (just the number, no currency symbol),
-  "brand": "brand name if visible, otherwise empty string",
-  "rating": star rating as number or 0,
-  "reviews": number of reviews or 0,
-  "source": "Amazon.ae" or "Noon" based on the URL
-}
-
-JSON only:`,
-        "claude-sonnet-4-20250514", true
-      );
-
-      let uae;
-      try { uae = parseJSON(ex); } catch(e) { throw new Error("Could not read product page. Make sure the URL is a full product link (https://www.amazon.ae/..../dp/B0XXXXX)"); }
-      if (!uae.product_name || !uae.price_aed) throw new Error("Product details incomplete. Try a different product link.");
-      setUaeProduct(uae);
-
-      // ── Pause 8 seconds to avoid rate limit ──
-      setStage("Step 1/3 — Product found ✓ Preparing translation...");
-      await wait(8000);
-
-      // ── STEP 2: Translate & normalize (Haiku, no search needed — fast & cheap) ──
-      setStage("Step 2/3 — Translating to Bahasa Indonesia...");
-      const nm = await callClaude(
-        `You are a product translation and normalization engine for cross-border Indonesia-UAE trade.
-
-Given this product from a UAE marketplace, you must:
-1. Clean the product name (remove brand names and marketing fluff)
-2. Translate it accurately to Bahasa Indonesia as it would appear on Tokopedia or Shopee Indonesia
-3. Generate multiple search queries in BAHASA INDONESIA that a buyer in Indonesia would type
-
-Product name: "${uae.product_name}"
-Price: AED ${uae.price_aed}
-Brand: "${uae.brand || ""}"
+      const result = await callClaude(
+`Search for current freight shipping rates from Indonesia (Jakarta/Surabaya) to UAE (Jebel Ali/Dubai) for both air and ocean freight in 2025-2026.
 
 Return ONLY valid JSON:
 {
-  "clean_name_en": "short clean English product description",
-  "clean_name_id": "nama produk dalam Bahasa Indonesia",
-  "category": "one of: electronics, kitchen, beauty, fashion, home, toys, sports, baby, office, other",
-  "weight_class": "one of: light, medium, heavy",
-  "key_specs": "size, material, weight, or other key specs as short string",
-  "search_queries_id": ["query bahasa 1", "query bahasa 2", "query bahasa 3"],
-  "search_queries_en": ["english query 1", "english query 2"]
+  "air": { "rate_per_kg": number in USD, "min_kg": minimum kg, "transit": { "port_port": "X-Y days", "port_door": "X-Y days", "door_door": "X-Y days" }},
+  "ocean": { "rate_20ft": USD for 20ft container, "rate_40ft": USD for 40ft container, "rate_per_cbm": USD per CBM, "transit": { "port_port": "X-Y days", "port_door": "X-Y days", "door_door": "X-Y days" }},
+  "source": "where you found these rates",
+  "notes": "any relevant notes about current market conditions"
 }
+JSON only:`, "claude-sonnet-4-20250514", true);
+      const data = parseJSON(result);
+      const fr = { ...data, updated: Date.now(), source: "live" };
+      setFreight(fr);
+      localStorage.setItem("arb-freight", JSON.stringify(fr));
+    } catch(e) { console.log("Freight fetch failed:", e); }
+    setFreightLoading(false);
+  };
 
-IMPORTANT: search_queries_id MUST be in Bahasa Indonesia. These will be used to search Tokopedia and Shopee Indonesia. Think about what an Indonesian buyer would actually type. For example:
-- Baby socks → "kaos kaki bayi"
-- Non-stick frying pan → "wajan anti lengket"  
-- Phone charger → "charger hp fast charging"
-- Moisturizing cream → "krim pelembab wajah"
+  // ══════════ QUICK CHECK (2 Haiku calls: search + format) ══════════
+  const runDryRun = async () => {
+    if (!apiKey) { setApiKeyStatus("missing"); return; }
+    const input = url.trim(); if (!input) return;
+    if (input.includes("amzn.eu") || input.includes("amzn.to") || input.includes("a.co/")) { setAutoError("Shortened link. Open in browser first, copy full URL."); return; }
+    setLoading(true); setAutoError(""); setDryRunData(null); setUaeSimilar(null); setIndoResults(null); setMarginData(null); setEditableQueries([]); setNewQueryInput(""); setActiveSection(0);
+
+    // Extract ASIN or product ID from URL
+    const asinMatch = input.match(/\/dp\/([A-Z0-9]{10})/i) || input.match(/\/([A-Z0-9]{10})(?:[/?]|$)/i);
+    const asin = asinMatch ? asinMatch[1] : "";
+    const isNoon = input.includes("noon.com");
+    const marketplace = isNoon ? "Noon UAE" : "Amazon.ae";
+
+    try {
+      // Step 1: Search for the product (Haiku + web search)
+      setStage("Searching for product... (~10s)");
+      const rawInfo = await runWithProgress(() => callClaude(
+`I need to find the EXACT product details for this ${marketplace} listing.
+
+URL: ${input}
+${asin ? `ASIN/Product ID: ${asin}` : ""}
+
+Do these searches:
+1. Search: "${asin ? asin + " amazon.ae" : input}"
+2. Search: "${asin ? asin + " price AED" : ""}"
+${isNoon ? `3. Search: the product URL on noon.com` : `3. Search the full product name if you find it`}
+
+I MUST know:
+- The EXACT product name as shown on ${marketplace}
+- The EXACT current price in AED (this is critical — I need the actual number)
+- Brand name
+- Star rating and number of reviews
+- Key specs: size, material, weight, quantity/pack size, color
+
+If you find the product, report ALL details. Include the price in AED — even if approximate, give me a number.`,
+        "claude-haiku-4-5-20251001", true), 12);
+
+      // Step 2: Format + translate (Haiku, no web search)
+      setStage("Translating & formatting... (~5s)");
+      await wait(2000);
+      const formatted = await runWithProgress(() => callClaude(
+`You are a data formatting engine. Convert this product info to JSON.
+
+PRODUCT INFO FROM WEB SEARCH:
+${rawInfo}
+
+ORIGINAL URL: ${input}
+MARKETPLACE: ${marketplace}
+${asin ? `ASIN: ${asin}` : ""}
+
+Output ONLY this JSON (no explanation, no markdown):
+{"product_name":"the exact full product name found","price_aed":NUMBER_IN_AED,"brand":"brand name","rating":NUMBER,"reviews":NUMBER,"source":"${marketplace}","clean_name_en":"short generic English description without brand","clean_name_id":"Bahasa Indonesia translation for Tokopedia","category":"electronics/kitchen/beauty/fashion/home/toys/sports/baby/office/other","weight_class":"light/medium/heavy","key_specs":"specs found","search_queries_id":["bahasa query 1","bahasa query 2","bahasa query 3"],"search_queries_en":["english query 1","english query 2"]}
+
+CRITICAL RULES:
+- price_aed MUST be a number (e.g. 45.00, 89, 129.99). If the search found ANY price, use it. If price was in USD, multiply by 3.67 to get AED.
+- search_queries_id MUST be Bahasa Indonesia: baby socks→"kaos kaki bayi", frying pan→"wajan anti lengket"
+- product_name should be the actual name found, not a generic description
+- If you're unsure about price, estimate based on the product type and ${marketplace} pricing
 
 JSON only:`,
-        "claude-haiku-4-5-20251001", false
-      );
+        "claude-haiku-4-5-20251001", false), 6);
 
-      let norm;
-      try { norm = parseJSON(nm); } catch(e) { throw new Error("Translation failed. Please try again."); }
+      let data;
+      try { data = parseJSON(formatted); } catch(e) {
+        console.log("Step 1 raw:", rawInfo?.substring(0, 500));
+        console.log("Step 2 raw:", formatted?.substring(0, 500));
+        throw new Error("Format failed. Try again — web search sometimes returns incomplete data.");
+      }
+      if (!data.product_name) throw new Error("Product name not found. The product page may not be indexed. Try searching the product name manually on Google first.");
 
-      // Show translation results immediately
-      setIndoResults({ results: [], price_stats: null, normalized: norm });
+      // If price is still 0, try to extract from raw text
+      if (!data.price_aed || data.price_aed === 0) {
+        const priceMatch = rawInfo.match(/AED\s*(\d+(?:\.\d+)?)/i) || rawInfo.match(/(\d+(?:\.\d+)?)\s*AED/i) || rawInfo.match(/price[:\s]+(\d+(?:\.\d+)?)/i);
+        if (priceMatch) data.price_aed = parseFloat(priceMatch[1]);
+      }
 
-      // ── Pause 8 seconds to avoid rate limit ──
-      setStage("Step 2/3 — Translated ✓ Searching Indonesian marketplaces...");
-      await wait(8000);
+      // Add source info
+      data.source = data.source || marketplace;
+      data.url = input;
 
-      // ── STEP 3: Search Tokopedia & Shopee using BAHASA queries (Sonnet + web search) ──
-      const bahasaQueries = norm.search_queries_id || [norm.clean_name_id];
-      const englishQueries = norm.search_queries_en || [norm.clean_name_en];
-
-      setStage("Step 3/3 — Searching Tokopedia & Shopee with: " + bahasaQueries[0] + "...");
-      const sr = await callClaude(
-        `You are a product price researcher for Indonesian e-commerce marketplaces.
-
-I need you to search for this product on Tokopedia.com and Shopee.co.id (Indonesian marketplaces).
-
-PRODUCT TO FIND: "${norm.clean_name_id}" (English: "${norm.clean_name_en}")
-Specs: ${norm.key_specs || "n/a"}
-
-SEARCH INSTRUCTIONS:
-1. First search using these BAHASA INDONESIA queries on Tokopedia and Shopee:
-${bahasaQueries.map((q, i) => `   - "${q}" site:tokopedia.com`).join("\n")}
-${bahasaQueries.map((q, i) => `   - "${q}" site:shopee.co.id`).join("\n")}
-
-2. If Bahasa queries don't return enough results, also try these English queries:
-${englishQueries.map((q, i) => `   - "${q}" tokopedia`).join("\n")}
-
-3. Look for the SAME TYPE of product. Match the specs (size, capacity, material) as closely as possible.
-
-Return ONLY valid JSON with real prices in Indonesian Rupiah (IDR):
-{
-  "results": [
-    {
-      "name": "product name as listed (in Indonesian/English as shown)",
-      "price_idr": price as number in IDR (e.g. 85000, 125000, NOT in USD),
-      "source": "Tokopedia" or "Shopee",
-      "seller": "shop/seller name",
-      "seller_rating": rating or 0,
-      "url": "product URL if found"
-    }
-  ],
-  "price_stats": {
-    "lowest_idr": lowest price found,
-    "highest_idr": highest price found,
-    "median_idr": middle price,
-    "average_idr": average of all prices,
-    "num_results": how many listings found
-  },
-  "search_notes": "brief note on what you found and search quality"
-}
-
-IMPORTANT: All prices must be in IDR (Indonesian Rupiah). Typical IDR prices are in thousands/hundreds of thousands (e.g. 50000, 150000, 300000). If you see prices like 5.00 or 15.00 those are likely USD — convert them to IDR or skip them.
-
-Find at least 5 real product listings. JSON only:`,
-        "claude-sonnet-4-20250514", true
-      );
-
-      let indo;
-      try { indo = parseJSON(sr); } catch(e) { throw new Error("Could not find Indonesian listings. Try a different product — some items are too niche for web search."); }
-      setIndoResults({ ...indo, normalized: norm });
-
-      // ── STEP 4: Calculate margins ──
-      setStage("Calculating margins...");
-      const wc = norm.weight_class || "medium";
-      const stats = indo.price_stats || {};
-      const med = stats.median_idr || stats.average_idr || 0;
-      const low = stats.lowest_idr || med;
-      const high = stats.highest_idr || med;
-
-      if (med === 0) throw new Error("No valid Indonesian prices found. The product may not be available on Tokopedia/Shopee.");
-
-      const mData = {
-        uaeProduct: uae, normalized: norm, indoResults: indo,
-        margins: { median: calcMargin(uae.price_aed, med, wc), best: calcMargin(uae.price_aed, low, wc), worst: calcMargin(uae.price_aed, high, wc) },
-        medianPriceIDR: med, lowestPriceIDR: low, highestPriceIDR: high, weightClass: wc,
-        timestamp: new Date().toISOString(),
-        status: calcMargin(uae.price_aed, med, wc).margin >= 40 ? "Candidate" : calcMargin(uae.price_aed, med, wc).margin >= 20 ? "Investigated" : "Rejected",
-      };
-      setMarginData(mData);
-      setHistory(prev => [mData, ...prev].slice(0, 100));
+      setDryRunData(data);
+      setEditableQueries([...(data.search_queries_id||[data.clean_name_id]),...(data.search_queries_en||[])]);
       setStage("");
-    } catch (err) { setAutoError(err.message); setStage(""); }
+
+      // Warn if price is still 0
+      if (!data.price_aed || data.price_aed === 0) {
+        setAutoError("Product found but price couldn't be detected. You can enter the price manually below.");
+      }
+    } catch(err) { setAutoError(err.message); setStage(""); if(err.message.includes("429")||err.message.includes("Rate")) setCooldown(30); }
     setLoading(false);
   };
 
-  // ─── BULK PIPELINE ───
-  const handleUAEUpload = useCallback((file) => { const reader = new FileReader(); reader.onload = (e) => { const rows = parseCSV(e.target.result); const products = rows.map((r, i) => ({ id: `uae-${Date.now()}-${i}`, name: r["product_name"] || r["name"] || r["title"] || r["Product Name"] || r["Name"] || r["Title"] || Object.values(r)[0] || "", price: parseFloat(r["price"] || r["Price"] || r["selling_price"] || r["current_price"] || Object.values(r)[1] || "0"), currency: "AED", asin: r["asin"] || r["ASIN"] || "", rating: parseFloat(r["rating"] || r["Rating"] || "0"), reviews: parseInt(r["reviews"] || r["review_count"] || "0"), source: r["source"] || (r["asin"] ? "Amazon.ae" : "Noon"), category: guessCategory(r["product_name"] || r["name"] || r["title"] || r["Product Name"] || r["Name"] || r["Title"] || Object.values(r)[0] || ""), })); setUaeProducts(products); localStorage.setItem("arb-uae-products", JSON.stringify(products)); }; reader.readAsText(file); }, []);
-  const handleIndoUpload = useCallback((file) => { const reader = new FileReader(); reader.onload = (e) => { const rows = parseCSV(e.target.result); const results = rows.map((r, i) => ({ id: `indo-${Date.now()}-${i}`, searchQuery: r["search_query"] || r["query"] || r["Search Query"] || "", name: r["product_name"] || r["name"] || r["title"] || r["Product Name"] || r["Name"] || r["Title"] || Object.values(r)[0] || "", price: parseFloat(r["price"] || r["Price"] || r["selling_price"] || "0"), currency: "IDR", seller: r["seller"] || r["shop_name"] || r["Seller"] || "", sellerRating: parseFloat(r["seller_rating"] || r["shop_rating"] || "0"), salesVolume: r["sales_volume"] || r["sold"] || r["total_sold"] || "", source: r["source"] || "Tokopedia", })); setBulkIndoResults(results); }; reader.readAsText(file); }, []);
+  // ══════════ INDO SEARCH (main action) ══════════
+  const runIndoSearch = async () => {
+    if (!dryRunData || !apiKey) return;
+    setLoading(true); setAutoError(""); setIndoResults(null); setMarginData(null);
+    const allQueries = editableQueries.filter(q => q.trim());
+    if (allQueries.length === 0) { setAutoError("Add at least one search query."); setLoading(false); return; }
+    try {
+      // Step 1: Search naturally (Sonnet + web search — no JSON requirement)
+      setStage("Searching Indonesian marketplaces... (~25s)");
+      const rawSearch = await runWithProgress(() => callClaude(
+`Search for "${dryRunData.clean_name_id}" (English: "${dryRunData.clean_name_en}") on Tokopedia and Shopee Indonesia.
 
-  const runNormalization = async () => {
-    if (uaeProducts.length === 0 || !apiKey) return;
-    setNormalizing(true); setNormProgress(0); const results = [];
-    for (let i = 0; i < uaeProducts.length; i++) {
-      const p = uaeProducts[i];
-      try {
-        const result = await callClaude(`Product normalization. Output ONLY valid JSON:\n- "clean_name_en": short generic English name\n- "clean_name_id": Bahasa Indonesia translation (as typed on Tokopedia)\n- "category": [electronics, kitchen, beauty, fashion, home, toys, sports, baby, office, other]\n- "key_specs": specs\n- "search_query_tokopedia": 2-4 word Bahasa Indonesia search query for Tokopedia\n\nProduct: "${p.name}" Price: AED ${p.price}\nJSON only:`, "claude-haiku-4-5-20251001", false);
-        const parsed = parseJSON(result);
-        results.push({ ...p, cleanNameEn: parsed.clean_name_en || p.name, cleanNameId: parsed.clean_name_id || "", detectedCategory: parsed.category || p.category, keySpecs: parsed.key_specs || "", searchQuery: parsed.search_query_tokopedia || "", normalized: true });
-      } catch (err) { results.push({ ...p, cleanNameEn: p.name, cleanNameId: "", detectedCategory: p.category, keySpecs: "", searchQuery: "", normalized: false }); }
-      setNormProgress(((i + 1) / uaeProducts.length) * 100);
-      await wait(500);
-    }
-    setNormalized(results); localStorage.setItem("arb-normalized", JSON.stringify(results)); setNormalizing(false);
+Do these searches:
+${allQueries.slice(0,4).map(q => `- "${q} tokopedia harga"\n- "${q} shopee indonesia"`).join("\n")}
+- "harga ${allQueries[0]} indonesia"
+- "${allQueries[0]} murah tokopedia"
+- "${allQueries[0]} terlaris shopee"
+
+For EVERY product you find, list:
+- Exact product name as shown on the listing
+- Price in IDR (Rupiah)
+- Which marketplace: Tokopedia or Shopee
+- Seller/shop name
+- Number sold (terjual) if shown
+- Product URL if available
+
+Find as many products as possible — aim for 15-25 listings. Search broadly, any product in this category counts. Report everything you find.`,
+        "claude-sonnet-4-20250514", true), 30);
+
+      // Step 2: Format to JSON (Haiku, no web search)
+      setStage("Formatting results... (~5s)");
+      await wait(2000);
+      const formatted = await runWithProgress(() => callClaude(
+`Convert this product search data into ONLY valid JSON. No explanation, no markdown.
+
+SEARCH RESULTS:
+${rawSearch}
+
+Output ONLY this JSON structure:
+{"results":[{"name":"exact product name","price_idr":NUMBER,"source":"Tokopedia" or "Shopee","seller":"shop name","sold":"number sold if mentioned, otherwise empty string","url":"product URL if found, otherwise empty string"}],"price_stats":{"lowest_idr":NUMBER,"highest_idr":NUMBER,"median_idr":NUMBER,"average_idr":NUMBER,"num_results":NUMBER},"search_notes":"brief summary"}
+
+RULES:
+- price_idr must be a NUMBER in Indonesian Rupiah (e.g. 15000, 25000, 199000)
+- "sold" must be actual number like "1rb+ terjual" or "500+ sold". If not mentioned, use ""
+- Include ALL products found — do not skip any
+- source must be exactly "Tokopedia" or "Shopee"
+
+JSON only:`,
+        "claude-haiku-4-5-20251001", false), 8);
+
+      let indo; try { indo = parseJSON(formatted); } catch(e) {
+        console.log("Indo Step 1:", rawSearch?.substring(0,500));
+        console.log("Indo Step 2:", formatted?.substring(0,500));
+        throw new Error("Could not format search results. Try again — sometimes web search returns incomplete data.");
+      }
+      if (!indo.results) indo.results = indo.products || [];
+      if (indo.results.length === 0) throw new Error("No Indonesian listings found. Try broader keywords.");
+      if (!indo.price_stats && indo.results.length > 0) {
+        const p = indo.results.map(r => r.price_idr||r.price||0).filter(x=>x>0).sort((a,b)=>a-b);
+        indo.price_stats = { lowest_idr:p[0],highest_idr:p[p.length-1],median_idr:p[Math.floor(p.length/2)],average_idr:Math.round(p.reduce((s,x)=>s+x,0)/p.length),num_results:p.length };
+      }
+      // Clean up results - filter bad "sold" values, normalize fields
+      indo.results = indo.results.map(r => {
+        let sold = r.sold || r.terjual || "";
+        if (typeof sold === "string" && (sold.toLowerCase().includes("not visible") || sold.toLowerCase().includes("not available") || sold.toLowerCase().includes("n/a") || sold === "0")) sold = "";
+        return { name:r.name||r.product_name||"", price_idr:r.price_idr||r.price||0, source:r.source||r.platform||"Tokopedia", seller:r.seller||r.shop||r.shop_name||"", sold, url:r.url||r.link||"" };
+      });
+      setIndoResults(indo);
+
+      // Calculate margins
+      const wc = dryRunData.weight_class || "medium";
+      const stats = indo.price_stats;
+      const med = stats.median_idr || stats.average_idr || 0;
+      const low = stats.lowest_idr || med;
+      const high = stats.highest_idr || med;
+      if (med === 0) throw new Error("No valid prices found.");
+
+      const calcM = (indoIDR) => {
+        const uaeUSD = dryRunData.price_aed * fx.AEDUSD;
+        const indoUSD = indoIDR * fx.IDRUSD;
+        const wkg = WEIGHT_KG[wc] || 1.0;
+        const fr = (freight.air?.rate_per_kg || 4) * wkg;
+        const duty = (indoUSD + fr) * CUSTOMS_DUTY;
+        const lm = LAST_MILE_AED * fx.AEDUSD;
+        const total = indoUSD + fr + duty + lm;
+        const margin = uaeUSD > 0 ? ((uaeUSD - total) / uaeUSD) * 100 : 0;
+        return { uaeUSD, uaeAED: dryRunData.price_aed, uaeIDR: dryRunData.price_aed / fx.IDRAED,
+          indoUSD, indoAED: indoUSD / fx.AEDUSD, indoIDR,
+          freightUSD: fr, freightAED: fr / fx.AEDUSD, freightIDR: fr / fx.IDRUSD,
+          dutyUSD: duty, dutyAED: duty / fx.AEDUSD, dutyIDR: duty / fx.IDRUSD,
+          lastMileUSD: lm, lastMileAED: LAST_MILE_AED, lastMileIDR: LAST_MILE_AED / fx.IDRAED,
+          totalUSD: total, totalAED: total / fx.AEDUSD, totalIDR: total / fx.IDRUSD, margin };
+      };
+
+      const mData = {
+        uaeProduct: dryRunData, normalized: dryRunData, uaeSimilar, indoResults: indo,
+        margins: { median: calcM(med), best: calcM(low), worst: calcM(high) },
+        medianPriceIDR: med, lowestPriceIDR: low, highestPriceIDR: high, weightClass: wc,
+        timestamp: new Date().toISOString(),
+        status: calcM(med).margin >= 40 ? "Candidate" : calcM(med).margin >= 20 ? "Investigated" : "Rejected",
+      };
+      setMarginData(mData);
+      setHistory(prev => [mData, ...prev].slice(0, 100));
+      setActiveSection(2);
+      setStage("");
+    } catch(err) { setAutoError(err.message); setStage(""); if(err.message.includes("429")||err.message.includes("Rate")) setCooldown(30); }
+    setLoading(false);
   };
 
-  const runMarginCalc = () => {
-    const source = normalized.length > 0 ? normalized : uaeProducts;
-    if (source.length === 0 || bulkIndoResults.length === 0) return;
-    const entries = source.map(uaeP => {
-      const query = uaeP.searchQuery || uaeP.cleanNameId || uaeP.name;
-      const matches = bulkIndoResults.filter(ir => { const sq = ir.searchQuery?.toLowerCase() || ""; const q = query.toLowerCase(); return sq === q || ir.name?.toLowerCase().includes(q.split(" ")[0]?.toLowerCase()); });
-      let indoPrice = 0;
-      if (matches.length > 0) { const prices = matches.map(m => m.price).filter(p => p > 0).sort((a, b) => a - b); indoPrice = prices.length > 0 ? prices[Math.floor(prices.length / 2)] : 0; }
-      const cat = uaeP.detectedCategory || uaeP.category || "other";
-      const wc = WEIGHT_CLASSES[cat] || "medium";
-      const m = calcMargin(uaeP.price, indoPrice, wc);
-      return { id: `db-${uaeP.id}`, nameEn: uaeP.cleanNameEn || uaeP.name, nameId: uaeP.cleanNameId || "", category: cat, uaePriceAED: uaeP.price, indoPriceIDR: indoPrice, weightClass: wc, freightUSD: m.freight, dutyUSD: m.duty, lastMileUSD: m.lastMile, totalCostUSD: m.totalCost, grossMarginPct: m.margin, status: m.margin >= MIN_MARGIN * 100 ? "Candidate" : "Rejected", notes: "", source: uaeP.source || "Amazon.ae" };
+  // ══════════ UAE SIMILAR (optional, separate button) ══════════
+  const runUaeSimilar = async () => {
+    if (!dryRunData || !apiKey) return;
+    setLoading(true); setAutoError(""); setUaeSimilar(null);
+    try {
+      // Step 1: Search naturally
+      setStage("Finding similar UAE products... (~15s)");
+      const rawSearch = await runWithProgress(() => callClaude(
+`Search Amazon.ae and Noon UAE for 8-10 products similar to "${dryRunData.product_name}".
+Category: ${dryRunData.category} | Price range: around AED ${dryRunData.price_aed}
+
+Search for: "${dryRunData.clean_name_en} amazon.ae" and "${dryRunData.clean_name_en} noon uae"
+
+Find the best sellers and most purchased items. List each product with its name, price in AED, which marketplace it's from, and any ratings or best seller indicators you can find.`,
+        "claude-sonnet-4-20250514", true), 18);
+
+      await wait(2000);
+
+      // Step 2: Format to JSON
+      setStage("Formatting results... (~5s)");
+      const formatted = await runWithProgress(() => callClaude(
+`Convert this product search data into ONLY valid JSON. No explanation.
+
+Search results:
+${rawSearch}
+
+Output ONLY this JSON:
+{"similar":[{"name":"product name","price_aed":number,"source":"Amazon.ae or Noon","rating":number_or_0,"sold":"best seller or sold count if mentioned","url":"if found"}],"price_stats":{"lowest_aed":number,"highest_aed":number,"median_aed":number,"average_aed":number,"num_results":number},"search_notes":"summary"}
+
+All prices must be numbers in AED. JSON only:`, "claude-haiku-4-5-20251001", false), 6);
+
+      const uaeData = parseJSON(formatted);
+      if (!uaeData.similar) uaeData.similar = uaeData.results || [];
+      if (!uaeData.price_stats && uaeData.similar.length > 0) {
+        const p = uaeData.similar.map(x => x.price_aed||x.price||0).filter(x=>x>0).sort((a,b)=>a-b);
+        uaeData.price_stats = { lowest_aed:p[0], highest_aed:p[p.length-1], median_aed:p[Math.floor(p.length/2)], average_aed:Math.round(p.reduce((s,x)=>s+x,0)/p.length*100)/100, num_results:p.length };
+      }
+      setUaeSimilar(uaeData);
+      setActiveSection(0);
+      setStage("");
+    } catch(err) { setAutoError(err.message); setStage(""); if(err.message.includes("429")||err.message.includes("Rate")) setCooldown(30); }
+    setLoading(false);
+  };
+
+  // ══════════ EXPORT: Structured CSV for pivot tables ══════════
+  const exportStructuredCSV = () => {
+    if (!history.length) return;
+    const headers = ["Date","Product Name EN","Product Name ID","Brand","Category","Weight Class","Source","UAE Price AED","UAE Price USD","UAE Price IDR","Indo Median IDR","Indo Lowest IDR","Indo Highest IDR","Indo Median USD","Freight USD","Customs USD","Last Mile USD","Total Cost USD","Total Cost AED","Total Cost IDR","Margin Best %","Margin Median %","Margin Worst %","Status"];
+    const rows = history.map(h => {
+      const m = h.margins?.median || {};
+      return [h.timestamp?.slice(0,10)||"",`"${h.uaeProduct?.product_name||""}"`,`"${h.normalized?.clean_name_id||""}"`,`"${h.uaeProduct?.brand||""}"`,h.normalized?.category||"",h.normalized?.weight_class||"",h.uaeProduct?.source||"",
+        h.uaeProduct?.price_aed||0,(m.uaeUSD||0).toFixed(2),(m.uaeIDR||0).toFixed(0),
+        h.medianPriceIDR||0,h.lowestPriceIDR||0,h.highestPriceIDR||0,(m.indoUSD||0).toFixed(2),
+        (m.freightUSD||0).toFixed(2),(m.dutyUSD||0).toFixed(2),(m.lastMileUSD||0).toFixed(2),
+        (m.totalUSD||0).toFixed(2),(m.totalAED||0).toFixed(2),(m.totalIDR||0).toFixed(0),
+        (h.margins?.best?.margin||0).toFixed(1),(h.margins?.median?.margin||0).toFixed(1),(h.margins?.worst?.margin||0).toFixed(1),
+        h.status||""].join(",");
     });
-    setDatabase(entries); setBulkTab(4);
+    const blob = new Blob([[headers.join(","),...rows].join("\n")], {type:"text/csv"});
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+    a.download = `arbitrage-analysis-${new Date().toISOString().slice(0,10)}.csv`; a.click();
   };
 
-  const updateDbStatus = (id, s) => setDatabase(prev => prev.map(p => p.id === id ? { ...p, status: s } : p));
-  const updateDbNotes = (id, n) => setDatabase(prev => prev.map(p => p.id === id ? { ...p, notes: n } : p));
-  const updateHistoryStatus = (i, s) => setHistory(prev => prev.map((item, idx) => idx === i ? { ...item, status: s } : item));
-
-  const exportHistory = () => {
-    if (history.length === 0) return;
-    const h = ["Product","UAE (AED)","Bahasa","Category","Indo Median (IDR)","Margin %","Status","Date"];
-    const r = history.map(x => [`"${x.uaeProduct?.product_name || ""}"`, x.uaeProduct?.price_aed || 0, `"${x.normalized?.clean_name_id || ""}"`, x.normalized?.category || "", x.medianPriceIDR || 0, x.margins?.median?.margin?.toFixed(1) || 0, x.status || "", x.timestamp?.slice(0, 10) || ""].join(","));
-    const blob = new Blob([[h.join(","), ...r].join("\n")], { type: "text/csv" });
-    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `lookups-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+  // ══════════ EXPORT: Current result as PDF (print view) ══════════
+  const exportPDF = () => {
+    if (!marginData) return;
+    const m = marginData.margins.median;
+    const html = `<!DOCTYPE html><html><head><title>Arbitrage Analysis - ${marginData.uaeProduct?.product_name}</title>
+    <style>body{font-family:Arial,sans-serif;padding:40px;max-width:800px;margin:0 auto;color:#1a1a1a}h1{font-size:20px;border-bottom:2px solid #1a7a3a;padding-bottom:8px}h2{font-size:14px;color:#8B6914;margin-top:24px}table{width:100%;border-collapse:collapse;margin:12px 0}td,th{padding:8px 12px;border:1px solid #ddd;text-align:left;font-size:12px}th{background:#f5f2eb;font-weight:700}.green{color:#1a7a3a}.red{color:#dc2626}.gold{color:#8B6914}.big{font-size:28px;font-weight:700;text-align:center;padding:16px}.verdict{padding:12px;text-align:center;border-radius:4px;font-weight:700;margin-top:16px}@media print{body{padding:20px}}</style></head><body>
+    <h1>Cross-Border Arbitrage Analysis</h1>
+    <p><strong>Date:</strong> ${new Date().toLocaleDateString()} | <strong>FX:</strong> 1 AED = ${(1/fx.IDRAED).toFixed(0)} IDR</p>
+    <h2>Product</h2>
+    <table><tr><th>Name</th><td>${marginData.uaeProduct?.product_name}</td></tr>
+    <tr><th>Bahasa</th><td>${marginData.normalized?.clean_name_id}</td></tr>
+    <tr><th>Category</th><td>${marginData.normalized?.category}</td></tr>
+    <tr><th>Source</th><td>${marginData.uaeProduct?.source} | AED ${marginData.uaeProduct?.price_aed}</td></tr></table>
+    <h2>Indonesia Market (Median of ${marginData.indoResults?.price_stats?.num_results||0} listings)</h2>
+    <table><tr><th></th><th>Lowest</th><th>Median</th><th>Highest</th></tr>
+    <tr><th>IDR</th><td>${fmtIDR(marginData.lowestPriceIDR)}</td><td>${fmtIDR(marginData.medianPriceIDR)}</td><td>${fmtIDR(marginData.highestPriceIDR)}</td></tr></table>
+    <h2>Margin Analysis (Per Unit)</h2>
+    <table><tr><th>Item</th><th>USD</th><th>AED</th><th>IDR</th></tr>
+    <tr><th>UAE Sell Price</th><td>${fmtUSD(m.uaeUSD)}</td><td>${fmtAED(m.uaeAED)}</td><td>${fmtIDR(m.uaeIDR)}</td></tr>
+    <tr><th>Indo Source</th><td>${fmtUSD(m.indoUSD)}</td><td>${fmtAED(m.indoAED)}</td><td>${fmtIDR(m.indoIDR)}</td></tr>
+    <tr><th>Air Freight</th><td>${fmtUSD(m.freightUSD)}</td><td>${fmtAED(m.freightAED)}</td><td>${fmtIDR(m.freightIDR)}</td></tr>
+    <tr><th>Customs 5%</th><td>${fmtUSD(m.dutyUSD)}</td><td>${fmtAED(m.dutyAED)}</td><td>${fmtIDR(m.dutyIDR)}</td></tr>
+    <tr><th>Last Mile</th><td>${fmtUSD(m.lastMileUSD)}</td><td>${fmtAED(m.lastMileAED)}</td><td>${fmtIDR(m.lastMileIDR)}</td></tr>
+    <tr style="font-weight:700;background:#fef2f2"><th class="red">Total Cost</th><td class="red">${fmtUSD(m.totalUSD)}</td><td class="red">${fmtAED(m.totalAED)}</td><td class="red">${fmtIDR(m.totalIDR)}</td></tr>
+    <tr style="font-weight:700;background:#e8f5ec"><th class="green">Profit</th><td class="green">${fmtUSD(m.uaeUSD-m.totalUSD)}</td><td class="green">${fmtAED(m.uaeAED-m.totalAED)}</td><td class="green">${fmtIDR(m.uaeIDR-m.totalIDR)}</td></tr></table>
+    <div class="big">${m.margin>=40?'<span class="green">':'<span class="red">'}${m.margin.toFixed(1)}% Gross Margin</span></div>
+    <div class="verdict" style="background:${m.margin>=40?'#e8f5ec;color:#1a7a3a':m.margin>=20?'#fdf8ed;color:#8B6914':'#fef2f2;color:#dc2626'}">${m.margin>=40?"✓ CANDIDATE":m.margin>=20?"○ BORDERLINE":"✗ LOW MARGIN"}</div>
+    <script>window.onload=()=>window.print()</script></body></html>`;
+    const w = window.open("","_blank"); w.document.write(html); w.document.close();
   };
 
-  const exportDatabase = () => {
-    if (database.length === 0) return;
-    const h = ["Name","Bahasa","Category","UAE (AED)","Indo (IDR)","Margin %","Status","Notes"];
-    const r = database.map(p => [`"${p.nameEn}"`,`"${p.nameId}"`,p.category,p.uaePriceAED.toFixed(2),p.indoPriceIDR.toFixed(0),p.grossMarginPct.toFixed(1),p.status,`"${p.notes}"`].join(","));
-    const blob = new Blob([[h.join(","), ...r].join("\n")], { type: "text/csv" });
-    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `pipeline-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
-  };
+  // ══════════ BULK PIPELINE ══════════
+  const handleUAEUpload = useCallback((file) => { const reader = new FileReader(); reader.onload = (e) => { const rows = parseCSV(e.target.result); const products = rows.map((r, i) => ({ id:`uae-${Date.now()}-${i}`, name:r.product_name||r.name||r.title||r["Product Name"]||Object.values(r)[0]||"", price:parseFloat(r.price||r.Price||r.selling_price||Object.values(r)[1]||"0"), source:r.source||(r.asin?"Amazon.ae":"Noon"), category:guessCategory(r.product_name||r.name||r.title||Object.values(r)[0]||"") })); setUaeProducts(products); localStorage.setItem("arb-uae-products", JSON.stringify(products)); }; reader.readAsText(file); }, []);
+  const handleIndoUpload = useCallback((file) => { const reader = new FileReader(); reader.onload = (e) => { const rows = parseCSV(e.target.result); setBulkIndoResults(rows.map((r,i) => ({ id:`indo-${Date.now()}-${i}`, searchQuery:r.search_query||r.query||"", name:r.product_name||r.name||Object.values(r)[0]||"", price:parseFloat(r.price||r.Price||"0"), seller:r.seller||r.shop_name||"", source:r.source||"Tokopedia" }))); }; reader.readAsText(file); }, []);
+  const runNormalization = async () => { if(!uaeProducts.length||!apiKey) return; setNormalizing(true); setNormProgress(0); const res=[]; for(let i=0;i<uaeProducts.length;i++){const p=uaeProducts[i];try{const r=await callClaude(`Normalize. JSON only:\n{"clean_name_en":"","clean_name_id":"","category":"","search_query_tokopedia":""}\nProduct:"${p.name}" AED ${p.price}`,"claude-haiku-4-5-20251001",false);const d=parseJSON(r);res.push({...p,cleanNameEn:d.clean_name_en||p.name,cleanNameId:d.clean_name_id||"",detectedCategory:d.category||p.category,searchQuery:d.search_query_tokopedia||"",normalized:true})}catch(e){res.push({...p,cleanNameEn:p.name,cleanNameId:"",detectedCategory:p.category,searchQuery:"",normalized:false})}setNormProgress(((i+1)/uaeProducts.length)*100);await wait(500)}setNormalized(res);localStorage.setItem("arb-normalized",JSON.stringify(res));setNormalizing(false)};
+  const runMarginCalc = () => { const src=normalized.length>0?normalized:uaeProducts; if(!src.length||!bulkIndoResults.length) return; const entries=src.map(u=>{const q=u.searchQuery||u.cleanNameId||u.name;const m=bulkIndoResults.filter(ir=>{const sq=ir.searchQuery?.toLowerCase()||"";return sq===q.toLowerCase()||ir.name?.toLowerCase().includes(q.toLowerCase().split(" ")[0])});let ip=0;if(m.length){const p=m.map(x=>x.price).filter(x=>x>0).sort((a,b)=>a-b);ip=p[Math.floor(p.length/2)]||0}const wc="medium";const usd=u.price*fx.AEDUSD;const iusd=ip*fx.IDRUSD;const fr=4*1;const duty=(iusd+fr)*0.05;const lm=LAST_MILE_AED*fx.AEDUSD;const total=iusd+fr+duty+lm;const mg=usd>0?((usd-total)/usd)*100:0; return{id:`db-${u.id}`,nameEn:u.cleanNameEn||u.name,nameId:u.cleanNameId||"",category:u.detectedCategory||u.category,uaePriceAED:u.price,indoPriceIDR:ip,grossMarginPct:mg,status:mg>=40?"Candidate":"Rejected",notes:"",source:u.source}});setDatabase(entries);setBulkTab(4)};
 
-  const inputStyle = { width: "100%", padding: "10px 12px", background: "#1a1a1a", border: "1px solid #333", color: "#d4d4d4", fontFamily: "monospace", fontSize: "13px", borderRadius: "3px", outline: "none" };
-  const btnStyle = { padding: "10px 24px", background: "#e8d5b5", color: "#0f0f0f", border: "none", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", fontSize: "12px", fontWeight: 700, letterSpacing: "0.5px", textTransform: "uppercase", borderRadius: "3px" };
-  const btnSec = { ...btnStyle, background: "transparent", color: "#e8d5b5", border: "1px solid #e8d5b5" };
-  const sectionStyle = { padding: "24px", background: "#0f0f0f", border: "1px solid #333", borderTop: "none", minHeight: "420px", borderRadius: "0 0 4px 4px" };
-  const candidates = history.filter(h => (h.margins?.median?.margin || 0) >= 40);
-  const dbCandidates = database.filter(p => p.grossMarginPct >= 40);
+  const updateHistoryStatus = (i,s) => setHistory(prev => prev.map((x,idx) => idx===i?{...x,status:s}:x));
+  const exportHistory = () => { if(!history.length) return; const h=["Product","AED","IDR","Bahasa","Category","Indo Median IDR","Margin %","Status","Date"]; const r=history.map(x=>[`"${x.uaeProduct?.product_name||""}"`,x.uaeProduct?.price_aed||0,Math.round((x.uaeProduct?.price_aed||0)/fx.IDRAED),`"${x.normalized?.clean_name_id||""}"`,x.normalized?.category||"",x.medianPriceIDR||0,x.margins?.median?.margin?.toFixed(1)||0,x.status||"",x.timestamp?.slice(0,10)||""].join(",")); const blob=new Blob([[h.join(","),...r].join("\n")],{type:"text/csv"}); const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`lookups-${new Date().toISOString().slice(0,10)}.csv`;a.click()};
 
-  const dropZone = (isIndo, onDrop, onClick, label) => (
-    <div onDragOver={e => { e.preventDefault(); isIndo ? setIndoDragOver(true) : setDragOver(true); }} onDragLeave={() => isIndo ? setIndoDragOver(false) : setDragOver(false)} onDrop={e => { e.preventDefault(); isIndo ? setIndoDragOver(false) : setDragOver(false); const f = e.dataTransfer.files[0]; if (f) onDrop(f); }} onClick={onClick}
-      style={{ border: `2px dashed ${(isIndo ? indoDragOver : dragOver) ? "#e8d5b5" : "#444"}`, borderRadius: "4px", padding: "40px 24px", textAlign: "center", cursor: "pointer", background: (isIndo ? indoDragOver : dragOver) ? "#1a1a1a" : "transparent" }}>
-      <div style={{ fontSize: "28px", marginBottom: "8px", opacity: 0.3 }}>↑</div>
-      <div style={{ color: "#888", fontSize: "12px", fontFamily: "monospace" }}>{label}</div>
+  // ══════════ STYLES ══════════
+  const inputStyle = { width:"100%",padding:"10px 12px",background:c.input,border:`1px solid ${c.border2}`,color:c.text,fontFamily:"monospace",fontSize:"13px",borderRadius:"3px",outline:"none" };
+  const btnStyle = { padding:"10px 24px",background:c.gold,color:c.btnText,border:"none",cursor:"pointer",fontFamily:"'JetBrains Mono',monospace",fontSize:"12px",fontWeight:700,letterSpacing:"0.5px",textTransform:"uppercase",borderRadius:"3px" };
+  const btnSec = { ...btnStyle,background:"transparent",color:c.gold,border:`1px solid ${c.gold}` };
+  const btnGreen = { ...btnStyle,background:c.green,color:"#fff" };
+  const secStyle = { padding:"24px",background:c.surface,border:`1px solid ${c.border2}`,borderTop:"none",minHeight:"420px",borderRadius:"0 0 4px 4px" };
+  const candidates = history.filter(h => (h.margins?.median?.margin||0) >= 40);
+  const dropZone = (isI,onDrop,onClick,label) => (<div onDragOver={e=>{e.preventDefault();isI?setIndoDragOver(true):setDragOver(true)}} onDragLeave={()=>isI?setIndoDragOver(false):setDragOver(false)} onDrop={e=>{e.preventDefault();isI?setIndoDragOver(false):setDragOver(false);const f=e.dataTransfer.files[0];if(f)onDrop(f)}} onClick={onClick} style={{border:`2px dashed ${(isI?indoDragOver:dragOver)?c.gold:c.border2}`,borderRadius:"4px",padding:"40px 24px",textAlign:"center",cursor:"pointer"}}><div style={{fontSize:"28px",marginBottom:"8px",opacity:0.3}}>↑</div><div style={{color:c.dim,fontSize:"12px",fontFamily:"monospace"}}>{label}</div></div>);
+
+  // Section toggle
+  const SectionToggle = ({ index, title, icon, children, count }) => (
+    <div style={{ marginBottom: "8px", border: `1px solid ${activeSection===index?c.gold+"44":c.border}`, borderRadius: "6px", overflow: "hidden" }}>
+      <button onClick={() => setActiveSection(activeSection===index?-1:index)} style={{ width:"100%",display:"flex",alignItems:"center",gap:"10px",padding:"14px 16px",background:activeSection===index?c.surface2:c.surface,border:"none",cursor:"pointer",textAlign:"left",color:c.text,fontFamily:"'JetBrains Mono',monospace",fontSize:"12px" }}>
+        <span style={{fontSize:"16px"}}>{icon}</span>
+        <span style={{flex:1,fontWeight:600,color:activeSection===index?c.gold:c.text}}>{title}</span>
+        {count!==undefined&&<span style={{color:c.green,fontSize:"10px"}}>{count} items</span>}
+        <span style={{color:c.dimmer,fontSize:"14px"}}>{activeSection===index?"▾":"▸"}</span>
+      </button>
+      {activeSection===index && <div style={{padding:"16px",borderTop:`1px solid ${c.border}`}}>{children}</div>}
     </div>
   );
 
-  return (
-    <div style={{ minHeight: "100vh", background: "#0a0a0a", color: "#d4d4d4", fontFamily: "'JetBrains Mono', 'Fira Code', monospace", padding: "24px" }}>
-      <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Instrument+Serif&display=swap" rel="stylesheet" />
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+  // Price display helper
+  const PriceRow = ({ label, usd, aed, idr }) => (
+    <div style={{display:"grid",gridTemplateColumns:"1.5fr 1fr 1fr 1fr",gap:"6px",fontSize:"11px",padding:"4px 0",borderBottom:`1px solid ${c.border}`}}>
+      <div style={{color:c.dim}}>{label}</div>
+      <div style={{color:c.gold}}>{fmtUSD(usd)}</div>
+      <div>{fmtAED(aed)}</div>
+      <div>{fmtIDR(idr)}</div>
+    </div>
+  );
 
-      <div style={{ marginBottom: "20px", borderBottom: "1px solid #222", paddingBottom: "16px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
-          <div>
-            <h1 style={{ fontFamily: "'Instrument Serif', Georgia, serif", fontSize: "30px", fontWeight: 400, color: "#e8d5b5", margin: 0 }}>Cross-Border Arbitrage</h1>
-            <div style={{ fontSize: "11px", color: "#555", marginTop: "4px", letterSpacing: "2px", textTransform: "uppercase" }}>UAE ← Indonesia · Product Discovery Engine</div>
+  // Qty multiplier
+  const getQty = () => qtyMode === "container" ? Math.floor(24000 / (WEIGHT_KG[dryRunData?.weight_class||"medium"]||1)) : qtyMode === "custom" ? qty : 1;
+
+  // ══════════ RENDER ══════════
+  return (
+    <div style={{minHeight:"100vh",background:c.bg,color:c.text,fontFamily:"'JetBrains Mono','Fira Code',monospace",padding:"24px",transition:"background 0.3s"}}>
+      <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Instrument+Serif&display=swap" rel="stylesheet" />
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+
+      {/* LOCK SCREEN */}
+      {!unlocked ? (
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"80vh",position:"relative"}}>
+          <button onClick={toggleTheme} style={{position:"absolute",top:0,right:0,background:"transparent",border:`1px solid ${c.border2}`,color:c.dim,fontFamily:"monospace",fontSize:"11px",padding:"6px 12px",borderRadius:"4px",cursor:"pointer"}}>{dark?"☀":"🌙"}</button>
+          <div style={{width:"340px",padding:"40px",background:c.surface,border:`1px solid ${c.border}`,borderRadius:"8px",textAlign:"center"}}>
+            <div style={{fontSize:"32px",marginBottom:"16px",opacity:0.3}}>🔒</div>
+            <h2 style={{fontFamily:"'Instrument Serif',serif",fontSize:"24px",fontWeight:400,color:c.gold,marginBottom:"8px"}}>{lockedOut?"Access Denied":"Enter PIN"}</h2>
+            {lockedOut ? <div><p style={{fontSize:"13px",color:c.red}}>Too many wrong attempts.</p><p style={{fontSize:"12px",color:c.dim,marginTop:"8px"}}>Contact admin.</p></div> : (
+              <div>
+                <p style={{fontSize:"12px",color:c.dimmer,marginBottom:"24px"}}>Restricted access</p>
+                <input type="password" value={pinInput} onChange={e=>{setPinInput(e.target.value);setPinError("")}} onKeyDown={e=>e.key==="Enter"&&handleUnlock()} placeholder="Enter PIN" autoFocus style={{width:"100%",padding:"14px",background:c.input,border:`1px solid ${pinError?c.red:c.border2}`,color:c.gold,fontFamily:"monospace",fontSize:"18px",borderRadius:"4px",textAlign:"center",letterSpacing:"8px",outline:"none",marginBottom:"12px"}} />
+                {pinError&&<div style={{fontSize:"12px",color:c.red,marginBottom:"12px"}}>{pinError}</div>}
+                <button onClick={handleUnlock} style={{width:"100%",padding:"12px",background:c.gold,color:c.btnText,border:"none",borderRadius:"4px",fontFamily:"monospace",fontWeight:700,letterSpacing:"1px",cursor:"pointer"}}>UNLOCK</button>
+              </div>
+            )}
           </div>
-          <div style={{ display: "flex", gap: "16px", fontSize: "11px", textAlign: "right" }}>
-            <div><div style={{ color: "#555" }}>LOOKUPS</div><div style={{ color: "#e8d5b5", fontSize: "18px", fontWeight: 700 }}>{history.length}</div></div>
-            <div><div style={{ color: "#555" }}>CANDIDATES</div><div style={{ color: "#4ade80", fontSize: "18px", fontWeight: 700 }}>{candidates.length + dbCandidates.length}</div></div>
+        </div>
+      ) : (<>
+
+      {/* HEADER */}
+      <div style={{marginBottom:"16px",borderBottom:`1px solid ${c.border}`,paddingBottom:"12px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end"}}>
+          <div>
+            <h1 style={{fontFamily:"'Instrument Serif',serif",fontSize:"28px",fontWeight:400,color:c.gold,margin:0}}>Cross-Border Arbitrage</h1>
+            <div style={{fontSize:"10px",color:c.dimmer,marginTop:"4px",letterSpacing:"2px",textTransform:"uppercase"}}>UAE ← Indonesia · {fxUpdated ? `FX updated ${fxUpdated.toLocaleDateString()}` : "FX: defaults"}</div>
+          </div>
+          <div style={{display:"flex",gap:"12px",fontSize:"11px",alignItems:"flex-end"}}>
+            <div style={{textAlign:"right"}}><div style={{color:c.dimmer}}>LOOKUPS</div><div style={{color:c.gold,fontSize:"16px",fontWeight:700}}>{history.length}</div></div>
+            <div style={{textAlign:"right"}}><div style={{color:c.dimmer}}>CANDIDATES</div><div style={{color:c.green,fontSize:"16px",fontWeight:700}}>{candidates.length}</div></div>
+            <button onClick={toggleTheme} style={{background:c.surface2,border:`1px solid ${c.border2}`,color:c.dim,fontFamily:"monospace",fontSize:"10px",padding:"6px 10px",borderRadius:"4px",cursor:"pointer"}}>{dark?"☀":"🌙"}</button>
           </div>
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "16px", padding: "10px 14px", background: "#111", border: `1px solid ${apiKeyStatus === "missing" ? "#f87171" : "#222"}`, borderRadius: "4px" }}>
-        <span style={{ fontSize: "10px", color: "#888", whiteSpace: "nowrap", letterSpacing: "1px" }}>API KEY</span>
-        <input type={showKey ? "text" : "password"} value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-ant-..." style={{ ...inputStyle, flex: 1, padding: "5px 10px", fontSize: "12px" }} />
-        <button onClick={() => setShowKey(!showKey)} style={{ ...btnSec, padding: "5px 10px", fontSize: "10px" }}>{showKey ? "HIDE" : "SHOW"}</button>
-        <button onClick={saveApiKey} style={{ ...btnStyle, padding: "5px 14px", fontSize: "10px" }}>SAVE</button>
-        {apiKeyStatus === "saved" && <span style={{ fontSize: "11px", color: "#4ade80" }}>✓</span>}
-        {apiKeyStatus === "loaded" && <span style={{ fontSize: "11px", color: "#60a5fa" }}>✓</span>}
-        {apiKeyStatus === "missing" && <span style={{ fontSize: "11px", color: "#f87171" }}>⚠</span>}
+      {/* API KEY */}
+      <div style={{display:"flex",gap:"6px",alignItems:"center",marginBottom:"12px",padding:"8px 12px",background:c.surface2,border:`1px solid ${c.border}`,borderRadius:"4px"}}>
+        <span style={{fontSize:"9px",color:c.dim,letterSpacing:"1px"}}>KEY</span>
+        <input type={showKey?"text":"password"} value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder="sk-ant-..." style={{...inputStyle,flex:1,padding:"4px 8px",fontSize:"11px"}} />
+        <button onClick={()=>setShowKey(!showKey)} style={{...btnSec,padding:"4px 8px",fontSize:"9px"}}>{showKey?"HIDE":"SHOW"}</button>
+        {apiKeyStatus&&<span style={{fontSize:"10px",color:apiKeyStatus==="missing"?c.red:c.green}}>✓</span>}
       </div>
 
-      <div style={{ display: "flex", gap: "2px", borderBottom: "1px solid #333" }}>
-        {[{ id: "auto", label: "⚡ AUTO LOOKUP" }, { id: "history", label: "📋 HISTORY" }, { id: "bulk", label: "📦 BULK PIPELINE" }].map(m => (
-          <button key={m.id} onClick={() => setMode(m.id)} style={{ padding: "12px 20px", background: mode === m.id ? "#0f0f0f" : "transparent", color: mode === m.id ? "#e8d5b5" : "#6b6b6b", border: mode === m.id ? "1px solid #333" : "1px solid transparent", borderBottom: mode === m.id ? "1px solid #0f0f0f" : "1px solid #333", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", fontSize: "11px", letterSpacing: "0.5px", position: "relative", top: "1px", borderRadius: "4px 4px 0 0" }}>
+      {/* MODE TABS */}
+      <div style={{display:"flex",gap:"2px",borderBottom:`1px solid ${c.border2}`}}>
+        {[{id:"auto",label:"⚡ LOOKUP"},{id:"history",label:"📋 HISTORY"},{id:"bulk",label:"📦 BULK"}].map(m=>(
+          <button key={m.id} onClick={()=>setMode(m.id)} style={{padding:"10px 18px",background:mode===m.id?c.surface:"transparent",color:mode===m.id?c.gold:c.dimmest,border:mode===m.id?`1px solid ${c.border2}`:"1px solid transparent",borderBottom:mode===m.id?`1px solid ${c.surface}`:`1px solid ${c.border2}`,cursor:"pointer",fontFamily:"monospace",fontSize:"11px",position:"relative",top:"1px",borderRadius:"4px 4px 0 0"}}>
             {m.label}
-            {m.id === "history" && history.length > 0 && <span style={{ marginLeft: 6, color: "#4ade80", fontSize: 10 }}>[{history.length}]</span>}
-            {m.id === "bulk" && database.length > 0 && <span style={{ marginLeft: 6, color: "#4ade80", fontSize: 10 }}>[{database.length}]</span>}
+            {m.id==="history"&&history.length>0&&<span style={{marginLeft:4,color:c.green,fontSize:9}}>[{history.length}]</span>}
           </button>
         ))}
       </div>
 
-      {/* AUTO LOOKUP */}
-      {mode === "auto" && (
-        <div style={sectionStyle}>
-          <div style={{ display: "flex", gap: "8px", marginBottom: "20px" }}>
-            <input type="text" value={url} onChange={e => setUrl(e.target.value)} onKeyDown={e => e.key === "Enter" && !loading && runAutoLookup()} placeholder="Paste full Amazon.ae or Noon product URL (https://www.amazon.ae/...)" style={{ ...inputStyle, flex: 1, fontSize: "14px", padding: "14px 16px" }} />
-            <button onClick={runAutoLookup} disabled={loading || !url.trim()} style={{ ...btnStyle, padding: "14px 32px", fontSize: "13px", opacity: loading || !url.trim() ? 0.5 : 1, whiteSpace: "nowrap" }}>{loading ? "ANALYZING..." : "ANALYZE"}</button>
+      {/* ══════════ AUTO LOOKUP ══════════ */}
+      {mode==="auto"&&(
+        <div style={secStyle}>
+          {/* URL Input */}
+          <div style={{display:"flex",gap:"8px",marginBottom:"16px"}}>
+            <input type="text" value={url} onChange={e=>setUrl(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!loading&&runDryRun()} placeholder="Paste full Amazon.ae or Noon product URL..." style={{...inputStyle,flex:1,fontSize:"13px",padding:"12px 14px"}} />
+            <button onClick={runDryRun} disabled={loading||!url.trim()||cooldown>0} style={{...btnStyle,padding:"12px 20px",fontSize:"11px",opacity:loading||!url.trim()||cooldown>0?0.4:1,whiteSpace:"nowrap"}}>
+              {cooldown>0?`WAIT ${cooldown}s`:loading&&!dryRunData?"READING...":"QUICK CHECK ~$0.02"}
+            </button>
           </div>
 
-          {loading && stage && <div style={{ padding: "14px", background: "#111", border: "1px solid #222", borderRadius: "4px", marginBottom: "16px", display: "flex", alignItems: "center", gap: "12px" }}><Spinner /> <span style={{ fontSize: "12px", color: "#e8d5b5" }}>{stage}</span></div>}
-          {autoError && <div style={{ padding: "14px", background: "#3a1a1a", border: "1px solid #5a2d2d", borderRadius: "4px", marginBottom: "16px", fontSize: "13px", color: "#f87171" }}>⚠ {autoError}</div>}
-
-          {uaeProduct && (<div>
-            <div style={{ padding: "16px", background: "#111", border: "1px solid #222", borderRadius: "4px", marginBottom: "12px" }}>
-              <div style={{ fontSize: "9px", color: "#666", letterSpacing: "1.5px", textTransform: "uppercase", marginBottom: "8px" }}>UAE PRODUCT</div>
-              <div style={{ fontSize: "14px", fontWeight: 500, marginBottom: "6px" }}>{uaeProduct.product_name}</div>
-              <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center" }}>
-                <span style={{ color: "#e8d5b5", fontWeight: 700, fontSize: "18px" }}>AED {uaeProduct.price_aed}</span>
-                <Badge text={uaeProduct.source || "Amazon.ae"} />
-                {uaeProduct.rating > 0 && <span style={{ color: "#facc15", fontSize: "13px" }}>★ {uaeProduct.rating}</span>}
-                {uaeProduct.reviews > 0 && <span style={{ color: "#888", fontSize: "12px" }}>{uaeProduct.reviews.toLocaleString()} reviews</span>}
-              </div>
-            </div>
-
-            {indoResults?.normalized && (
-              <div style={{ padding: "16px", background: "#111", border: "1px solid #2a1a3a", borderRadius: "4px", marginBottom: "12px" }}>
-                <div style={{ fontSize: "9px", color: "#666", letterSpacing: "1.5px", textTransform: "uppercase", marginBottom: "8px" }}>TRANSLATION (EN → BAHASA INDONESIA)</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", fontSize: "12px" }}>
-                  <div><span style={{ color: "#666" }}>English:</span> {indoResults.normalized.clean_name_en}</div>
-                  <div><span style={{ color: "#666" }}>Bahasa:</span> <span style={{ color: "#e8d5b5", fontWeight: 600 }}>{indoResults.normalized.clean_name_id}</span></div>
-                  <div><Badge text={indoResults.normalized.category} color="#60a5fa" bg="#1a2a3a" /> <Badge text={indoResults.normalized.weight_class} color="#888" bg="#1a1a1a" /></div>
-                  <div style={{ color: "#888", fontSize: "11px" }}>{indoResults.normalized.key_specs}</div>
-                </div>
-                {indoResults.normalized.search_queries_id && (
-                  <div style={{ marginTop: "8px", fontSize: "11px" }}>
-                    <span style={{ color: "#666" }}>Search queries:</span>{" "}
-                    {indoResults.normalized.search_queries_id.map((q, i) => <span key={i}><Badge text={q} color="#c084fc" bg="#1a0d2a" />{" "}</span>)}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {indoResults?.price_stats && (
-              <div style={{ padding: "16px", background: "#111", border: "1px solid #1a3050", borderRadius: "4px", marginBottom: "12px" }}>
-                <div style={{ fontSize: "9px", color: "#666", letterSpacing: "1.5px", textTransform: "uppercase", marginBottom: "10px" }}>INDONESIA MARKET — {indoResults.results?.length || 0} LISTINGS FOUND</div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "10px", marginBottom: "12px" }}>
-                  {[{ l: "LOWEST", v: indoResults.price_stats.lowest_idr, c: "#4ade80" }, { l: "MEDIAN", v: indoResults.price_stats.median_idr, c: "#e8d5b5" }, { l: "AVERAGE", v: indoResults.price_stats.average_idr, c: "#60a5fa" }, { l: "HIGHEST", v: indoResults.price_stats.highest_idr, c: "#f87171" }].map(s => (
-                    <div key={s.l} style={{ padding: "10px", background: "#0a0a0a", border: "1px solid #222", borderRadius: "4px", textAlign: "center" }}>
-                      <div style={{ fontSize: "8px", color: "#555", letterSpacing: "1px", marginBottom: "4px" }}>{s.l}</div>
-                      <div style={{ fontSize: "14px", fontWeight: 700, color: s.c }}>{s.v ? `IDR ${s.v.toLocaleString()}` : "—"}</div>
-                      <div style={{ fontSize: "9px", color: "#444" }}>{s.v ? `$${(s.v * IDR_TO_USD).toFixed(2)}` : ""}</div>
-                    </div>
-                  ))}
-                </div>
-                {indoResults.results && indoResults.results.length > 0 && <div style={{ maxHeight: "180px", overflowY: "auto" }}>{indoResults.results.map((r, i) => (
-                  <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #1a1a1a", fontSize: "11px" }}>
-                    <div style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {r.name} <span style={{ color: "#555" }}>· {r.seller}</span> <Badge text={r.source || "Tokopedia"} color="#60a5fa" bg="#1a2a3a" />
-                    </div>
-                    <div style={{ color: "#e8d5b5", fontWeight: 700, marginLeft: "12px", whiteSpace: "nowrap" }}>IDR {r.price_idr?.toLocaleString()}</div>
-                  </div>
-                ))}</div>}
-                {indoResults.search_notes && <div style={{ marginTop: "8px", fontSize: "10px", color: "#555", fontStyle: "italic" }}>{indoResults.search_notes}</div>}
-              </div>
-            )}
-
-            {marginData && (
-              <div style={{ padding: "16px", background: "#111", border: `1px solid ${marginColor(marginData.margins.median.margin)}44`, borderRadius: "4px", borderLeft: `4px solid ${marginColor(marginData.margins.median.margin)}` }}>
-                <div style={{ fontSize: "9px", color: "#666", letterSpacing: "1.5px", textTransform: "uppercase", marginBottom: "12px" }}>MARGIN ANALYSIS</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px", marginBottom: "16px" }}>
-                  {[{ l: "BEST", m: marginData.margins.best }, { l: "MEDIAN", m: marginData.margins.median }, { l: "WORST", m: marginData.margins.worst }].map(c => (
-                    <div key={c.l} style={{ padding: "12px", background: "#0a0a0a", border: "1px solid #222", borderRadius: "4px", textAlign: "center" }}>
-                      <div style={{ fontSize: "8px", color: "#555", letterSpacing: "1px", marginBottom: "6px" }}>{c.l}</div>
-                      <div style={{ fontSize: "26px", fontWeight: 700, color: marginColor(c.m.margin) }}>{c.m.margin.toFixed(1)}%</div>
-                    </div>
-                  ))}
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "6px", fontSize: "11px", padding: "10px", background: "#0a0a0a", borderRadius: "4px" }}>
-                  <div><span style={{ color: "#555" }}>Sell:</span> <span style={{ color: "#e8d5b5" }}>${marginData.margins.median.uaeUSD.toFixed(2)}</span></div>
-                  <div><span style={{ color: "#555" }}>Source:</span> ${marginData.margins.median.indoUSD.toFixed(2)}</div>
-                  <div><span style={{ color: "#555" }}>Freight:</span> ${marginData.margins.median.freight.toFixed(2)}</div>
-                  <div><span style={{ color: "#555" }}>Customs:</span> ${marginData.margins.median.duty.toFixed(2)}</div>
-                  <div><span style={{ color: "#555" }}>Last mi:</span> ${marginData.margins.median.lastMile.toFixed(2)}</div>
-                  <div><span style={{ color: "#555" }}>Total:</span> <strong style={{ color: "#f87171" }}>${marginData.margins.median.totalCost.toFixed(2)}</strong></div>
-                </div>
-                <div style={{ marginTop: "12px", padding: "8px", borderRadius: "4px", textAlign: "center", fontSize: "12px", fontWeight: 600, background: marginData.margins.median.margin >= 40 ? "#1a3a2a" : marginData.margins.median.margin >= 20 ? "#1a1a0d" : "#3a1a1a", border: `1px solid ${marginData.margins.median.margin >= 40 ? "#2d5a3d" : marginData.margins.median.margin >= 20 ? "#3a3a1a" : "#5a2d2d"}`, color: marginColor(marginData.margins.median.margin) }}>
-                  {marginData.margins.median.margin >= 40 ? "✓ CANDIDATE" : marginData.margins.median.margin >= 20 ? "○ BORDERLINE" : "✗ LOW MARGIN"} — {marginData.margins.median.margin.toFixed(1)}%
-                </div>
-              </div>
-            )}
-          </div>)}
-
-          {!loading && !uaeProduct && !autoError && (
-            <div style={{ textAlign: "center", padding: "60px 20px", color: "#444" }}>
-              <div style={{ fontSize: "36px", marginBottom: "12px", opacity: 0.2 }}>⚡</div>
-              <div style={{ fontSize: "13px" }}>Paste a full Amazon.ae or Noon product URL above</div>
-              <div style={{ fontSize: "11px", marginTop: "6px", color: "#333" }}>Example: https://www.amazon.ae/Product-Name/dp/B0XXXXXXX</div>
-              <div style={{ fontSize: "11px", marginTop: "12px", color: "#555" }}>Step 1: Read product → Step 2: Translate to Bahasa → Step 3: Search Tokopedia & Shopee → Calculate margin</div>
-              <div style={{ fontSize: "10px", marginTop: "8px", color: "#333" }}>~45 seconds per lookup · ~$0.03 per lookup · Haiku for translation, Sonnet for web search</div>
+          {/* Progress bar */}
+          {loading&&stage&&(
+            <div style={{marginBottom:"16px"}}>
+              <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"6px"}}><Spinner/><span style={{fontSize:"12px",color:c.gold}}>{stage}</span></div>
+              <div style={{width:"100%",height:"3px",background:c.border,borderRadius:"2px"}}><div style={{width:`${progress}%`,height:"100%",background:c.gold,borderRadius:"2px",transition:"width 0.3s"}}/></div>
             </div>
           )}
-        </div>
-      )}
 
-      {/* HISTORY */}
-      {mode === "history" && (
-        <div style={sectionStyle}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "16px" }}>
-            <div style={{ fontSize: "10px", color: "#888", letterSpacing: "1.5px" }}>{history.length} LOOKUPS</div>
-            <div style={{ display: "flex", gap: "8px" }}>
-              <button style={btnSec} onClick={exportHistory}>EXPORT</button>
-              <button style={{ ...btnSec, color: "#f87171", borderColor: "#f87171" }} onClick={() => { setHistory([]); localStorage.removeItem("arb-auto-history"); }}>CLEAR</button>
-            </div>
-          </div>
-          {history.length === 0 ? <div style={{ textAlign: "center", padding: "40px", color: "#555" }}>No lookups yet.</div> : (
-            <div style={{ display: "flex", flexDirection: "column", gap: "8px", maxHeight: "550px", overflowY: "auto" }}>
-              {history.map((h, i) => { const m = h.margins?.median?.margin || 0; const sc = STATUS_COLORS[h.status] || STATUS_COLORS.Candidate; return (
-                <div key={i} style={{ padding: "12px 14px", background: "#111", border: `1px solid ${sc.border}`, borderRadius: "4px", borderLeft: `3px solid ${sc.text}` }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: "12px", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: "4px" }}>{h.uaeProduct?.product_name}</div>
-                      <div style={{ fontSize: "11px", color: "#888", marginBottom: "4px" }}>{h.normalized?.clean_name_id}</div>
-                      <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                        <Badge text={`AED ${h.uaeProduct?.price_aed}`} color="#e8d5b5" bg="#1a1a0d" />
-                        <Badge text={`IDR ${h.medianPriceIDR?.toLocaleString()}`} color="#60a5fa" bg="#1a2a3a" />
-                        <Badge text={h.normalized?.category || ""} color="#c084fc" bg="#1a0d2a" />
-                        <span style={{ fontSize: "9px", color: "#444" }}>{h.timestamp?.slice(0, 10)}</span>
-                      </div>
-                    </div>
-                    <div style={{ textAlign: "right", marginLeft: "12px" }}>
-                      <div style={{ fontSize: "20px", fontWeight: 700, color: marginColor(m) }}>{m.toFixed(1)}%</div>
-                      <select value={h.status} onChange={e => updateHistoryStatus(i, e.target.value)} style={{ padding: "2px 6px", background: sc.bg, border: `1px solid ${sc.border}`, color: sc.text, fontFamily: "monospace", fontSize: "10px", borderRadius: "3px", marginTop: "4px" }}>
-                        {Object.keys(STATUS_COLORS).map(s => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                    </div>
-                  </div>
-                </div>
-              ); })}
+          {autoError&&<div style={{padding:"12px",background:dark?"#3a1a1a":"#FEF2F2",border:`1px solid ${c.red}44`,borderRadius:"4px",marginBottom:"12px",fontSize:"12px",color:c.red}}>⚠ {autoError}</div>}
+
+          {/* Empty state */}
+          {!loading&&!dryRunData&&!autoError&&(
+            <div style={{textAlign:"center",padding:"40px 20px"}}>
+              <div style={{fontSize:"36px",marginBottom:"10px",opacity:0.15}}>⚡</div>
+              <div style={{fontSize:"12px",color:c.dim}}>Paste a product URL and click Quick Check</div>
+              <div style={{marginTop:"16px",display:"inline-block",padding:"14px 20px",background:c.surface2,border:`1px solid ${c.border}`,borderRadius:"6px",textAlign:"left",fontSize:"11px",lineHeight:2}}>
+                <span style={{color:c.green}}>① Quick Check</span> <span style={{color:c.dimmer}}>— read + translate</span> <span style={{color:c.dim}}>~$0.02</span><br/>
+                <span style={{color:c.gold}}>② Indo Search &amp; Margins</span> <span style={{color:c.dimmer}}>— Tokopedia + Shopee + cost analysis</span> <span style={{color:c.dim}}>~$0.06-0.08</span>
+              </div>
             </div>
           )}
-        </div>
-      )}
 
-      {/* BULK PIPELINE */}
-      {mode === "bulk" && (
-        <div style={sectionStyle}>
-          <div style={{ display: "flex", gap: "2px", marginBottom: "16px", borderBottom: "1px solid #222" }}>
-            {["① UAE", "② Normalize", "③ Indo", "④ Margins", "⑤ Database"].map((label, i) => (
-              <button key={i} onClick={() => setBulkTab(i)} style={{ padding: "8px 14px", background: bulkTab === i ? "#1a1a1a" : "transparent", color: bulkTab === i ? "#e8d5b5" : "#555", border: "none", cursor: "pointer", fontFamily: "monospace", fontSize: "10px", borderBottom: bulkTab === i ? "2px solid #e8d5b5" : "2px solid transparent" }}>{label}</button>
-            ))}
-          </div>
+          {/* RESULTS */}
+          {dryRunData&&(<div>
+            {/* Product card */}
+            <div style={{padding:"14px",background:c.surface2,border:`1px solid ${c.border}`,borderRadius:"4px",marginBottom:"10px"}}>
+              <div style={{fontSize:"9px",color:c.dimmer,letterSpacing:"1.5px",textTransform:"uppercase",marginBottom:"6px"}}>UAE PRODUCT {dryRunData.url&&<a href={dryRunData.url} target="_blank" style={{color:c.dim,fontSize:"9px",marginLeft:"8px"}}>open link ↗</a>}</div>
+              <div style={{fontSize:"13px",fontWeight:500,marginBottom:"6px"}}>{dryRunData.product_name}</div>
+              <div style={{display:"flex",gap:"10px",flexWrap:"wrap",alignItems:"center",fontSize:"12px"}}>
+                <div style={{display:"flex",alignItems:"center",gap:"4px"}}>
+                  <span style={{color:c.dim,fontSize:"10px"}}>AED</span>
+                  <input type="number" value={dryRunData.price_aed||""} onChange={e=>{const v=parseFloat(e.target.value)||0;setDryRunData({...dryRunData,price_aed:v})}} style={{width:"80px",padding:"3px 6px",background:c.input,border:`1px solid ${!dryRunData.price_aed?c.red:c.border2}`,color:c.gold,fontFamily:"monospace",fontSize:"14px",fontWeight:700,borderRadius:"3px",outline:"none",textAlign:"right"}} />
+                </div>
+                {dryRunData.price_aed>0&&<span style={{color:c.dim}}>≈ {fmtIDR(dryRunData.price_aed / fx.IDRAED)}</span>}
+                {dryRunData.price_aed>0&&<span style={{color:c.dimmer}}>≈ {fmtUSD(dryRunData.price_aed * fx.AEDUSD)}</span>}
+                <Badge text={dryRunData.source||"Amazon.ae"} />
+                <Badge text={dryRunData.category} color={c.green} bg={c.sectionBg} />
+                {dryRunData.rating>0&&<span style={{color:c.darkGold}}>★ {dryRunData.rating}</span>}
+              </div>
+              {(!dryRunData.price_aed||dryRunData.price_aed===0)&&<div style={{fontSize:"11px",color:c.darkGold,marginTop:"6px"}}>⚠ Price not detected — type the AED price from the product page above</div>}
+            </div>
 
-          {bulkTab === 0 && (<div>
-            <input type="file" ref={fileRef} accept=".csv" style={{ display: "none" }} onChange={e => e.target.files[0] && handleUAEUpload(e.target.files[0])} />
-            {uaeProducts.length === 0 ? dropZone(false, handleUAEUpload, () => fileRef.current?.click(), "Drop Apify UAE CSV here") : (<div>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "12px" }}><span style={{ fontSize: "11px", color: "#4ade80" }}>✓ {uaeProducts.length} products</span><button style={{ ...btnSec, padding: "4px 12px", fontSize: "10px" }} onClick={() => { setUaeProducts([]); localStorage.removeItem("arb-uae-products"); }}>Clear</button></div>
-              <div style={{ maxHeight: "300px", overflowY: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: "11px" }}><thead><tr style={{ borderBottom: "1px solid #333" }}>{["Product","AED","Category"].map(h => <th key={h} style={{ textAlign: "left", padding: "6px", color: "#666", fontSize: "9px", letterSpacing: "1px" }}>{h}</th>)}</tr></thead><tbody>{uaeProducts.slice(0, 50).map((p, i) => (<tr key={i} style={{ borderBottom: "1px solid #1a1a1a" }}><td style={{ padding: "6px", maxWidth: "280px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</td><td style={{ padding: "6px", color: "#e8d5b5", fontWeight: 700 }}>{p.price.toFixed(2)}</td><td style={{ padding: "6px" }}><Badge text={p.category} color="#60a5fa" bg="#1a2a3a" /></td></tr>))}</tbody></table></div>
-              <button style={{ ...btnStyle, marginTop: "12px" }} onClick={() => setBulkTab(1)}>Next →</button>
-            </div>)}
-          </div>)}
-
-          {bulkTab === 1 && (<div>
-            {uaeProducts.length === 0 ? <div style={{ color: "#555", textAlign: "center", padding: "40px" }}>Upload UAE products first</div> : (<div>
-              {!apiKey && <div style={{ padding: "10px", background: "#3a1a1a", border: "1px solid #5a2d2d", borderRadius: "4px", marginBottom: "12px", fontSize: "11px", color: "#f87171" }}>⚠ API key required</div>}
-              <button style={{ ...btnStyle, opacity: normalizing || !apiKey ? 0.5 : 1, marginBottom: "12px" }} onClick={runNormalization} disabled={normalizing || !apiKey}>{normalizing ? `${normProgress.toFixed(0)}%` : `Normalize ${uaeProducts.length} Products`}</button>
-              {normalizing && <div style={{ width: "100%", height: "3px", background: "#222", borderRadius: "2px", marginBottom: "12px" }}><div style={{ width: `${normProgress}%`, height: "100%", background: "#e8d5b5", borderRadius: "2px", transition: "width 0.3s" }} /></div>}
-              {normalized.length > 0 && (<div>
-                <div style={{ maxHeight: "280px", overflowY: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: "11px" }}><thead><tr style={{ borderBottom: "1px solid #333" }}>{["Original","Bahasa","Query"].map(h => <th key={h} style={{ textAlign: "left", padding: "6px", color: "#666", fontSize: "9px", letterSpacing: "1px" }}>{h}</th>)}</tr></thead><tbody>{normalized.slice(0, 50).map((p, i) => (<tr key={i} style={{ borderBottom: "1px solid #1a1a1a" }}><td style={{ padding: "6px", maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#888" }}>{p.name}</td><td style={{ padding: "6px", color: "#e8d5b5" }}>{p.cleanNameId || "—"}</td><td style={{ padding: "6px", color: "#4ade80" }}>{p.searchQuery || "—"}</td></tr>))}</tbody></table></div>
-                <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
-                  <button style={btnStyle} onClick={() => setBulkTab(2)}>Next →</button>
-                  <button style={btnSec} onClick={() => { const csv = "search_query,clean_name_en,clean_name_id,category\n" + normalized.map(n => `"${n.searchQuery}","${n.cleanNameEn}","${n.cleanNameId}","${n.detectedCategory}"`).join("\n"); const blob = new Blob([csv], { type: "text/csv" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "queries.csv"; a.click(); }}>Export Queries</button>
+            {/* Translation + editable queries */}
+            <div style={{padding:"14px",background:c.surface2,border:`1px solid ${c.border}`,borderRadius:"4px",marginBottom:"10px"}}>
+              <div style={{fontSize:"9px",color:c.dimmer,letterSpacing:"1.5px",textTransform:"uppercase",marginBottom:"6px"}}>TRANSLATION</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"6px",fontSize:"12px",marginBottom:"10px"}}>
+                <div><span style={{color:c.dim}}>EN:</span> {dryRunData.clean_name_en}</div>
+                <div><span style={{color:c.dim}}>ID:</span> <span style={{color:c.gold,fontWeight:600}}>{dryRunData.clean_name_id}</span></div>
+              </div>
+              {!indoResults&&(<div>
+                <div style={{fontSize:"9px",color:c.dimmer,letterSpacing:"1px",marginBottom:"6px"}}>SEARCH QUERIES — edit or add before searching</div>
+                <div style={{display:"flex",flexDirection:"column",gap:"4px",marginBottom:"8px"}}>
+                  {editableQueries.map((q,i)=>(<div key={i} style={{display:"flex",gap:"4px"}}><input value={q} onChange={e=>{const u=[...editableQueries];u[i]=e.target.value;setEditableQueries(u)}} style={{...inputStyle,padding:"5px 8px",fontSize:"11px",flex:1}} /><button onClick={()=>setEditableQueries(editableQueries.filter((_,idx)=>idx!==i))} style={{background:"transparent",border:`1px solid ${c.red}44`,color:c.red,fontSize:"10px",padding:"4px 8px",borderRadius:"3px",cursor:"pointer"}}>✕</button></div>))}
+                </div>
+                <div style={{display:"flex",gap:"4px"}}>
+                  <input value={newQueryInput} onChange={e=>setNewQueryInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&newQueryInput.trim()){setEditableQueries([...editableQueries,newQueryInput.trim()]);setNewQueryInput("")}}} placeholder="Add keyword..." style={{...inputStyle,padding:"5px 8px",fontSize:"11px",flex:1}} />
+                  <button onClick={()=>{if(newQueryInput.trim()){setEditableQueries([...editableQueries,newQueryInput.trim()]);setNewQueryInput("")}}} style={{...btnSec,padding:"5px 12px",fontSize:"9px"}}>+ ADD</button>
                 </div>
               </div>)}
-            </div>)}
-          </div>)}
-
-          {bulkTab === 2 && (<div>
-            <input type="file" ref={indoFileRef} accept=".csv" style={{ display: "none" }} onChange={e => e.target.files[0] && handleIndoUpload(e.target.files[0])} />
-            {bulkIndoResults.length === 0 ? dropZone(true, handleIndoUpload, () => indoFileRef.current?.click(), "Drop Tokopedia/Shopee CSV here") : (<div>
-              <span style={{ fontSize: "11px", color: "#4ade80" }}>✓ {bulkIndoResults.length} results</span>
-              <div style={{ maxHeight: "280px", overflowY: "auto", marginTop: "12px" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: "11px" }}><thead><tr style={{ borderBottom: "1px solid #333" }}>{["Query","Product","IDR"].map(h => <th key={h} style={{ textAlign: "left", padding: "6px", color: "#666", fontSize: "9px", letterSpacing: "1px" }}>{h}</th>)}</tr></thead><tbody>{bulkIndoResults.slice(0, 50).map((p, i) => (<tr key={i} style={{ borderBottom: "1px solid #1a1a1a" }}><td style={{ padding: "6px", color: "#4ade80" }}>{p.searchQuery || "—"}</td><td style={{ padding: "6px", maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</td><td style={{ padding: "6px", color: "#e8d5b5", fontWeight: 700 }}>{p.price.toLocaleString()}</td></tr>))}</tbody></table></div>
-              <button style={{ ...btnStyle, marginTop: "12px" }} onClick={() => setBulkTab(3)}>Next →</button>
-            </div>)}
-          </div>)}
-
-          {bulkTab === 3 && (<div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px", marginBottom: "16px", fontSize: "11px" }}>
-              <div style={{ padding: "12px", background: "#111", border: "1px solid #222", borderRadius: "4px" }}>Freight: L $3 · M $4 · H $6 /kg</div>
-              <div style={{ padding: "12px", background: "#111", border: "1px solid #222", borderRadius: "4px" }}>Customs 5% · Last mile AED 20</div>
-              <div style={{ padding: "12px", background: "#111", border: "1px solid #222", borderRadius: "4px" }}>AED/USD 0.2723 · IDR/USD 0.0000613</div>
             </div>
-            <div style={{ display: "flex", gap: "12px", alignItems: "center", padding: "16px", background: "#111", border: "1px solid #222", borderRadius: "4px" }}>
-              <div style={{ flex: 1, fontSize: "12px" }}><div>{uaeProducts.length > 0 ? "✓" : "✗"} UAE: {uaeProducts.length}</div><div>{bulkIndoResults.length > 0 ? "✓" : "✗"} Indo: {bulkIndoResults.length}</div></div>
-              <button style={{ ...btnStyle, opacity: uaeProducts.length > 0 && bulkIndoResults.length > 0 ? 1 : 0.3 }} onClick={runMarginCalc} disabled={uaeProducts.length === 0 || bulkIndoResults.length === 0}>Calculate</button>
-            </div>
-          </div>)}
 
-          {bulkTab === 4 && (<div>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "12px" }}>
-              <span style={{ fontSize: "10px", color: "#888", letterSpacing: "1.5px" }}>{database.length} PRODUCTS</span>
-              <div style={{ display: "flex", gap: "8px" }}><button style={btnSec} onClick={exportDatabase}>EXPORT</button><button style={{ ...btnSec, color: "#f87171", borderColor: "#f87171" }} onClick={() => { setDatabase([]); localStorage.removeItem("arb-database"); }}>CLEAR</button></div>
-            </div>
-            {database.length === 0 ? <div style={{ textAlign: "center", padding: "40px", color: "#555" }}>Run calc first</div> : (
-              <div style={{ display: "flex", flexDirection: "column", gap: "6px", maxHeight: "450px", overflowY: "auto" }}>
-                {database.sort((a, b) => b.grossMarginPct - a.grossMarginPct).map(p => { const sc = STATUS_COLORS[p.status] || STATUS_COLORS.Candidate; return (
-                  <div key={p.id} style={{ padding: "10px 12px", background: "#111", border: `1px solid ${sc.border}`, borderRadius: "4px", borderLeft: `3px solid ${sc.text}` }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: "12px", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.nameEn}</div>
-                        <div style={{ fontSize: "11px", color: "#888" }}>{p.nameId}</div>
-                        <div style={{ display: "flex", gap: "6px", marginTop: "4px" }}><Badge text={p.category} color="#60a5fa" bg="#1a2a3a" /><span style={{ fontSize: "10px", color: "#555" }}>AED {p.uaePriceAED.toFixed(0)} → IDR {p.indoPriceIDR.toLocaleString()}</span></div>
+            {/* Search Indonesia button */}
+            {!indoResults&&!loading&&(
+              <div style={{padding:"14px",background:c.surface2,border:`1px solid ${c.green}44`,borderRadius:"4px",marginBottom:"10px",textAlign:"center"}}>
+                <button onClick={runIndoSearch} disabled={cooldown>0||editableQueries.filter(q=>q.trim()).length===0} style={{...btnGreen,padding:"12px 36px",fontSize:"12px",opacity:cooldown>0?0.4:1}}>
+                  {cooldown>0?`⏳ WAIT ${cooldown}s`:"🔍 SEARCH INDONESIA + MARGINS — ~$0.06-0.08"}
+                </button>
+              </div>
+            )}
+
+            {/* ══════════ 4 TOGGLE SECTIONS ══════════ */}
+            {(uaeSimilar||indoResults||marginData)&&(<div>
+
+              {/* ① UAE MARKET (optional search) */}
+              <SectionToggle index={0} title="UAE Market — Similar Products" icon="🇦🇪" count={uaeSimilar?.similar?.length}>
+                {!uaeSimilar&&!loading&&(
+                  <div style={{textAlign:"center",padding:"16px"}}>
+                    <p style={{fontSize:"11px",color:c.dimmer,marginBottom:"10px"}}>Find 8-10 similar products on Amazon.ae & Noon</p>
+                    <button onClick={runUaeSimilar} disabled={cooldown>0||loading} style={{...btnSec,padding:"10px 24px",fontSize:"11px",opacity:cooldown>0?0.4:1}}>
+                      {cooldown>0?`⏳ WAIT ${cooldown}s`:"🇦🇪 FIND SIMILAR UAE PRODUCTS — ~$0.08-0.10"}
+                    </button>
+                  </div>
+                )}
+                {uaeSimilar?.price_stats&&(
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"8px",marginBottom:"12px"}}>
+                    {[{l:"LOWEST",v:uaeSimilar.price_stats.lowest_aed,c:c.green},{l:"MEDIAN",v:uaeSimilar.price_stats.median_aed,c:c.gold},{l:"AVERAGE",v:uaeSimilar.price_stats.average_aed,c:c.dim},{l:"HIGHEST",v:uaeSimilar.price_stats.highest_aed,c:c.red}].map(s=>(
+                      <div key={s.l} style={{padding:"8px",background:c.cardBg,border:`1px solid ${c.border}`,borderRadius:"4px",textAlign:"center"}}>
+                        <div style={{fontSize:"8px",color:c.dimmer,letterSpacing:"1px",marginBottom:"3px"}}>{s.l}</div>
+                        <div style={{fontSize:"13px",fontWeight:700,color:s.c}}>{fmtAED(s.v)}</div>
+                        <div style={{fontSize:"9px",color:c.dimmest}}>{fmtIDR(s.v/fx.IDRAED)}</div>
                       </div>
-                      <div style={{ textAlign: "right", marginLeft: "12px" }}><div style={{ fontSize: "20px", fontWeight: 700, color: marginColor(p.grossMarginPct) }}>{p.grossMarginPct.toFixed(1)}%</div></div>
+                    ))}
+                  </div>
+                )}
+                {uaeSimilar?.similar?.map((r,i)=>(
+                  <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"5px 0",borderBottom:`1px solid ${c.border}`,fontSize:"11px"}}>
+                    <div style={{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.name} <span style={{color:c.dimmest}}>· {r.source}</span></div>
+                    <div style={{color:c.gold,fontWeight:700,marginLeft:"10px",whiteSpace:"nowrap"}}>{fmtAED(r.price_aed)} <span style={{color:c.dimmest,fontWeight:400}}>({fmtIDR(r.price_aed/fx.IDRAED)})</span></div>
+                  </div>
+                ))}
+              </SectionToggle>
+
+              {/* ② INDONESIA MARKET */}
+              <SectionToggle index={1} title="Indonesia Market — Tokopedia & Shopee" icon="🇮🇩" count={indoResults?.results?.length}>
+                {indoResults?.price_stats&&(
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"8px",marginBottom:"12px"}}>
+                    {[{l:"LOWEST",v:indoResults.price_stats.lowest_idr,c:c.green},{l:"MEDIAN",v:indoResults.price_stats.median_idr,c:c.gold},{l:"AVERAGE",v:indoResults.price_stats.average_idr,c:c.dim},{l:"HIGHEST",v:indoResults.price_stats.highest_idr,c:c.red}].map(s=>(
+                      <div key={s.l} style={{padding:"8px",background:c.cardBg,border:`1px solid ${c.border}`,borderRadius:"4px",textAlign:"center"}}>
+                        <div style={{fontSize:"8px",color:c.dimmer,letterSpacing:"1px",marginBottom:"3px"}}>{s.l}</div>
+                        <div style={{fontSize:"13px",fontWeight:700,color:s.c}}>{fmtIDR(s.v)}</div>
+                        <div style={{fontSize:"9px",color:c.dimmest}}>{fmtAED(s.v*fx.IDRUSD/fx.AEDUSD)}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={{maxHeight:"400px",overflowY:"auto"}}>
+                  {/* Column headers */}
+                  <div style={{display:"grid",gridTemplateColumns:"2.5fr 0.6fr 0.7fr 0.5fr",gap:"4px",padding:"5px 0",borderBottom:`1px solid ${c.border2}`,fontSize:"9px",color:c.dimmer,letterSpacing:"0.5px",textTransform:"uppercase",position:"sticky",top:0,background:c.surface,zIndex:1}}>
+                    <div>Product · Seller</div><div>Source</div><div style={{textAlign:"right"}}>Price</div><div style={{textAlign:"right"}}>Sold</div>
+                  </div>
+                  {indoResults?.results?.map((r,i)=>(
+                    <div key={i} style={{display:"grid",gridTemplateColumns:"2.5fr 0.6fr 0.7fr 0.5fr",gap:"4px",padding:"6px 0",borderBottom:`1px solid ${c.border}`,fontSize:"11px",alignItems:"center"}}>
+                      <div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                        {r.url ? <a href={r.url} target="_blank" rel="noopener" style={{color:c.text,textDecoration:"none"}} title={r.name}>{r.name}</a> : r.name}
+                        {r.seller && <span style={{color:c.dimmest}}> · {r.seller}</span>}
+                      </div>
+                      <div><Badge text={r.source||"Tokopedia"} color={r.source==="Shopee"?"#EE4D2D":c.green} bg={r.source==="Shopee"?(dark?"#2D1508":"#FFF0EC"):(dark?"#0D2E1A":"#E8F5EC")} /></div>
+                      <div style={{color:c.gold,fontWeight:700,textAlign:"right",whiteSpace:"nowrap"}}>{fmtIDR(r.price_idr)}</div>
+                      <div style={{color:r.sold?c.darkGold:c.dimmest,textAlign:"right",fontSize:"10px"}}>{r.sold||"—"}</div>
                     </div>
-                    <div style={{ display: "flex", gap: "6px", alignItems: "center", marginTop: "8px" }}>
-                      <select value={p.status} onChange={e => updateDbStatus(p.id, e.target.value)} style={{ padding: "3px 6px", background: sc.bg, border: `1px solid ${sc.border}`, color: sc.text, fontFamily: "monospace", fontSize: "10px", borderRadius: "3px" }}>{Object.keys(STATUS_COLORS).map(s => <option key={s} value={s}>{s}</option>)}</select>
-                      <input type="text" placeholder="Notes..." value={p.notes} onChange={e => updateDbNotes(p.id, e.target.value)} style={{ ...inputStyle, padding: "3px 8px", fontSize: "10px", flex: 1 }} />
+                  ))}
+                </div>
+                {indoResults?.search_notes&&<div style={{marginTop:"8px",fontSize:"10px",color:c.dimmer,fontStyle:"italic"}}>{indoResults.search_notes}</div>}
+              </SectionToggle>
+
+              {/* ③ MARGIN ANALYSIS */}
+              {marginData&&(
+                <SectionToggle index={2} title="Margin Analysis" icon="📊">
+                  {/* Qty selector */}
+                  <div style={{display:"flex",gap:"8px",alignItems:"center",marginBottom:"14px",flexWrap:"wrap"}}>
+                    <span style={{fontSize:"10px",color:c.dim}}>CALCULATE FOR:</span>
+                    {[{id:"unit",label:"Per Unit"},{id:"custom",label:"Custom Qty"},{id:"container",label:"Per Container (20ft)"}].map(m=>(
+                      <button key={m.id} onClick={()=>setQtyMode(m.id)} style={{padding:"4px 10px",background:qtyMode===m.id?c.gold:"transparent",color:qtyMode===m.id?c.btnText:c.dim,border:`1px solid ${qtyMode===m.id?c.gold:c.border2}`,borderRadius:"3px",fontSize:"10px",cursor:"pointer",fontFamily:"monospace"}}>{m.label}</button>
+                    ))}
+                    {qtyMode==="custom"&&<input type="number" value={qty} onChange={e=>setQty(Math.max(1,parseInt(e.target.value)||1))} min="1" style={{...inputStyle,width:"80px",padding:"4px 8px",fontSize:"11px",textAlign:"center"}} />}
+                    <span style={{fontSize:"10px",color:c.dimmer}}>× {getQty()} units</span>
+                  </div>
+
+                  {/* Margin boxes */}
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"10px",marginBottom:"14px"}}>
+                    {[{l:"BEST",m:marginData.margins.best},{l:"MEDIAN",m:marginData.margins.median},{l:"WORST",m:marginData.margins.worst}].map(x=>(
+                      <div key={x.l} style={{padding:"12px",background:c.cardBg,border:`1px solid ${c.border}`,borderRadius:"4px",textAlign:"center"}}>
+                        <div style={{fontSize:"8px",color:c.dimmer,letterSpacing:"1px",marginBottom:"4px"}}>{x.l}</div>
+                        <div style={{fontSize:"24px",fontWeight:700,color:marginColor(x.m.margin)}}>{x.m.margin.toFixed(1)}%</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Cost breakdown table */}
+                  <div style={{background:c.cardBg,border:`1px solid ${c.border}`,borderRadius:"4px",padding:"12px"}}>
+                    <div style={{display:"grid",gridTemplateColumns:"1.5fr 1fr 1fr 1fr",gap:"6px",fontSize:"10px",padding:"4px 0",borderBottom:`1px solid ${c.border2}`,color:c.dimmer,fontWeight:700}}>
+                      <div>COST ITEM</div><div>USD</div><div>AED</div><div>IDR</div>
+                    </div>
+                    {(()=>{ const m=marginData.margins.median; const q=getQty(); return (<>
+                      <PriceRow label={`UAE Sell Price ×${q}`} usd={m.uaeUSD*q} aed={m.uaeAED*q} idr={m.uaeIDR*q} />
+                      <PriceRow label={`Indo Source ×${q}`} usd={m.indoUSD*q} aed={m.indoAED*q} idr={m.indoIDR*q} />
+                      <PriceRow label={`Air Freight ×${q}`} usd={m.freightUSD*q} aed={m.freightAED*q} idr={m.freightIDR*q} />
+                      <PriceRow label={`Customs 5% ×${q}`} usd={m.dutyUSD*q} aed={m.dutyAED*q} idr={m.dutyIDR*q} />
+                      <PriceRow label={`Last Mile ×${q}`} usd={m.lastMileUSD*q} aed={m.lastMileAED*q} idr={m.lastMileIDR*q} />
+                      <div style={{display:"grid",gridTemplateColumns:"1.5fr 1fr 1fr 1fr",gap:"6px",fontSize:"11px",padding:"6px 0",fontWeight:700}}>
+                        <div style={{color:c.red}}>TOTAL COST</div>
+                        <div style={{color:c.red}}>{fmtUSD(m.totalUSD*q)}</div>
+                        <div style={{color:c.red}}>{fmtAED(m.totalAED*q)}</div>
+                        <div style={{color:c.red}}>{fmtIDR(m.totalIDR*q)}</div>
+                      </div>
+                      <div style={{display:"grid",gridTemplateColumns:"1.5fr 1fr 1fr 1fr",gap:"6px",fontSize:"11px",padding:"6px 0",fontWeight:700}}>
+                        <div style={{color:c.green}}>PROFIT</div>
+                        <div style={{color:c.green}}>{fmtUSD((m.uaeUSD-m.totalUSD)*q)}</div>
+                        <div style={{color:c.green}}>{fmtAED((m.uaeAED-m.totalAED)*q)}</div>
+                        <div style={{color:c.green}}>{fmtIDR((m.uaeIDR-m.totalIDR)*q)}</div>
+                      </div>
+                    </>)})()}
+                  </div>
+
+                  {/* Verdict */}
+                  <div style={{marginTop:"10px",padding:"8px",borderRadius:"4px",textAlign:"center",fontSize:"12px",fontWeight:600,background:marginData.margins.median.margin>=40?STATUS_COLORS.Candidate.bg:marginData.margins.median.margin>=20?STATUS_COLORS.Active.bg:STATUS_COLORS.Rejected.bg,border:`1px solid ${marginData.margins.median.margin>=40?STATUS_COLORS.Candidate.border:marginData.margins.median.margin>=20?STATUS_COLORS.Active.border:STATUS_COLORS.Rejected.border}`,color:marginColor(marginData.margins.median.margin)}}>
+                    {marginData.margins.median.margin>=40?"✓ CANDIDATE":marginData.margins.median.margin>=20?"○ BORDERLINE":"✗ LOW MARGIN"} — {marginData.margins.median.margin.toFixed(1)}%
+                  </div>
+                </SectionToggle>
+              )}
+
+              {/* ④ LOGISTICS */}
+              <SectionToggle index={3} title="Logistics — Freight & Transit" icon="🚢">
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"14px"}}>
+                  <div style={{fontSize:"10px",color:c.dimmer}}>
+                    {freight.source==="live" ? `Live rates · Updated ${new Date(freight.updated).toLocaleDateString()}` : "Using default estimates"}
+                    {freight.updated && Date.now()-freight.updated > 604800000 && <span style={{color:c.darkGold}}> · ⚠ Over 7 days old</span>}
+                  </div>
+                  <button onClick={fetchFreightRates} disabled={freightLoading} style={{...btnSec,padding:"5px 12px",fontSize:"9px",opacity:freightLoading?0.5:1}}>
+                    {freightLoading?"Fetching...":freight.source==="live"?"🔄 Refresh":"📡 Fetch Live Rates ~$0.08"}
+                  </button>
+                </div>
+
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"10px",marginBottom:"14px"}}>
+                  {/* Air */}
+                  <div style={{padding:"12px",background:c.cardBg,border:`1px solid ${c.border}`,borderRadius:"4px"}}>
+                    <div style={{fontSize:"10px",color:c.gold,fontWeight:700,marginBottom:"8px"}}>✈ AIR FREIGHT</div>
+                    <div style={{fontSize:"12px",lineHeight:1.8}}>
+                      <div><span style={{color:c.dim}}>Rate:</span> <span style={{color:c.gold,fontWeight:700}}>${freight.air?.rate_per_kg||4}/kg</span></div>
+                      <div><span style={{color:c.dim}}>Min:</span> {freight.air?.min_kg||100} kg</div>
+                      <div style={{marginTop:"6px",fontSize:"10px",color:c.dimmer,borderTop:`1px solid ${c.border}`,paddingTop:"6px"}}>
+                        <div>Port→Port: {freight.air?.transit?.port_port||"3-5 days"}</div>
+                        <div>Port→Door: {freight.air?.transit?.port_door||"5-7 days"}</div>
+                        <div>Door→Door: {freight.air?.transit?.door_door||"7-10 days"}</div>
+                      </div>
                     </div>
                   </div>
-                ); })}
+                  {/* Ocean */}
+                  <div style={{padding:"12px",background:c.cardBg,border:`1px solid ${c.border}`,borderRadius:"4px"}}>
+                    <div style={{fontSize:"10px",color:c.gold,fontWeight:700,marginBottom:"8px"}}>🚢 OCEAN FREIGHT</div>
+                    <div style={{fontSize:"12px",lineHeight:1.8}}>
+                      <div><span style={{color:c.dim}}>20ft:</span> <span style={{color:c.gold,fontWeight:700}}>${freight.ocean?.rate_20ft||800}</span></div>
+                      <div><span style={{color:c.dim}}>40ft:</span> ${freight.ocean?.rate_40ft||1400}</div>
+                      <div><span style={{color:c.dim}}>Per CBM:</span> ${freight.ocean?.rate_per_cbm||45}</div>
+                      <div style={{marginTop:"6px",fontSize:"10px",color:c.dimmer,borderTop:`1px solid ${c.border}`,paddingTop:"6px"}}>
+                        <div>Port→Port: {freight.ocean?.transit?.port_port||"14-18 days"}</div>
+                        <div>Port→Door: {freight.ocean?.transit?.port_door||"18-25 days"}</div>
+                        <div>Door→Door: {freight.ocean?.transit?.door_door||"21-30 days"}</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                {freight.notes&&<div style={{fontSize:"10px",color:c.dimmer,fontStyle:"italic"}}>{freight.notes}</div>}
+              </SectionToggle>
+
+            </div>)}
+
+            {/* Actions bar */}
+            {(indoResults||autoError)&&!loading&&(
+              <div style={{display:"flex",justifyContent:"center",gap:"8px",marginTop:"12px",flexWrap:"wrap"}}>
+                <button onClick={()=>{setDryRunData(null);setUaeSimilar(null);setIndoResults(null);setMarginData(null);setAutoError("");setUrl("");setEditableQueries([]);setNewQueryInput("");setActiveSection(0)}} style={{...btnSec,padding:"8px 20px",fontSize:"10px"}}>← NEW LOOKUP</button>
+                {marginData&&<button onClick={exportPDF} style={{...btnSec,padding:"8px 16px",fontSize:"10px"}}>📄 EXPORT PDF</button>}
+                {marginData&&<button onClick={()=>{const h=["Item","USD","AED","IDR"];const m=marginData.margins.median;const q=getQty();const rows=[["UAE Sell",fmtUSD(m.uaeUSD*q),fmtAED(m.uaeAED*q),fmtIDR(m.uaeIDR*q)],["Indo Source",fmtUSD(m.indoUSD*q),fmtAED(m.indoAED*q),fmtIDR(m.indoIDR*q)],["Freight",fmtUSD(m.freightUSD*q),fmtAED(m.freightAED*q),fmtIDR(m.freightIDR*q)],["Customs",fmtUSD(m.dutyUSD*q),fmtAED(m.dutyAED*q),fmtIDR(m.dutyIDR*q)],["Last Mile",fmtUSD(m.lastMileUSD*q),fmtAED(m.lastMileAED*q),fmtIDR(m.lastMileIDR*q)],["Total Cost",fmtUSD(m.totalUSD*q),fmtAED(m.totalAED*q),fmtIDR(m.totalIDR*q)],["Profit",fmtUSD((m.uaeUSD-m.totalUSD)*q),fmtAED((m.uaeAED-m.totalAED)*q),fmtIDR((m.uaeIDR-m.totalIDR)*q)],["Margin",m.margin.toFixed(1)+"%","",""]];const csv=[h.join(","),...rows.map(r=>r.join(","))].join("\n");const blob=new Blob([csv],{type:"text/csv"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`${dryRunData?.clean_name_en||"product"}-analysis.csv`;a.click()}} style={{...btnSec,padding:"8px 16px",fontSize:"10px"}}>📊 EXPORT CSV</button>}
               </div>
             )}
           </div>)}
         </div>
       )}
+
+      {/* ══════════ HISTORY ══════════ */}
+      {mode==="history"&&(
+        <div style={secStyle}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:"14px",flexWrap:"wrap",gap:"6px"}}>
+            <span style={{fontSize:"10px",color:c.dim,letterSpacing:"1px"}}>{history.length} LOOKUPS</span>
+            <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>
+              <button style={btnSec} onClick={exportHistory}>QUICK CSV</button>
+              <button style={btnSec} onClick={exportStructuredCSV}>📊 FULL CSV (pivot-ready)</button>
+              <button style={{...btnSec,color:c.red,borderColor:c.red}} onClick={()=>{setHistory([]);localStorage.removeItem("arb-auto-history")}}>CLEAR</button>
+            </div>
+          </div>
+          {!history.length?<div style={{textAlign:"center",padding:"40px",color:c.dimmer}}>No lookups yet.</div>:(
+            <div style={{display:"flex",flexDirection:"column",gap:"6px",maxHeight:"550px",overflowY:"auto"}}>
+              {history.map((h,i)=>{const m=h.margins?.median?.margin||0;const sc=STATUS_COLORS[h.status]||STATUS_COLORS.Candidate;return(
+                <div key={i} style={{padding:"10px 12px",background:c.surface2,border:`1px solid ${sc.border}`,borderRadius:"4px",borderLeft:`3px solid ${sc.text}`}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:"12px",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginBottom:"3px"}}>{h.uaeProduct?.product_name}</div>
+                      <div style={{fontSize:"10px",color:c.dim,marginBottom:"3px"}}>{h.normalized?.clean_name_id}</div>
+                      <div style={{display:"flex",gap:"4px",flexWrap:"wrap"}}>
+                        <Badge text={`AED ${h.uaeProduct?.price_aed}`} color={c.gold} bg={c.surface} />
+                        <Badge text={fmtIDR(h.medianPriceIDR)} color={c.green} bg={c.surface} />
+                        <Badge text={h.normalized?.category||""} color={c.dim} bg={c.surface} />
+                        <span style={{fontSize:"9px",color:c.dimmest}}>{h.timestamp?.slice(0,10)}</span>
+                      </div>
+                    </div>
+                    <div style={{textAlign:"right",marginLeft:"10px"}}>
+                      <div style={{fontSize:"18px",fontWeight:700,color:marginColor(m)}}>{m.toFixed(1)}%</div>
+                      <select value={h.status} onChange={e=>updateHistoryStatus(i,e.target.value)} style={{padding:"2px 4px",background:sc.bg,border:`1px solid ${sc.border}`,color:sc.text,fontFamily:"monospace",fontSize:"9px",borderRadius:"3px",marginTop:"2px"}}>{Object.keys(STATUS_COLORS).map(s=><option key={s} value={s}>{s}</option>)}</select>
+                    </div>
+                  </div>
+                </div>
+              )})}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ══════════ BULK ══════════ */}
+      {mode==="bulk"&&(
+        <div style={secStyle}>
+          <div style={{display:"flex",gap:"2px",marginBottom:"14px",borderBottom:`1px solid ${c.border}`}}>
+            {["① UAE","② Norm","③ Indo","④ Calc","⑤ DB"].map((l,i)=>(
+              <button key={i} onClick={()=>setBulkTab(i)} style={{padding:"6px 12px",background:bulkTab===i?c.surface2:"transparent",color:bulkTab===i?c.gold:c.dimmest,border:"none",cursor:"pointer",fontFamily:"monospace",fontSize:"10px",borderBottom:bulkTab===i?`2px solid ${c.gold}`:"2px solid transparent"}}>{l}</button>
+            ))}
+          </div>
+          {bulkTab===0&&(<div><input type="file" ref={fileRef} accept=".csv" style={{display:"none"}} onChange={e=>e.target.files[0]&&handleUAEUpload(e.target.files[0])} />{!uaeProducts.length?dropZone(false,handleUAEUpload,()=>fileRef.current?.click(),"Drop UAE CSV"):(<div><span style={{fontSize:"11px",color:c.green}}>✓ {uaeProducts.length}</span><button style={{...btnStyle,marginTop:"12px"}} onClick={()=>setBulkTab(1)}>Next →</button></div>)}</div>)}
+          {bulkTab===1&&(<div>{!uaeProducts.length?<div style={{color:c.dimmer,textAlign:"center",padding:"40px"}}>Upload first</div>:(<div><button style={{...btnStyle,opacity:normalizing||!apiKey?0.5:1}} onClick={runNormalization} disabled={normalizing||!apiKey}>{normalizing?`${normProgress.toFixed(0)}%`:`Normalize ${uaeProducts.length}`}</button>{normalized.length>0&&<button style={{...btnStyle,marginTop:"12px"}} onClick={()=>setBulkTab(2)}>Next →</button>}</div>)}</div>)}
+          {bulkTab===2&&(<div><input type="file" ref={indoFileRef} accept=".csv" style={{display:"none"}} onChange={e=>e.target.files[0]&&handleIndoUpload(e.target.files[0])} />{!bulkIndoResults.length?dropZone(true,handleIndoUpload,()=>indoFileRef.current?.click(),"Drop Indo CSV"):(<div><span style={{fontSize:"11px",color:c.green}}>✓ {bulkIndoResults.length}</span><button style={{...btnStyle,marginTop:"12px"}} onClick={()=>setBulkTab(3)}>Next →</button></div>)}</div>)}
+          {bulkTab===3&&(<div><button style={{...btnStyle,opacity:uaeProducts.length&&bulkIndoResults.length?1:0.3}} onClick={runMarginCalc} disabled={!uaeProducts.length||!bulkIndoResults.length}>Calculate Margins</button></div>)}
+          {bulkTab===4&&(<div><div style={{display:"flex",justifyContent:"space-between",marginBottom:"10px"}}><span style={{fontSize:"10px",color:c.dim}}>{database.length} products</span><button style={btnSec} onClick={()=>{const h=["Name","Bahasa","AED","IDR","Margin%","Status"];const r=database.map(p=>[`"${p.nameEn}"`,`"${p.nameId}"`,p.uaePriceAED,p.indoPriceIDR,p.grossMarginPct.toFixed(1),p.status].join(","));const b=new Blob([[h.join(","),...r].join("\n")],{type:"text/csv"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="bulk.csv";a.click()}}>EXPORT</button></div>{database.sort((a,b)=>b.grossMarginPct-a.grossMarginPct).map(p=>{const sc=STATUS_COLORS[p.status]||STATUS_COLORS.Candidate;return(<div key={p.id} style={{padding:"8px 10px",background:c.surface2,border:`1px solid ${sc.border}`,borderRadius:"4px",borderLeft:`3px solid ${sc.text}`,marginBottom:"4px",display:"flex",justifyContent:"space-between"}}><div style={{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontSize:"11px"}}>{p.nameEn} <span style={{color:c.dim}}>AED {p.uaePriceAED.toFixed(0)}</span></div><div style={{fontSize:"16px",fontWeight:700,color:marginColor(p.grossMarginPct),marginLeft:"10px"}}>{p.grossMarginPct.toFixed(1)}%</div></div>)})}</div>)}
+        </div>
+      )}
+
+      </>)}
     </div>
   );
 }
