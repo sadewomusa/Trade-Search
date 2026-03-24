@@ -32,6 +32,69 @@ function fmtIDR(n) { return n ? "IDR " + Math.round(n).toLocaleString() : "—";
 function fmtAED(n) { return n ? "AED " + n.toFixed(2) : "—"; }
 function fmtUSD(n) { return n ? "$" + n.toFixed(2) : "—"; }
 
+// ══════════ IDR PRICE SANITIZER ══════════
+// Catches dot-separator corruption: 25.000 → 25 instead of 25000
+function sanitizeIDR(price) {
+  if (typeof price === "string") {
+    // "Rp 25.000" or "Rp25.000" or "25.000"
+    const cleaned = price.replace(/^[Rr]p\.?\s*/,"").replace(/\./g, "").replace(/,/g, "").trim();
+    price = parseInt(cleaned, 10) || 0;
+  }
+  if (typeof price !== "number" || isNaN(price)) return 0;
+  // If price looks like a decimal that was a dot-separated IDR (e.g. 25.0 should be 25000)
+  // Heuristic: any IDR price under 500 is almost certainly corrupted
+  // Real IDR prices for products are typically 5,000 - 50,000,000
+  if (price > 0 && price < 500) {
+    // Likely "25.000" parsed as 25.0 — multiply by 1000
+    price = Math.round(price * 1000);
+  }
+  if (price > 0 && price < 1000) {
+    // Still suspicious — could be "150.000" parsed as 150 — multiply by 1000
+    price = Math.round(price * 1000);
+  }
+  return Math.round(price);
+}
+
+// ══════════ DATA CONFIDENCE SCORER ══════════
+function computeConfidence(results, priceStats) {
+  const validPrices = results.filter(r => (r.price_idr || 0) >= 1000);
+  const totalResults = results.length;
+  const withSold = results.filter(r => r.sold && r.sold.trim() && !/^-|^—/.test(r.sold)).length;
+
+  // Price spread ratio: highest / lowest — anything over 10x is suspect
+  const spread = priceStats.highest_idr && priceStats.lowest_idr > 0
+    ? priceStats.highest_idr / priceStats.lowest_idr : 999;
+
+  let score = 0;
+  let flags = [];
+
+  // Valid price count (0-40 pts)
+  if (validPrices.length >= 10) score += 40;
+  else if (validPrices.length >= 5) score += 30;
+  else if (validPrices.length >= 3) score += 20;
+  else { score += 5; flags.push("Few valid prices"); }
+
+  // Price spread (0-30 pts)
+  if (spread <= 3) score += 30;
+  else if (spread <= 5) score += 20;
+  else if (spread <= 10) score += 10;
+  else { score += 0; flags.push(`Wide price spread (${spread.toFixed(0)}×)`); }
+
+  // Sold data (0-20 pts)
+  if (withSold >= 5) score += 20;
+  else if (withSold >= 2) score += 10;
+  else { score += 0; flags.push("No sold data"); }
+
+  // Discarded vs total (0-10 pts)
+  const discardRate = totalResults > 0 ? (totalResults - validPrices.length) / totalResults : 1;
+  if (discardRate <= 0.1) score += 10;
+  else if (discardRate <= 0.3) score += 5;
+  else { score += 0; flags.push(`${Math.round(discardRate * 100)}% prices discarded`); }
+
+  const level = score >= 70 ? "high" : score >= 40 ? "medium" : "low";
+  return { score, level, flags, validCount: validPrices.length, totalCount: totalResults, withSold, spread: spread < 999 ? spread : null };
+}
+
 // ══════════ CSV PARSER (handles quoted fields, escaped quotes, BOM) ══════════
 function parseCSV(text) {
   // Strip BOM
@@ -515,26 +578,34 @@ JSON only:`,
     const doSearch = async (queries, attemptLabel) => {
       // Step 1: Search naturally (Sonnet + web search, higher token limit)
       setStage(`${attemptLabel}Searching Indonesian marketplaces... (~25s)`);
-      const searchInstructions = queries.slice(0, 4).map(q =>
-        `- Search: "${q} harga tokopedia"\n- Search: "${q} shopee indonesia"`
+      // Build focused search instructions: Bahasa terms + bestseller targeting
+      const searchInstructions = queries.slice(0, 3).map(q =>
+        `- Search: "${q} tokopedia terlaris"\n- Search: "${q} shopee paling laku"`
       ).join("\n");
 
       const rawSearch = await runWithProgress(() => callClaude(
-`You are a product researcher. Search for "${dryRunData.clean_name_id}" (English: "${dryRunData.clean_name_en}") on Indonesian e-commerce.
+`You are a product researcher. Search for "${dryRunData.clean_name_id}" (English: "${dryRunData.clean_name_en}") on Indonesian e-commerce marketplaces.
 
 Do these searches one by one:
 ${searchInstructions}
-- Search: "harga ${primaryQueries[0]} 2025 indonesia"
+- Search: "${queries[0]} harga terbaru indonesia"
+- Search: "top selling ${dryRunData.category || "product"} ${queries[0]} tokopedia shopee"
 
 IMPORTANT INSTRUCTIONS:
 - You MUST actually perform each web search above
-- For EVERY product listing you find in the search results, extract: product name, price in IDR (Indonesian Rupiah), marketplace (Tokopedia or Shopee), seller name, units sold if shown
-- Include ALL products you find across all searches — even if they're slightly different variants
+- PRIORITIZE listings that show sales volume / "terjual" / "sold" counts — these indicate real demand
+- For EVERY product listing you find, extract:
+  * Product name (exact name from the listing)
+  * Price in IDR (Indonesian Rupiah) — convert from Rp format: Rp 25.000 = 25000, Rp 1.500.000 = 1500000
+  * Marketplace: "Tokopedia" or "Shopee"
+  * Seller/shop name
+  * Units sold if visible (e.g. "1rb+ terjual", "500+ sold", "5.000+ terjual")
+  * Product URL
+- Include ALL products found across all searches — even slightly different variants
 - Aim for at least 8-15 listings
-- If a price shows "Rp" or "Rp." prefix, that means Indonesian Rupiah (IDR)
-- Common price ranges: Rp 10.000 = IDR 10000, Rp 150.000 = IDR 150000, Rp 1.500.000 = IDR 1500000
+- Pay attention to "terjual" or "sold" indicators — these are critical for evaluating market demand
 
-List every product found with all details. Be thorough.`,
+List every product found with all available details. Be thorough — especially with prices and sold counts.`,
         "claude-sonnet-4-20250514", true, 2, 4096), 30);
 
       // Step 2: Format to JSON (Haiku, higher token limit)
@@ -547,14 +618,20 @@ RAW SEARCH RESULTS:
 ${rawSearch}
 
 Output this JSON structure:
-{"results":[{"name":"exact product name from listing","price_idr":NUMBER_IN_RUPIAH,"source":"Tokopedia" or "Shopee","seller":"shop name","sold":"units sold if mentioned e.g. 1rb+ terjual, otherwise empty string","url":"product URL if found, otherwise empty string"}],"price_stats":{"lowest_idr":NUMBER,"highest_idr":NUMBER,"median_idr":NUMBER,"average_idr":NUMBER,"num_results":NUMBER},"search_notes":"brief summary of what was found"}
+{"results":[{"name":"exact product name from listing","price_idr":NUMBER_IN_RUPIAH,"source":"Tokopedia" or "Shopee","seller":"shop name","sold":"units sold if mentioned e.g. 1rb+ terjual, 500+ sold, otherwise empty string","url":"product URL if found, otherwise empty string"}],"price_stats":{"lowest_idr":NUMBER,"highest_idr":NUMBER,"median_idr":NUMBER,"average_idr":NUMBER,"num_results":NUMBER},"search_notes":"brief summary of what was found"}
 
-RULES:
-- price_idr must be a NUMBER in Indonesian Rupiah. Convert from Rp format: "Rp 25.000" = 25000, "Rp 1.500.000" = 1500000
-- Include EVERY product found in the search — do not skip any
-- If you see prices with dots as thousands separators (Indonesian format), convert properly: 15.000 = 15000, 150.000 = 150000
+CRITICAL RULES FOR PRICES:
+- price_idr MUST be an INTEGER number in Indonesian Rupiah
+- Convert from Rp format: "Rp 25.000" = 25000 (NOT 25.0), "Rp 1.500.000" = 1500000 (NOT 1500.0)
+- Indonesian prices use DOTS as thousands separators: 15.000 means fifteen thousand (15000)
+- NEVER output a decimal like 25.000 — that should be the integer 25000
+- Valid price range for most products: 5000 to 50000000
+- If a price looks like it's below 1000 IDR, you probably forgot to convert dots
+
+OTHER RULES:
+- Include EVERY product found — do not skip any
 - source must be exactly "Tokopedia" or "Shopee"
-- If "sold" info isn't available, use empty string ""
+- "sold" field: use the EXACT text from the listing (e.g. "1rb+ terjual", "250+ sold"). If not available, use empty string ""
 - Calculate price_stats from the actual results array
 
 JSON only, no other text:`,
@@ -647,30 +724,16 @@ JSON only:`, "claude-haiku-4-5-20251001", false, 1, 4096);
         throw new Error("No Indonesian listings found after 3 search attempts. Try editing the keywords to simpler Bahasa terms, or search for a broader product category.");
       }
 
-      // Compute price_stats if missing
-      if (!indo.price_stats || !indo.price_stats.median_idr) {
-        const prices = indo.results
-          .map(r => r.price_idr || r.price || 0)
-          .filter(x => x > 0)
-          .sort((a, b) => a - b);
-        if (prices.length > 0) {
-          indo.price_stats = {
-            lowest_idr: prices[0],
-            highest_idr: prices[prices.length - 1],
-            median_idr: prices[Math.floor(prices.length / 2)],
-            average_idr: Math.round(prices.reduce((s, x) => s + x, 0) / prices.length),
-            num_results: prices.length,
-          };
-        }
-      }
-
-      // Clean up results
+      // ─── SANITIZE PRICES + CLEAN RESULTS ───
       indo.results = indo.results.map(r => {
         let sold = r.sold || r.terjual || "";
         if (typeof sold === "string" && /not visible|not available|n\/a|^0$/i.test(sold)) sold = "";
+        const rawPrice = r.price_idr || r.price || 0;
+        const sanitizedPrice = sanitizeIDR(rawPrice);
         return {
           name: r.name || r.product_name || "",
-          price_idr: r.price_idr || r.price || 0,
+          price_idr: sanitizedPrice,
+          price_idr_raw: rawPrice, // keep original for debugging
           source: r.source || r.platform || "Tokopedia",
           seller: r.seller || r.shop || r.shop_name || "",
           sold,
@@ -678,15 +741,73 @@ JSON only:`, "claude-haiku-4-5-20251001", false, 1, 4096);
         };
       });
 
+      // Remove results with invalid prices
+      const validResults = indo.results.filter(r => r.price_idr >= 1000);
+      const discardedCount = indo.results.length - validResults.length;
+      if (discardedCount > 0) console.log(`Discarded ${discardedCount} results with invalid IDR prices`);
+
+      // Outlier removal: if spread > 10x, trim top/bottom 10%
+      if (validResults.length >= 5) {
+        const sorted = [...validResults].sort((a, b) => a.price_idr - b.price_idr);
+        const lo = sorted[0].price_idr;
+        const hi = sorted[sorted.length - 1].price_idr;
+        if (hi / lo > 10) {
+          const trimCount = Math.max(1, Math.floor(validResults.length * 0.1));
+          const trimmed = sorted.slice(trimCount, sorted.length - trimCount);
+          if (trimmed.length >= 3) {
+            indo.results = trimmed;
+            console.log(`Trimmed ${trimCount * 2} outliers (spread was ${(hi / lo).toFixed(0)}×)`);
+          } else {
+            indo.results = validResults;
+          }
+        } else {
+          indo.results = validResults;
+        }
+      } else {
+        indo.results = validResults;
+      }
+
+      // Recompute price_stats from sanitized, validated results
+      const cleanPrices = indo.results
+        .map(r => r.price_idr)
+        .filter(x => x >= 1000)
+        .sort((a, b) => a - b);
+
+      if (cleanPrices.length > 0) {
+        indo.price_stats = {
+          lowest_idr: cleanPrices[0],
+          highest_idr: cleanPrices[cleanPrices.length - 1],
+          median_idr: cleanPrices[Math.floor(cleanPrices.length / 2)],
+          average_idr: Math.round(cleanPrices.reduce((s, x) => s + x, 0) / cleanPrices.length),
+          num_results: cleanPrices.length,
+        };
+      } else if (indo.results.length > 0) {
+        // Fallback: use whatever we have
+        const anyPrices = indo.results.map(r => r.price_idr).filter(x => x > 0).sort((a, b) => a - b);
+        if (anyPrices.length > 0) {
+          indo.price_stats = {
+            lowest_idr: anyPrices[0],
+            highest_idr: anyPrices[anyPrices.length - 1],
+            median_idr: anyPrices[Math.floor(anyPrices.length / 2)],
+            average_idr: Math.round(anyPrices.reduce((s, x) => s + x, 0) / anyPrices.length),
+            num_results: anyPrices.length,
+          };
+        }
+      }
+
+      // ─── CONFIDENCE SCORING ───
+      const confidence = computeConfidence(indo.results, indo.price_stats || {});
+      indo.confidence = confidence;
+
       setIndoResults(indo);
 
       // ─── Calculate margins ───
       const wc = dryRunData.weight_class || "medium";
       const stats = indo.price_stats;
-      const med = stats.median_idr || stats.average_idr || 0;
+      if (!stats || !stats.median_idr) throw new Error("No valid prices found after sanitization. Try different keywords.");
+      const med = stats.median_idr;
       const low = stats.lowest_idr || med;
       const high = stats.highest_idr || med;
-      if (med === 0) throw new Error("No valid prices found in results.");
 
       const calcMargin = (indoIDR) => {
         const uaeUSD = dryRunData.price_aed * fx.AEDUSD;
@@ -719,6 +840,7 @@ JSON only:`, "claude-haiku-4-5-20251001", false, 1, 4096);
           best: calcMargin(low),
           worst: calcMargin(high),
         },
+        confidence,
         medianPriceIDR: med,
         lowestPriceIDR: low,
         highestPriceIDR: high,
@@ -1322,6 +1444,47 @@ All prices must be numbers in AED. JSON only:`,
 
               {/* ② INDONESIA MARKET */}
               <SectionToggle index={1} title="Indonesia Market — Tokopedia & Shopee" icon="🇮🇩" count={indoResults?.results?.length}>
+                {/* Confidence indicator */}
+                {indoResults?.confidence && (
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: "8px", padding: "8px 12px", marginBottom: "12px",
+                    background: indoResults.confidence.level === "high" ? (dark ? "#0D2E1A" : "#E8F5EC")
+                      : indoResults.confidence.level === "medium" ? (dark ? "#2A2210" : "#FDF8ED")
+                      : (dark ? "#3a1a1a" : "#FEF2F2"),
+                    border: `1px solid ${indoResults.confidence.level === "high" ? c.green + "44"
+                      : indoResults.confidence.level === "medium" ? c.gold + "44"
+                      : c.red + "44"}`,
+                    borderRadius: "4px",
+                  }}>
+                    <div style={{
+                      fontSize: "10px", fontWeight: 700, letterSpacing: "0.5px", textTransform: "uppercase",
+                      color: indoResults.confidence.level === "high" ? c.green
+                        : indoResults.confidence.level === "medium" ? c.gold : c.red,
+                    }}>
+                      {indoResults.confidence.level === "high" ? "● HIGH" : indoResults.confidence.level === "medium" ? "● MEDIUM" : "● LOW"} CONFIDENCE
+                    </div>
+                    <div style={{ fontSize: "10px", color: c.dim, flex: 1 }}>
+                      {indoResults.confidence.validCount} valid prices
+                      {indoResults.confidence.withSold > 0 && ` · ${indoResults.confidence.withSold} with sold data`}
+                      {indoResults.confidence.spread && ` · ${indoResults.confidence.spread.toFixed(1)}× spread`}
+                    </div>
+                    <div style={{ fontSize: "11px", fontWeight: 700, color: c.dim }}>{indoResults.confidence.score}/100</div>
+                  </div>
+                )}
+                {/* Confidence flags */}
+                {indoResults?.confidence?.flags?.length > 0 && (
+                  <div style={{ display: "flex", gap: "4px", flexWrap: "wrap", marginBottom: "10px" }}>
+                    {indoResults.confidence.flags.map((f, i) => (
+                      <span key={i} style={{
+                        display: "inline-block", padding: "2px 6px", borderRadius: "3px",
+                        fontSize: "9px", fontFamily: "monospace",
+                        background: dark ? "#2A2210" : "#FDF8ED",
+                        color: c.darkGold,
+                        border: `1px solid ${c.gold}33`,
+                      }}>⚠ {f}</span>
+                    ))}
+                  </div>
+                )}
                 {indoResults?.price_stats && (
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: "8px", marginBottom: "12px" }}>
                     {[
@@ -1343,7 +1506,11 @@ All prices must be numbers in AED. JSON only:`,
                     <div>Product · Seller</div><div>Source</div><div style={{ textAlign: "right" }}>Price</div><div style={{ textAlign: "right" }}>Sold</div>
                   </div>
                   {indoResults?.results?.map((r, i) => (
-                    <div key={i} style={{ display: "grid", gridTemplateColumns: "2.5fr 0.6fr 0.7fr 0.5fr", gap: "4px", padding: "6px 0", borderBottom: `1px solid ${c.border}`, fontSize: "11px", alignItems: "center" }}>
+                    <div key={i} style={{
+                      display: "grid", gridTemplateColumns: "2.5fr 0.6fr 0.7fr 0.5fr", gap: "4px",
+                      padding: "6px 0", borderBottom: `1px solid ${c.border}`, fontSize: "11px", alignItems: "center",
+                      background: r.sold && r.sold.trim() ? (dark ? "#0D1F1522" : "#E8F5EC44") : "transparent",
+                    }}>
                       <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {r.url ? <a href={r.url} target="_blank" rel="noopener" style={{ color: c.text, textDecoration: "none" }} title={r.name}>{r.name}</a> : r.name}
                         {r.seller && <span style={{ color: c.dimmest }}> · {r.seller}</span>}
@@ -1423,7 +1590,25 @@ All prices must be numbers in AED. JSON only:`,
                     color: marginColor(marginData.margins.median.margin),
                   }}>
                     {marginData.margins.median.margin >= MARGIN_THRESHOLD.candidate ? "✓ CANDIDATE" : marginData.margins.median.margin >= MARGIN_THRESHOLD.borderline ? "○ BORDERLINE" : "✗ LOW MARGIN"} — {marginData.margins.median.margin.toFixed(1)}%
+                    {marginData.confidence && (
+                      <span style={{
+                        marginLeft: "8px", fontSize: "9px", fontWeight: 400, opacity: 0.8,
+                        padding: "1px 6px", borderRadius: "3px",
+                        background: marginData.confidence.level === "high" ? c.green + "22"
+                          : marginData.confidence.level === "medium" ? c.gold + "22" : c.red + "22",
+                        color: marginData.confidence.level === "high" ? c.green
+                          : marginData.confidence.level === "medium" ? c.gold : c.red,
+                      }}>
+                        {marginData.confidence.level.toUpperCase()} CONF ({marginData.confidence.score})
+                      </span>
+                    )}
                   </div>
+                  {/* Low confidence warning */}
+                  {marginData.confidence?.level === "low" && (
+                    <div style={{ marginTop: "8px", padding: "8px 10px", background: dark ? "#2A1A10" : "#FEF2F2", border: `1px solid ${c.red}33`, borderRadius: "4px", fontSize: "10px", color: c.red }}>
+                      ⚠ Low confidence data — margins may be unreliable. Consider re-searching with simpler Bahasa keywords or verifying prices manually on Tokopedia/Shopee.
+                    </div>
+                  )}
                 </SectionToggle>
               )}
 
