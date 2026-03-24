@@ -26,11 +26,12 @@ const MAX_HISTORY = 100;
 const FX_CACHE_MS = 86400000; // 24h
 
 function marginColor(m) {
+  if (isNaN(m)) return "#f87171";
   return m >= MARGIN_THRESHOLD.candidate ? "#2EAA5A" : m >= MARGIN_THRESHOLD.borderline ? "#D4A843" : "#f87171";
 }
-function fmtIDR(n) { return n ? "IDR " + Math.round(n).toLocaleString() : "—"; }
-function fmtAED(n) { return n ? "AED " + n.toFixed(2) : "—"; }
-function fmtUSD(n) { return n ? "$" + n.toFixed(2) : "—"; }
+function fmtIDR(n) { return n != null && !isNaN(n) ? "IDR " + Math.round(n).toLocaleString() : "—"; }
+function fmtAED(n) { return n != null && !isNaN(n) ? "AED " + n.toFixed(2) : "—"; }
+function fmtUSD(n) { return n != null && !isNaN(n) ? "$" + n.toFixed(2) : "—"; }
 
 // ══════════ IDR PRICE SANITIZER ══════════
 // Catches dot-separator corruption: 25.000 → 25 instead of 25000
@@ -344,7 +345,16 @@ export default function GTCrossTrade() {
     const fetchFx = async () => {
       const cached = lsGet("arb-fx");
       if (cached && Date.now() - cached.ts < FX_CACHE_MS) {
-        setFx(cached.rates);
+        // Always recompute derived keys from base keys (handles old cache with IDRAED/AEDIDR)
+        const base = cached.rates;
+        const aedusd = base.AEDUSD || 0.2723;
+        const idrusd = base.IDRUSD || 0.0000613;
+        setFx({
+          AEDUSD: aedusd,
+          IDRUSD: idrusd,
+          AED_TO_IDR: aedusd / idrusd,
+          IDR_TO_AED: idrusd / aedusd,
+        });
         setFxUpdated(new Date(cached.ts));
         return;
       }
