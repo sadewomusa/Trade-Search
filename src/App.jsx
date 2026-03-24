@@ -112,46 +112,201 @@ export default function ArbitragePlatform() {
 
   const saveApiKey = () => { localStorage.setItem("arb-api-key", apiKey); setApiKeyStatus("saved"); setTimeout(() => setApiKeyStatus(""), 2000); };
 
-  const callClaude = async (prompt, useSearch = false) => {
-    const body = { model: "claude-sonnet-4-20250514", max_tokens: 2000, messages: [{ role: "user", content: prompt }] };
+  // ─── API CALL WITH RETRY ───
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+
+  const callClaude = async (prompt, model = "claude-haiku-4-5-20251001", useSearch = false, retries = 2) => {
+    const body = { model, max_tokens: 2000, messages: [{ role: "user", content: prompt }] };
     if (useSearch) body.tools = [{ type: "web_search_20250305", name: "web_search" }];
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST", headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
-      body: JSON.stringify(body),
-    });
-    if (!r.ok) throw new Error("API error: " + r.status);
-    const data = await r.json();
-    return data.content?.map(b => b.text || "").filter(Boolean).join("\n") || "";
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const r = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
+          body: JSON.stringify(body),
+        });
+
+        if (r.status === 429) {
+          if (attempt < retries) {
+            const waitTime = (attempt + 1) * 15000; // 15s, 30s
+            setStage(prev => prev + ` (rate limited, retrying in ${waitTime/1000}s...)`);
+            await wait(waitTime);
+            continue;
+          }
+          throw new Error("Rate limited. Please wait 1 minute and try again.");
+        }
+        if (!r.ok) throw new Error("API error: " + r.status);
+        const data = await r.json();
+        return data.content?.map(b => b.text || "").filter(Boolean).join("\n") || "";
+      } catch (err) {
+        if (attempt === retries) throw err;
+        await wait((attempt + 1) * 10000);
+      }
+    }
   };
 
-  const parseJSON = (text) => { const c = text.replace(/```json|```/g, "").trim(); const m = c.match(/\{[\s\S]*\}/); return JSON.parse(m ? m[0] : c); };
+  const parseJSON = (text) => {
+    const c = text.replace(/```json|```/g, "").trim();
+    const m = c.match(/\{[\s\S]*\}/);
+    return JSON.parse(m ? m[0] : c);
+  };
 
+  // ─── AUTO LOOKUP ───
   const runAutoLookup = async () => {
     if (!apiKey) { setApiKeyStatus("missing"); return; }
-    if (!url.trim()) return;
+    const input = url.trim();
+    if (!input) return;
+
+    // Validate URL format
+    if (input.includes("amzn.eu") || input.includes("amzn.to") || input.includes("a.co/")) {
+      setAutoError("Shortened link detected. Please open this link in your browser first, then copy the full URL from the address bar (should start with https://www.amazon.ae/...)");
+      return;
+    }
+
     setLoading(true); setAutoError(""); setUaeProduct(null); setIndoResults(null); setMarginData(null);
+
     try {
-      setStage("Reading product from URL...");
-      const ex = await callClaude(`You are a product data extraction engine. Use web search to find this UAE marketplace product and extract details.\n\nURL: ${url.trim()}\n\nReturn ONLY valid JSON (no markdown, no backticks):\n- "product_name": full name\n- "price_aed": price as number\n- "brand": brand or ""\n- "rating": star rating or 0\n- "reviews": count or 0\n- "source": "Amazon.ae" or "Noon"\n\nJSON only:`, true);
-      let uae; try { uae = parseJSON(ex); } catch(e) { throw new Error("Could not extract product. Try full URL with https://"); }
+      // ── STEP 1: Extract product (Sonnet + web search) ──
+      setStage("Step 1/3 — Reading product from URL...");
+      const ex = await callClaude(
+        `You are a product data extraction engine. Use web search to visit this UAE marketplace product page and extract its details.
+
+URL: ${input}
+
+Search the web for this exact product URL. Return ONLY valid JSON (no markdown, no backticks, no explanation before or after):
+{
+  "product_name": "full product name as listed on the page",
+  "price_aed": numeric price in AED (just the number, no currency symbol),
+  "brand": "brand name if visible, otherwise empty string",
+  "rating": star rating as number or 0,
+  "reviews": number of reviews or 0,
+  "source": "Amazon.ae" or "Noon" based on the URL
+}
+
+JSON only:`,
+        "claude-sonnet-4-20250514", true
+      );
+
+      let uae;
+      try { uae = parseJSON(ex); } catch(e) { throw new Error("Could not read product page. Make sure the URL is a full product link (https://www.amazon.ae/..../dp/B0XXXXX)"); }
+      if (!uae.product_name || !uae.price_aed) throw new Error("Product details incomplete. Try a different product link.");
       setUaeProduct(uae);
 
-      setStage("Translating to Bahasa Indonesia...");
-      const nm = await callClaude(`Product normalization. Output ONLY valid JSON:\n- "clean_name_en": short generic English name\n- "clean_name_id": Bahasa Indonesia\n- "category": [electronics, kitchen, beauty, fashion, home, toys, sports, baby, office, other]\n- "weight_class": [light, medium, heavy]\n- "key_specs": specs string\n- "search_queries": array of 3 Bahasa search queries for Tokopedia/Shopee\n\nProduct: "${uae.product_name}" Price: AED ${uae.price_aed}\nJSON only:`);
-      let norm; try { norm = parseJSON(nm); } catch(e) { throw new Error("Could not normalize product."); }
+      // ── Pause 8 seconds to avoid rate limit ──
+      setStage("Step 1/3 — Product found ✓ Preparing translation...");
+      await wait(8000);
 
-      setStage("Searching Tokopedia & Shopee...");
-      const queries = norm.search_queries || [norm.clean_name_id];
-      const sr = await callClaude(`Search Tokopedia and Shopee Indonesia for:\nQueries: ${JSON.stringify(queries)}\nProduct: "${norm.clean_name_en}" (${norm.key_specs || ""})\n\nFind real listings with IDR prices. Return ONLY valid JSON:\n{"results": [{"name":"...","price_idr":number,"source":"Tokopedia"/"Shopee","seller":"...","seller_rating":0,"url":"..."}], "price_stats":{"lowest_idr":number,"highest_idr":number,"median_idr":number,"average_idr":number,"num_results":number}}\n\nFind 5-8 real listings. JSON only:`, true);
-      let indo; try { indo = parseJSON(sr); } catch(e) { throw new Error("Could not find Indonesian listings."); }
+      // ── STEP 2: Translate & normalize (Haiku, no search needed — fast & cheap) ──
+      setStage("Step 2/3 — Translating to Bahasa Indonesia...");
+      const nm = await callClaude(
+        `You are a product translation and normalization engine for cross-border Indonesia-UAE trade.
+
+Given this product from a UAE marketplace, you must:
+1. Clean the product name (remove brand names and marketing fluff)
+2. Translate it accurately to Bahasa Indonesia as it would appear on Tokopedia or Shopee Indonesia
+3. Generate multiple search queries in BAHASA INDONESIA that a buyer in Indonesia would type
+
+Product name: "${uae.product_name}"
+Price: AED ${uae.price_aed}
+Brand: "${uae.brand || ""}"
+
+Return ONLY valid JSON:
+{
+  "clean_name_en": "short clean English product description",
+  "clean_name_id": "nama produk dalam Bahasa Indonesia",
+  "category": "one of: electronics, kitchen, beauty, fashion, home, toys, sports, baby, office, other",
+  "weight_class": "one of: light, medium, heavy",
+  "key_specs": "size, material, weight, or other key specs as short string",
+  "search_queries_id": ["query bahasa 1", "query bahasa 2", "query bahasa 3"],
+  "search_queries_en": ["english query 1", "english query 2"]
+}
+
+IMPORTANT: search_queries_id MUST be in Bahasa Indonesia. These will be used to search Tokopedia and Shopee Indonesia. Think about what an Indonesian buyer would actually type. For example:
+- Baby socks → "kaos kaki bayi"
+- Non-stick frying pan → "wajan anti lengket"  
+- Phone charger → "charger hp fast charging"
+- Moisturizing cream → "krim pelembab wajah"
+
+JSON only:`,
+        "claude-haiku-4-5-20251001", false
+      );
+
+      let norm;
+      try { norm = parseJSON(nm); } catch(e) { throw new Error("Translation failed. Please try again."); }
+
+      // Show translation results immediately
+      setIndoResults({ results: [], price_stats: null, normalized: norm });
+
+      // ── Pause 8 seconds to avoid rate limit ──
+      setStage("Step 2/3 — Translated ✓ Searching Indonesian marketplaces...");
+      await wait(8000);
+
+      // ── STEP 3: Search Tokopedia & Shopee using BAHASA queries (Sonnet + web search) ──
+      const bahasaQueries = norm.search_queries_id || [norm.clean_name_id];
+      const englishQueries = norm.search_queries_en || [norm.clean_name_en];
+
+      setStage("Step 3/3 — Searching Tokopedia & Shopee with: " + bahasaQueries[0] + "...");
+      const sr = await callClaude(
+        `You are a product price researcher for Indonesian e-commerce marketplaces.
+
+I need you to search for this product on Tokopedia.com and Shopee.co.id (Indonesian marketplaces).
+
+PRODUCT TO FIND: "${norm.clean_name_id}" (English: "${norm.clean_name_en}")
+Specs: ${norm.key_specs || "n/a"}
+
+SEARCH INSTRUCTIONS:
+1. First search using these BAHASA INDONESIA queries on Tokopedia and Shopee:
+${bahasaQueries.map((q, i) => `   - "${q}" site:tokopedia.com`).join("\n")}
+${bahasaQueries.map((q, i) => `   - "${q}" site:shopee.co.id`).join("\n")}
+
+2. If Bahasa queries don't return enough results, also try these English queries:
+${englishQueries.map((q, i) => `   - "${q}" tokopedia`).join("\n")}
+
+3. Look for the SAME TYPE of product. Match the specs (size, capacity, material) as closely as possible.
+
+Return ONLY valid JSON with real prices in Indonesian Rupiah (IDR):
+{
+  "results": [
+    {
+      "name": "product name as listed (in Indonesian/English as shown)",
+      "price_idr": price as number in IDR (e.g. 85000, 125000, NOT in USD),
+      "source": "Tokopedia" or "Shopee",
+      "seller": "shop/seller name",
+      "seller_rating": rating or 0,
+      "url": "product URL if found"
+    }
+  ],
+  "price_stats": {
+    "lowest_idr": lowest price found,
+    "highest_idr": highest price found,
+    "median_idr": middle price,
+    "average_idr": average of all prices,
+    "num_results": how many listings found
+  },
+  "search_notes": "brief note on what you found and search quality"
+}
+
+IMPORTANT: All prices must be in IDR (Indonesian Rupiah). Typical IDR prices are in thousands/hundreds of thousands (e.g. 50000, 150000, 300000). If you see prices like 5.00 or 15.00 those are likely USD — convert them to IDR or skip them.
+
+Find at least 5 real product listings. JSON only:`,
+        "claude-sonnet-4-20250514", true
+      );
+
+      let indo;
+      try { indo = parseJSON(sr); } catch(e) { throw new Error("Could not find Indonesian listings. Try a different product — some items are too niche for web search."); }
       setIndoResults({ ...indo, normalized: norm });
 
+      // ── STEP 4: Calculate margins ──
       setStage("Calculating margins...");
       const wc = norm.weight_class || "medium";
       const stats = indo.price_stats || {};
       const med = stats.median_idr || stats.average_idr || 0;
       const low = stats.lowest_idr || med;
       const high = stats.highest_idr || med;
+
+      if (med === 0) throw new Error("No valid Indonesian prices found. The product may not be available on Tokopedia/Shopee.");
+
       const mData = {
         uaeProduct: uae, normalized: norm, indoResults: indo,
         margins: { median: calcMargin(uae.price_aed, med, wc), best: calcMargin(uae.price_aed, low, wc), worst: calcMargin(uae.price_aed, high, wc) },
@@ -166,6 +321,7 @@ export default function ArbitragePlatform() {
     setLoading(false);
   };
 
+  // ─── BULK PIPELINE ───
   const handleUAEUpload = useCallback((file) => { const reader = new FileReader(); reader.onload = (e) => { const rows = parseCSV(e.target.result); const products = rows.map((r, i) => ({ id: `uae-${Date.now()}-${i}`, name: r["product_name"] || r["name"] || r["title"] || r["Product Name"] || r["Name"] || r["Title"] || Object.values(r)[0] || "", price: parseFloat(r["price"] || r["Price"] || r["selling_price"] || r["current_price"] || Object.values(r)[1] || "0"), currency: "AED", asin: r["asin"] || r["ASIN"] || "", rating: parseFloat(r["rating"] || r["Rating"] || "0"), reviews: parseInt(r["reviews"] || r["review_count"] || "0"), source: r["source"] || (r["asin"] ? "Amazon.ae" : "Noon"), category: guessCategory(r["product_name"] || r["name"] || r["title"] || r["Product Name"] || r["Name"] || r["Title"] || Object.values(r)[0] || ""), })); setUaeProducts(products); localStorage.setItem("arb-uae-products", JSON.stringify(products)); }; reader.readAsText(file); }, []);
   const handleIndoUpload = useCallback((file) => { const reader = new FileReader(); reader.onload = (e) => { const rows = parseCSV(e.target.result); const results = rows.map((r, i) => ({ id: `indo-${Date.now()}-${i}`, searchQuery: r["search_query"] || r["query"] || r["Search Query"] || "", name: r["product_name"] || r["name"] || r["title"] || r["Product Name"] || r["Name"] || r["Title"] || Object.values(r)[0] || "", price: parseFloat(r["price"] || r["Price"] || r["selling_price"] || "0"), currency: "IDR", seller: r["seller"] || r["shop_name"] || r["Seller"] || "", sellerRating: parseFloat(r["seller_rating"] || r["shop_rating"] || "0"), salesVolume: r["sales_volume"] || r["sold"] || r["total_sold"] || "", source: r["source"] || "Tokopedia", })); setBulkIndoResults(results); }; reader.readAsText(file); }, []);
 
@@ -175,12 +331,12 @@ export default function ArbitragePlatform() {
     for (let i = 0; i < uaeProducts.length; i++) {
       const p = uaeProducts[i];
       try {
-        const result = await callClaude(`Product normalization. Output ONLY valid JSON:\n- "clean_name_en": short generic English name\n- "clean_name_id": Bahasa Indonesia\n- "category": [electronics, kitchen, beauty, fashion, home, toys, sports, baby, office, other]\n- "key_specs": specs\n- "search_query_tokopedia": 2-4 word Bahasa search query\n\nProduct: "${p.name}" Price: AED ${p.price}\nJSON only:`);
+        const result = await callClaude(`Product normalization. Output ONLY valid JSON:\n- "clean_name_en": short generic English name\n- "clean_name_id": Bahasa Indonesia translation (as typed on Tokopedia)\n- "category": [electronics, kitchen, beauty, fashion, home, toys, sports, baby, office, other]\n- "key_specs": specs\n- "search_query_tokopedia": 2-4 word Bahasa Indonesia search query for Tokopedia\n\nProduct: "${p.name}" Price: AED ${p.price}\nJSON only:`, "claude-haiku-4-5-20251001", false);
         const parsed = parseJSON(result);
         results.push({ ...p, cleanNameEn: parsed.clean_name_en || p.name, cleanNameId: parsed.clean_name_id || "", detectedCategory: parsed.category || p.category, keySpecs: parsed.key_specs || "", searchQuery: parsed.search_query_tokopedia || "", normalized: true });
       } catch (err) { results.push({ ...p, cleanNameEn: p.name, cleanNameId: "", detectedCategory: p.category, keySpecs: "", searchQuery: "", normalized: false }); }
       setNormProgress(((i + 1) / uaeProducts.length) * 100);
-      await new Promise(r => setTimeout(r, 300));
+      await wait(500);
     }
     setNormalized(results); localStorage.setItem("arb-normalized", JSON.stringify(results)); setNormalizing(false);
   };
@@ -274,13 +430,15 @@ export default function ArbitragePlatform() {
         ))}
       </div>
 
+      {/* AUTO LOOKUP */}
       {mode === "auto" && (
         <div style={sectionStyle}>
           <div style={{ display: "flex", gap: "8px", marginBottom: "20px" }}>
-            <input type="text" value={url} onChange={e => setUrl(e.target.value)} onKeyDown={e => e.key === "Enter" && !loading && runAutoLookup()} placeholder="Paste Amazon.ae or Noon product URL here..." style={{ ...inputStyle, flex: 1, fontSize: "14px", padding: "14px 16px" }} />
+            <input type="text" value={url} onChange={e => setUrl(e.target.value)} onKeyDown={e => e.key === "Enter" && !loading && runAutoLookup()} placeholder="Paste full Amazon.ae or Noon product URL (https://www.amazon.ae/...)" style={{ ...inputStyle, flex: 1, fontSize: "14px", padding: "14px 16px" }} />
             <button onClick={runAutoLookup} disabled={loading || !url.trim()} style={{ ...btnStyle, padding: "14px 32px", fontSize: "13px", opacity: loading || !url.trim() ? 0.5 : 1, whiteSpace: "nowrap" }}>{loading ? "ANALYZING..." : "ANALYZE"}</button>
           </div>
-          {loading && stage && <div style={{ padding: "14px", background: "#111", border: "1px solid #222", borderRadius: "4px", marginBottom: "16px", display: "flex", alignItems: "center", gap: "12px" }}><Spinner /> <span style={{ fontSize: "13px", color: "#e8d5b5" }}>{stage}</span></div>}
+
+          {loading && stage && <div style={{ padding: "14px", background: "#111", border: "1px solid #222", borderRadius: "4px", marginBottom: "16px", display: "flex", alignItems: "center", gap: "12px" }}><Spinner /> <span style={{ fontSize: "12px", color: "#e8d5b5" }}>{stage}</span></div>}
           {autoError && <div style={{ padding: "14px", background: "#3a1a1a", border: "1px solid #5a2d2d", borderRadius: "4px", marginBottom: "16px", fontSize: "13px", color: "#f87171" }}>⚠ {autoError}</div>}
 
           {uaeProduct && (<div>
@@ -291,24 +449,31 @@ export default function ArbitragePlatform() {
                 <span style={{ color: "#e8d5b5", fontWeight: 700, fontSize: "18px" }}>AED {uaeProduct.price_aed}</span>
                 <Badge text={uaeProduct.source || "Amazon.ae"} />
                 {uaeProduct.rating > 0 && <span style={{ color: "#facc15", fontSize: "13px" }}>★ {uaeProduct.rating}</span>}
+                {uaeProduct.reviews > 0 && <span style={{ color: "#888", fontSize: "12px" }}>{uaeProduct.reviews.toLocaleString()} reviews</span>}
               </div>
             </div>
 
             {indoResults?.normalized && (
-              <div style={{ padding: "16px", background: "#111", border: "1px solid #1a1a3a", borderRadius: "4px", marginBottom: "12px" }}>
-                <div style={{ fontSize: "9px", color: "#666", letterSpacing: "1.5px", textTransform: "uppercase", marginBottom: "8px" }}>TRANSLATION</div>
+              <div style={{ padding: "16px", background: "#111", border: "1px solid #2a1a3a", borderRadius: "4px", marginBottom: "12px" }}>
+                <div style={{ fontSize: "9px", color: "#666", letterSpacing: "1.5px", textTransform: "uppercase", marginBottom: "8px" }}>TRANSLATION (EN → BAHASA INDONESIA)</div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", fontSize: "12px" }}>
-                  <div><span style={{ color: "#666" }}>EN:</span> {indoResults.normalized.clean_name_en}</div>
-                  <div><span style={{ color: "#666" }}>ID:</span> <span style={{ color: "#e8d5b5", fontWeight: 600 }}>{indoResults.normalized.clean_name_id}</span></div>
-                  <div><Badge text={indoResults.normalized.category} color="#60a5fa" bg="#1a2a3a" /></div>
-                  <div><Badge text={indoResults.normalized.weight_class} color="#888" bg="#1a1a1a" /></div>
+                  <div><span style={{ color: "#666" }}>English:</span> {indoResults.normalized.clean_name_en}</div>
+                  <div><span style={{ color: "#666" }}>Bahasa:</span> <span style={{ color: "#e8d5b5", fontWeight: 600 }}>{indoResults.normalized.clean_name_id}</span></div>
+                  <div><Badge text={indoResults.normalized.category} color="#60a5fa" bg="#1a2a3a" /> <Badge text={indoResults.normalized.weight_class} color="#888" bg="#1a1a1a" /></div>
+                  <div style={{ color: "#888", fontSize: "11px" }}>{indoResults.normalized.key_specs}</div>
                 </div>
+                {indoResults.normalized.search_queries_id && (
+                  <div style={{ marginTop: "8px", fontSize: "11px" }}>
+                    <span style={{ color: "#666" }}>Search queries:</span>{" "}
+                    {indoResults.normalized.search_queries_id.map((q, i) => <span key={i}><Badge text={q} color="#c084fc" bg="#1a0d2a" />{" "}</span>)}
+                  </div>
+                )}
               </div>
             )}
 
             {indoResults?.price_stats && (
               <div style={{ padding: "16px", background: "#111", border: "1px solid #1a3050", borderRadius: "4px", marginBottom: "12px" }}>
-                <div style={{ fontSize: "9px", color: "#666", letterSpacing: "1.5px", textTransform: "uppercase", marginBottom: "10px" }}>INDONESIA — {indoResults.results?.length || 0} LISTINGS</div>
+                <div style={{ fontSize: "9px", color: "#666", letterSpacing: "1.5px", textTransform: "uppercase", marginBottom: "10px" }}>INDONESIA MARKET — {indoResults.results?.length || 0} LISTINGS FOUND</div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "10px", marginBottom: "12px" }}>
                   {[{ l: "LOWEST", v: indoResults.price_stats.lowest_idr, c: "#4ade80" }, { l: "MEDIAN", v: indoResults.price_stats.median_idr, c: "#e8d5b5" }, { l: "AVERAGE", v: indoResults.price_stats.average_idr, c: "#60a5fa" }, { l: "HIGHEST", v: indoResults.price_stats.highest_idr, c: "#f87171" }].map(s => (
                     <div key={s.l} style={{ padding: "10px", background: "#0a0a0a", border: "1px solid #222", borderRadius: "4px", textAlign: "center" }}>
@@ -318,12 +483,15 @@ export default function ArbitragePlatform() {
                     </div>
                   ))}
                 </div>
-                {indoResults.results && <div style={{ maxHeight: "180px", overflowY: "auto" }}>{indoResults.results.map((r, i) => (
+                {indoResults.results && indoResults.results.length > 0 && <div style={{ maxHeight: "180px", overflowY: "auto" }}>{indoResults.results.map((r, i) => (
                   <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #1a1a1a", fontSize: "11px" }}>
-                    <div style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name} <span style={{ color: "#555" }}>· {r.seller}</span></div>
-                    <div style={{ color: "#e8d5b5", fontWeight: 700, marginLeft: "12px" }}>IDR {r.price_idr?.toLocaleString()}</div>
+                    <div style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {r.name} <span style={{ color: "#555" }}>· {r.seller}</span> <Badge text={r.source || "Tokopedia"} color="#60a5fa" bg="#1a2a3a" />
+                    </div>
+                    <div style={{ color: "#e8d5b5", fontWeight: 700, marginLeft: "12px", whiteSpace: "nowrap" }}>IDR {r.price_idr?.toLocaleString()}</div>
                   </div>
                 ))}</div>}
+                {indoResults.search_notes && <div style={{ marginTop: "8px", fontSize: "10px", color: "#555", fontStyle: "italic" }}>{indoResults.search_notes}</div>}
               </div>
             )}
 
@@ -356,13 +524,16 @@ export default function ArbitragePlatform() {
           {!loading && !uaeProduct && !autoError && (
             <div style={{ textAlign: "center", padding: "60px 20px", color: "#444" }}>
               <div style={{ fontSize: "36px", marginBottom: "12px", opacity: 0.2 }}>⚡</div>
-              <div style={{ fontSize: "13px" }}>Paste an Amazon.ae or Noon link above</div>
-              <div style={{ fontSize: "11px", marginTop: "6px" }}>Auto-extract → Translate → Search Indo → Calculate margin</div>
+              <div style={{ fontSize: "13px" }}>Paste a full Amazon.ae or Noon product URL above</div>
+              <div style={{ fontSize: "11px", marginTop: "6px", color: "#333" }}>Example: https://www.amazon.ae/Product-Name/dp/B0XXXXXXX</div>
+              <div style={{ fontSize: "11px", marginTop: "12px", color: "#555" }}>Step 1: Read product → Step 2: Translate to Bahasa → Step 3: Search Tokopedia & Shopee → Calculate margin</div>
+              <div style={{ fontSize: "10px", marginTop: "8px", color: "#333" }}>~45 seconds per lookup · ~$0.03 per lookup · Haiku for translation, Sonnet for web search</div>
             </div>
           )}
         </div>
       )}
 
+      {/* HISTORY */}
       {mode === "history" && (
         <div style={sectionStyle}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "16px" }}>
@@ -401,6 +572,7 @@ export default function ArbitragePlatform() {
         </div>
       )}
 
+      {/* BULK PIPELINE */}
       {mode === "bulk" && (
         <div style={sectionStyle}>
           <div style={{ display: "flex", gap: "2px", marginBottom: "16px", borderBottom: "1px solid #222" }}>
