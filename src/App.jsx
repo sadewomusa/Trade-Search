@@ -110,7 +110,7 @@ const Spinner = () => (
 );
 
 // ══════════ MAIN APP ══════════
-export default function ArbitragePlatform() {
+export default function GTCrossTrade() {
   // ─── Auth ───
   const [unlocked, setUnlocked] = useState(false);
   const [pinInput, setPinInput] = useState("");
@@ -837,7 +837,7 @@ All prices must be numbers in AED. JSON only:`,
     const blob = new Blob([[headers.join(","), ...rows].join("\n")], { type: "text/csv" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `arbitrage-analysis-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `gt-crosstrade-analysis-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
   };
 
@@ -866,9 +866,9 @@ All prices must be numbers in AED. JSON only:`,
     if (!marginData) return;
     const m = marginData.margins.median;
     const q = getQty();
-    const html = `<!DOCTYPE html><html><head><title>Arbitrage Analysis - ${marginData.uaeProduct?.product_name}</title>
+    const html = `<!DOCTYPE html><html><head><title>GT Cross-Trade Analysis - ${marginData.uaeProduct?.product_name}</title>
     <style>body{font-family:Arial,sans-serif;padding:40px;max-width:800px;margin:0 auto;color:#1a1a1a}h1{font-size:20px;border-bottom:2px solid #1a7a3a;padding-bottom:8px}h2{font-size:14px;color:#8B6914;margin-top:24px}table{width:100%;border-collapse:collapse;margin:12px 0}td,th{padding:8px 12px;border:1px solid #ddd;text-align:left;font-size:12px}th{background:#f5f2eb;font-weight:700}.green{color:#1a7a3a}.red{color:#dc2626}.gold{color:#8B6914}.big{font-size:28px;font-weight:700;text-align:center;padding:16px}.verdict{padding:12px;text-align:center;border-radius:4px;font-weight:700;margin-top:16px}@media print{body{padding:20px}}</style></head><body>
-    <h1>Cross-Border Arbitrage Analysis</h1>
+    <h1>GT Cross-Trade Analysis</h1>
     <p><strong>Date:</strong> ${new Date().toLocaleDateString()} | <strong>FX:</strong> 1 AED = ${Math.round(fx.AED_TO_IDR)} IDR</p>
     <h2>Product</h2>
     <table><tr><th>Name</th><td>${marginData.uaeProduct?.product_name}</td></tr>
@@ -1149,7 +1149,7 @@ All prices must be numbers in AED. JSON only:`,
       <div style={{ marginBottom: "16px", borderBottom: `1px solid ${c.border}`, paddingBottom: "12px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
           <div>
-            <h1 style={{ fontFamily: "'Instrument Serif',serif", fontSize: "28px", fontWeight: 400, color: c.gold, margin: 0 }}>Cross-Border Arbitrage</h1>
+            <h1 style={{ fontFamily: "'Instrument Serif',serif", fontSize: "28px", fontWeight: 400, color: c.gold, margin: 0 }}>GT Cross-Trade</h1>
             <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "4px", letterSpacing: "2px", textTransform: "uppercase" }}>UAE ← Indonesia · {fxUpdated ? `FX updated ${fxUpdated.toLocaleDateString()}` : "FX: defaults"}</div>
           </div>
           <div style={{ display: "flex", gap: "12px", fontSize: "11px", alignItems: "flex-end" }}>
