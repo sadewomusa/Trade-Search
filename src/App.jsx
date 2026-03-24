@@ -236,6 +236,17 @@ export default function GTCrossTrade() {
   const fileRef = useRef(null);
   const indoFileRef = useRef(null);
 
+  // ─── Apify ───
+  const [scrapeMode, setScrapeMode] = useState(() => {
+    try { return localStorage.getItem("arb-scrape-mode") || "legacy"; } catch { return "legacy"; }
+  });
+  const [apifyKey, setApifyKey] = useState("");
+  const [showApifyKey, setShowApifyKey] = useState(false);
+  const [apifyStatus, setApifyStatus] = useState("");
+  const [tokoActorId, setTokoActorId] = useState("voyager/tokopedia-scraper");
+  const [shopeeActorId, setShopeeActorId] = useState("voyager/shopee-scraper");
+  const [showActorConfig, setShowActorConfig] = useState(false);
+
   // ─── Theme colors ───
   const c = dark ? {
     bg: "#0a0a0a", surface: "#0C0F0C", surface2: "#0E120E", input: "#1a1a1a",
@@ -279,6 +290,12 @@ export default function GTCrossTrade() {
     if (!unlocked) return;
     const k = lsGetRaw("arb-api-key");
     if (k) { setApiKey(k); setApiKeyStatus("loaded"); }
+    const ak = lsGetRaw("arb-apify-key");
+    if (ak) { setApifyKey(ak); setApifyStatus("loaded"); }
+    const ta = lsGetRaw("arb-toko-actor");
+    if (ta) setTokoActorId(ta);
+    const sa = lsGetRaw("arb-shopee-actor");
+    if (sa) setShopeeActorId(sa);
     setHistory(lsGet("arb-auto-history", []));
     setDatabase(lsGet("arb-database", []));
     const f = lsGet("arb-freight");
@@ -298,6 +315,21 @@ export default function GTCrossTrade() {
     }, 1000);
     return () => clearTimeout(t);
   }, [apiKey]);
+
+  // ─── Auto-save Apify key ───
+  useEffect(() => {
+    if (!apifyKey || apifyKey.length < 5) return;
+    const t = setTimeout(() => {
+      lsSetRaw("arb-apify-key", apifyKey);
+      setApifyStatus("saved");
+      setTimeout(() => setApifyStatus(""), 1500);
+    }, 1000);
+    return () => clearTimeout(t);
+  }, [apifyKey]);
+
+  useEffect(() => { lsSetRaw("arb-scrape-mode", scrapeMode); }, [scrapeMode]);
+  useEffect(() => { if (tokoActorId) lsSetRaw("arb-toko-actor", tokoActorId); }, [tokoActorId]);
+  useEffect(() => { if (shopeeActorId) lsSetRaw("arb-shopee-actor", shopeeActorId); }, [shopeeActorId]);
 
   const wait = (ms) => new Promise(r => setTimeout(r, ms));
   useEffect(() => {
@@ -862,6 +894,231 @@ JSON only:`, "claude-haiku-4-5-20251001", false, 1, 4096);
     setLoading(false);
   };
 
+  // ══════════ APIFY SCRAPER ENGINE ══════════
+  const runApifyActor = async (actorId, input, label) => {
+    if (!apifyKey) throw new Error("Apify API token required. Add it in the config above.");
+    setStage(`${label} — starting actor...`);
+
+    // 1. Start the run
+    const startRes = await fetch(
+      `https://api.apify.com/v2/acts/${encodeURIComponent(actorId)}/runs?token=${apifyKey}`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) }
+    );
+    if (!startRes.ok) {
+      const err = await startRes.json().catch(() => ({}));
+      throw new Error(`Apify ${startRes.status}: ${err.error?.message || "Failed to start actor"}`);
+    }
+    const runData = await startRes.json();
+    const runId = runData.data?.id;
+    const datasetId = runData.data?.defaultDatasetId;
+    if (!runId) throw new Error("Apify: no run ID returned");
+
+    // 2. Poll until done (max ~2 min)
+    setStage(`${label} — scraping...`);
+    let status = "RUNNING";
+    let polls = 0;
+    const maxPolls = 40; // 40 × 3s = 120s
+    while ((status === "RUNNING" || status === "READY") && polls < maxPolls) {
+      await wait(3000);
+      polls++;
+      setProgress(Math.min(90, (polls / maxPolls) * 100));
+      try {
+        const pollRes = await fetch(`https://api.apify.com/v2/actor-runs/${runId}?token=${apifyKey}`);
+        const pollData = await pollRes.json();
+        status = pollData.data?.status || "UNKNOWN";
+      } catch { /* network hiccup, keep polling */ }
+    }
+
+    if (status !== "SUCCEEDED") {
+      throw new Error(`Apify actor ${status === "RUNNING" ? "timed out" : "failed"}: ${status}`);
+    }
+
+    // 3. Fetch results
+    setStage(`${label} — fetching results...`);
+    const resultsRes = await fetch(
+      `https://api.apify.com/v2/datasets/${datasetId}/items?token=${apifyKey}&limit=50`
+    );
+    if (!resultsRes.ok) throw new Error("Apify: failed to fetch results");
+    return await resultsRes.json();
+  };
+
+  // Normalize Apify actor results to our standard format
+  const normalizeApifyResults = (items, source) => {
+    return items.map(item => {
+      // Handle various actor output schemas
+      const rawPrice = item.price || item.price_idr || item.priceNum || item.normalPrice || 0;
+      const name = item.name || item.title || item.productName || item.product_name || "";
+      const sold = item.sold || item.totalSold || item.itemSold || item.terjual || "";
+      const seller = item.seller || item.shopName || item.shop_name || item.storeName || "";
+      const url = item.url || item.link || item.productUrl || "";
+      const rating = item.rating || item.ratingScore || item.stars || 0;
+      return {
+        name,
+        price_idr: sanitizeIDR(rawPrice),
+        source: source || item.source || item.platform || "Tokopedia",
+        seller,
+        sold: typeof sold === "number" ? (sold > 0 ? `${sold}+ terjual` : "") : String(sold || ""),
+        url,
+        rating,
+        _raw: item, // keep raw for debugging
+      };
+    }).filter(r => r.name && r.price_idr >= 1000);
+  };
+
+  // ══════════ INDO SEARCH — APIFY MODE ══════════
+  const runIndoSearchApify = async () => {
+    if (!dryRunData || !apifyKey) return;
+    if (!apiKey) { setAutoError("Claude API key still needed for translation. Add it above."); return; }
+    setLoading(true);
+    setAutoError("");
+    setIndoResults(null);
+    setMarginData(null);
+
+    const allQueries = editableQueries.filter(q => q.trim());
+    if (allQueries.length === 0) { setAutoError("Add at least one search query."); setLoading(false); return; }
+
+    // Pick the best Bahasa query (first non-English one, or first query)
+    const bahasaQuery = allQueries.find(q => /[^a-zA-Z0-9\s\-\.]/.test(q) || /murah|terlaris|harga/i.test(q)) || allQueries[0];
+
+    try {
+      let allResults = [];
+
+      // ─── Scrape Tokopedia ───
+      setStage("Scraping Tokopedia...");
+      setProgress(0);
+      try {
+        const tokoItems = await runApifyActor(tokoActorId, {
+          keyword: bahasaQuery,
+          maxItems: 30,
+          sort: "best-selling",
+        }, "🛒 Tokopedia");
+        const tokoResults = normalizeApifyResults(tokoItems, "Tokopedia");
+        allResults.push(...tokoResults);
+        console.log(`Tokopedia: ${tokoResults.length} results from ${tokoItems.length} raw items`);
+      } catch (e) {
+        console.warn("Tokopedia scrape failed:", e.message);
+        setAutoError(prev => prev ? prev + "\n" + e.message : "Tokopedia: " + e.message);
+      }
+
+      // ─── Scrape Shopee ───
+      setStage("Scraping Shopee...");
+      setProgress(0);
+      try {
+        const shopeeItems = await runApifyActor(shopeeActorId, {
+          keyword: bahasaQuery,
+          maxItems: 30,
+          sort: "top-sales",
+        }, "🛍 Shopee");
+        const shopeeResults = normalizeApifyResults(shopeeItems, "Shopee");
+        allResults.push(...shopeeResults);
+        console.log(`Shopee: ${shopeeResults.length} results from ${shopeeItems.length} raw items`);
+      } catch (e) {
+        console.warn("Shopee scrape failed:", e.message);
+        setAutoError(prev => prev ? prev + "\n" + e.message : "Shopee: " + e.message);
+      }
+
+      // ─── Try second query if first yielded few results ───
+      if (allResults.length < 5 && allQueries.length > 1) {
+        const fallbackQuery = allQueries[1];
+        setStage("Trying second keyword...");
+        try {
+          const fallbackItems = await runApifyActor(tokoActorId, {
+            keyword: fallbackQuery,
+            maxItems: 20,
+            sort: "best-selling",
+          }, "🔄 Tokopedia retry");
+          allResults.push(...normalizeApifyResults(fallbackItems, "Tokopedia"));
+        } catch (e) { console.warn("Fallback scrape failed:", e); }
+      }
+
+      if (allResults.length === 0) {
+        throw new Error("No products found from either marketplace. Check your Apify actor IDs and token, or try different keywords.");
+      }
+
+      // ─── Build indo data structure ───
+      // Outlier removal
+      if (allResults.length >= 5) {
+        const sorted = [...allResults].sort((a, b) => a.price_idr - b.price_idr);
+        const lo = sorted[0].price_idr;
+        const hi = sorted[sorted.length - 1].price_idr;
+        if (hi / lo > 10) {
+          const trimCount = Math.max(1, Math.floor(allResults.length * 0.1));
+          const trimmed = sorted.slice(trimCount, sorted.length - trimCount);
+          if (trimmed.length >= 3) allResults = trimmed;
+        }
+      }
+
+      const prices = allResults.map(r => r.price_idr).sort((a, b) => a - b);
+      const indo = {
+        results: allResults,
+        price_stats: {
+          lowest_idr: prices[0],
+          highest_idr: prices[prices.length - 1],
+          median_idr: prices[Math.floor(prices.length / 2)],
+          average_idr: Math.round(prices.reduce((s, x) => s + x, 0) / prices.length),
+          num_results: prices.length,
+        },
+        search_notes: `Apify scrape: ${allResults.filter(r => r.source === "Tokopedia").length} from Tokopedia, ${allResults.filter(r => r.source === "Shopee").length} from Shopee`,
+        source: "apify",
+      };
+
+      // Confidence scoring
+      indo.confidence = computeConfidence(indo.results, indo.price_stats);
+      setIndoResults(indo);
+      setAutoError(""); // clear partial errors if we got results
+
+      // ─── Calculate margins (same as legacy) ───
+      const wc = dryRunData.weight_class || "medium";
+      const med = indo.price_stats.median_idr;
+      const low = indo.price_stats.lowest_idr;
+      const high = indo.price_stats.highest_idr;
+
+      const calcMargin = (indoIDR) => {
+        const uaeUSD = dryRunData.price_aed * fx.AEDUSD;
+        const indoUSD = indoIDR * fx.IDRUSD;
+        const wkg = WEIGHT_KG[wc] || 1.0;
+        const fr = (freight.air?.rate_per_kg || 4) * wkg;
+        const duty = (indoUSD + fr) * CUSTOMS_DUTY;
+        const lm = LAST_MILE_AED * fx.AEDUSD;
+        const total = indoUSD + fr + duty + lm;
+        const margin = uaeUSD > 0 ? ((uaeUSD - total) / uaeUSD) * 100 : 0;
+        return {
+          uaeUSD, uaeAED: dryRunData.price_aed, uaeIDR: dryRunData.price_aed * fx.AED_TO_IDR,
+          indoUSD, indoAED: indoUSD / fx.AEDUSD, indoIDR,
+          freightUSD: fr, freightAED: fr / fx.AEDUSD, freightIDR: fr / fx.IDRUSD,
+          dutyUSD: duty, dutyAED: duty / fx.AEDUSD, dutyIDR: duty / fx.IDRUSD,
+          lastMileUSD: lm, lastMileAED: LAST_MILE_AED, lastMileIDR: LAST_MILE_AED * fx.AED_TO_IDR,
+          totalUSD: total, totalAED: total / fx.AEDUSD, totalIDR: total / fx.IDRUSD,
+          margin,
+        };
+      };
+
+      const medianMargin = calcMargin(med);
+      const mData = {
+        uaeProduct: dryRunData,
+        normalized: dryRunData,
+        uaeSimilar,
+        indoResults: indo,
+        margins: { median: medianMargin, best: calcMargin(low), worst: calcMargin(high) },
+        confidence: indo.confidence,
+        medianPriceIDR: med, lowestPriceIDR: low, highestPriceIDR: high,
+        weightClass: wc,
+        timestamp: new Date().toISOString(),
+        source: "apify",
+        status: medianMargin.margin >= MARGIN_THRESHOLD.candidate ? "Candidate"
+          : medianMargin.margin >= MARGIN_THRESHOLD.borderline ? "Investigated" : "Rejected",
+      };
+      setMarginData(mData);
+      setHistory(prev => [mData, ...prev].slice(0, MAX_HISTORY));
+      setActiveSection(2);
+      setStage("");
+    } catch (err) {
+      setAutoError(err.message);
+      setStage("");
+    }
+    setLoading(false);
+  };
+
   // ══════════ UAE SIMILAR ══════════
   const runUaeSimilar = async () => {
     if (!dryRunData || !apiKey) return;
@@ -1282,12 +1539,64 @@ All prices must be numbers in AED. JSON only:`,
         </div>
       </div>
 
-      {/* API KEY */}
-      <div style={{ display: "flex", gap: "6px", alignItems: "center", marginBottom: "12px", padding: "8px 12px", background: c.surface2, border: `1px solid ${c.border}`, borderRadius: "4px" }}>
-        <span style={{ fontSize: "9px", color: c.dim, letterSpacing: "1px" }}>KEY</span>
-        <input type={showKey ? "text" : "password"} value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-ant-..." style={{ ...inputStyle, flex: 1, padding: "4px 8px", fontSize: "11px" }} />
-        <button onClick={() => setShowKey(!showKey)} style={{ ...btnSec, padding: "4px 8px", fontSize: "9px" }}>{showKey ? "HIDE" : "SHOW"}</button>
-        {apiKeyStatus && <span style={{ fontSize: "10px", color: apiKeyStatus === "missing" ? c.red : c.green }}>✓</span>}
+      {/* API KEYS + CONFIG */}
+      <div style={{ marginBottom: "12px", padding: "10px 12px", background: c.surface2, border: `1px solid ${c.border}`, borderRadius: "4px" }}>
+        {/* Claude key */}
+        <div style={{ display: "flex", gap: "6px", alignItems: "center", marginBottom: "8px" }}>
+          <span style={{ fontSize: "9px", color: c.dim, letterSpacing: "1px", width: "50px" }}>CLAUDE</span>
+          <input type={showKey ? "text" : "password"} value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-ant-..." style={{ ...inputStyle, flex: 1, padding: "4px 8px", fontSize: "11px" }} />
+          <button onClick={() => setShowKey(!showKey)} style={{ ...btnSec, padding: "4px 8px", fontSize: "9px" }}>{showKey ? "HIDE" : "SHOW"}</button>
+          {apiKeyStatus && <span style={{ fontSize: "10px", color: apiKeyStatus === "missing" ? c.red : c.green }}>✓</span>}
+        </div>
+        {/* Apify key — only shown when Apify mode active */}
+        {scrapeMode === "apify" && (
+        <div style={{ display: "flex", gap: "6px", alignItems: "center", marginBottom: "8px" }}>
+          <span style={{ fontSize: "9px", color: c.dim, letterSpacing: "1px", width: "50px" }}>APIFY</span>
+          <input type={showApifyKey ? "text" : "password"} value={apifyKey} onChange={e => setApifyKey(e.target.value)} placeholder="apify_api_..." style={{ ...inputStyle, flex: 1, padding: "4px 8px", fontSize: "11px" }} />
+          <button onClick={() => setShowApifyKey(!showApifyKey)} style={{ ...btnSec, padding: "4px 8px", fontSize: "9px" }}>{showApifyKey ? "HIDE" : "SHOW"}</button>
+          {apifyStatus && <span style={{ fontSize: "10px", color: c.green }}>✓</span>}
+        </div>
+        )}
+        {/* Scrape mode toggle */}
+        <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "9px", color: c.dim, letterSpacing: "1px", width: "50px" }}>INDO</span>
+          {[
+            { id: "legacy", label: "🔍 Legacy (Claude Search)", desc: "~$0.10/lookup" },
+            { id: "apify", label: "🕷 Apify (Direct Scrape)", desc: "~$0.02/lookup" },
+          ].map(m => (
+            <button key={m.id} onClick={() => setScrapeMode(m.id)} style={{
+              padding: "4px 10px", fontSize: "10px", fontFamily: "monospace", cursor: "pointer",
+              background: scrapeMode === m.id ? (m.id === "apify" ? c.green : c.gold) : "transparent",
+              color: scrapeMode === m.id ? c.btnText : c.dim,
+              border: `1px solid ${scrapeMode === m.id ? (m.id === "apify" ? c.green : c.gold) : c.border2}`,
+              borderRadius: "3px",
+            }}>
+              {m.label} <span style={{ opacity: 0.7 }}>{m.desc}</span>
+            </button>
+          ))}
+          {/* Actor config toggle */}
+          {scrapeMode === "apify" && (
+            <button onClick={() => setShowActorConfig(!showActorConfig)} style={{ ...btnSec, padding: "3px 8px", fontSize: "8px" }}>⚙</button>
+          )}
+        </div>
+        {/* Actor ID config (collapsed) */}
+        {scrapeMode === "apify" && showActorConfig && (
+          <div style={{ marginTop: "8px", padding: "8px", background: c.cardBg, border: `1px solid ${c.border}`, borderRadius: "4px" }}>
+            <div style={{ fontSize: "9px", color: c.dimmer, letterSpacing: "1px", marginBottom: "6px" }}>APIFY ACTOR IDS</div>
+            <div style={{ display: "flex", gap: "6px", marginBottom: "4px", alignItems: "center" }}>
+              <span style={{ fontSize: "9px", color: c.dim, width: "60px" }}>Tokopedia</span>
+              <input value={tokoActorId} onChange={e => setTokoActorId(e.target.value)} style={{ ...inputStyle, flex: 1, padding: "3px 6px", fontSize: "10px" }} />
+            </div>
+            <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+              <span style={{ fontSize: "9px", color: c.dim, width: "60px" }}>Shopee</span>
+              <input value={shopeeActorId} onChange={e => setShopeeActorId(e.target.value)} style={{ ...inputStyle, flex: 1, padding: "3px 6px", fontSize: "10px" }} />
+            </div>
+            <div style={{ fontSize: "9px", color: c.dimmer, marginTop: "6px" }}>Find actors at <span style={{ color: c.gold }}>apify.com/store</span> — search "tokopedia scraper" or "shopee scraper"</div>
+          </div>
+        )}
+        {scrapeMode === "apify" && !apifyKey && (
+          <div style={{ marginTop: "6px", fontSize: "10px", color: c.darkGold }}>⚠ Add your Apify API token above — get one free at apify.com/sign-up</div>
+        )}
       </div>
 
       {/* MODE TABS */}
@@ -1397,11 +1706,35 @@ All prices must be numbers in AED. JSON only:`,
 
             {/* Search Indonesia button */}
             {!indoResults && !loading && (
-              <div style={{ padding: "14px", background: c.surface2, border: `1px solid ${c.green}44`, borderRadius: "4px", marginBottom: "10px", textAlign: "center" }}>
-                <button onClick={runIndoSearch} disabled={cooldown > 0 || editableQueries.filter(q => q.trim()).length === 0} style={{ ...btnGreen, padding: "12px 36px", fontSize: "12px", opacity: cooldown > 0 ? 0.4 : 1 }}>
-                  {cooldown > 0 ? `⏳ WAIT ${cooldown}s` : "🔍 SEARCH INDONESIA + MARGINS — ~$0.06-0.08"}
-                </button>
-                <div style={{ fontSize: "9px", color: c.dimmer, marginTop: "6px" }}>Up to 3 search attempts with automatic retry</div>
+              <div style={{ padding: "14px", background: c.surface2, border: `1px solid ${scrapeMode === "apify" ? c.green : c.gold}44`, borderRadius: "4px", marginBottom: "10px", textAlign: "center" }}>
+                {scrapeMode === "apify" ? (
+                  <>
+                    <button
+                      onClick={runIndoSearchApify}
+                      disabled={!apifyKey || editableQueries.filter(q => q.trim()).length === 0}
+                      style={{ ...btnGreen, padding: "12px 36px", fontSize: "12px", opacity: !apifyKey || editableQueries.filter(q => q.trim()).length === 0 ? 0.4 : 1 }}
+                    >
+                      🕷 SCRAPE TOKOPEDIA + SHOPEE — ~$0.02
+                    </button>
+                    <div style={{ fontSize: "9px", color: c.dimmer, marginTop: "6px" }}>
+                      Direct scrape via Apify · Real prices + sold counts · {tokoActorId.split("/")[0]}
+                    </div>
+                    {!apifyKey && <div style={{ fontSize: "10px", color: c.red, marginTop: "4px" }}>Add Apify token above to use this mode</div>}
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={runIndoSearch}
+                      disabled={cooldown > 0 || editableQueries.filter(q => q.trim()).length === 0}
+                      style={{ ...btnStyle, padding: "12px 36px", fontSize: "12px", opacity: cooldown > 0 ? 0.4 : 1 }}
+                    >
+                      {cooldown > 0 ? `⏳ WAIT ${cooldown}s` : "🔍 SEARCH INDONESIA + MARGINS — ~$0.06-0.08"}
+                    </button>
+                    <div style={{ fontSize: "9px", color: c.dimmer, marginTop: "6px" }}>
+                      Legacy: Claude web search · Up to 3 retry attempts
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
@@ -1443,7 +1776,7 @@ All prices must be numbers in AED. JSON only:`,
               </SectionToggle>
 
               {/* ② INDONESIA MARKET */}
-              <SectionToggle index={1} title="Indonesia Market — Tokopedia & Shopee" icon="🇮🇩" count={indoResults?.results?.length}>
+              <SectionToggle index={1} title={`Indonesia Market — ${indoResults?.source === "apify" ? "Apify Scrape" : "Tokopedia & Shopee"}`} icon="🇮🇩" count={indoResults?.results?.length}>
                 {/* Confidence indicator */}
                 {indoResults?.confidence && (
                   <div style={{
