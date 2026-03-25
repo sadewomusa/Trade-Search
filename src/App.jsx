@@ -33,6 +33,15 @@ function marginColor(m) {
 function fmtIDR(n) { return n != null && !isNaN(n) ? "IDR " + Math.round(n).toLocaleString() : "\u2014"; }
 function fmtAED(n) { return n != null && !isNaN(n) ? "AED " + n.toFixed(2) : "\u2014"; }
 function fmtUSD(n) { return n != null && !isNaN(n) ? "$" + n.toFixed(2) : "\u2014"; }
+function escapeHtml(unsafe) {
+  if (!unsafe) return "";
+  return String(unsafe)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
 
 // ══════════ IDR PRICE SANITIZER ══════════
 function sanitizeIDR(price) {
@@ -496,42 +505,45 @@ export default function App() {
   }, [unlocked]);
 
   const callClaude = async (prompt, model, useSearch = false, retries = 2, maxTokens = 2048) => {
-    const body = { model, max_tokens: maxTokens, messages: [{ role: "user", content: prompt }] };
-    if (useSearch) body.tools = [{ type: "web_search_20250305", name: "web_search" }];
-    const delay = useSearch ? 15000 : 8000;
-    for (let attempt = 0; attempt <= retries; attempt++) {
-      try {
-        const r = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": apiKey,
-            "anthropic-version": "2023-06-01",
-            "anthropic-dangerous-direct-browser-access": "true",
-          },
-          body: JSON.stringify(body),
-        });
-        if (r.status === 429) {
-          if (attempt < retries) {
-            setStage(s => s.replace(/ \(retry.*/, "") + " (retry in " + Math.round((attempt + 1) * delay / 1000) + "s...)");
-            await wait((attempt + 1) * delay);
-            continue;
-          }
-          throw new Error("Rate limited. Wait 30s and retry. No cost charged.");
-        }
-        if (!r.ok) {
-          let d = "";
-          try { const e = await r.json(); d = e.error?.message || ""; } catch {}
-          throw new Error("API " + r.status + ": " + (d || "error"));
-        }
-        const data = await r.json();
-        return data.content?.map(b => b.text || "").filter(Boolean).join("\n") || "";
-      } catch (err) {
-        if (attempt === retries) throw err;
-        await wait((attempt + 1) * 10000);
-      }
+  const body = { 
+    action: 'claude',
+    data: {
+      model,
+      max_tokens: maxTokens,
+      messages: [{ role: "user", content: prompt }],
+      tools: useSearch ? [{ type: "web_search_20250305", name: "web_search" }] : undefined
     }
   };
+  
+  const delay = useSearch ? 15000 : 8000;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const r = await fetch("https://trades-proxy.sadewoahmadm.workers.dev", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      if (r.status === 429) {
+        if (attempt < retries) {
+          setStage(s => s.replace(/ \(retry.*/, "") + " (retry in " + Math.round((attempt + 1) * delay / 1000) + "s...)");
+          await wait((attempt + 1) * delay);
+          continue;
+        }
+        throw new Error("Rate limited. Wait 30s and retry. No cost charged.");
+      }
+      if (!r.ok) {
+        let d = "";
+        try { const e = await r.json(); d = e.error?.message || ""; } catch {}
+        throw new Error("API " + r.status + ": " + (d || "error"));
+      }
+      const data = await r.json();
+      return data.content?.map(b => b.text || "").filter(Boolean).join("\n") || "";
+    } catch (err) {
+      if (attempt === retries) throw err;
+      await wait((attempt + 1) * 10000);
+    }
+  }
+};
 
   const parseJSON = (text) => {
     let s = text.replace(/```json/g, "").replace(/```/g, "").trim();
@@ -579,13 +591,21 @@ export default function App() {
   };
 
   const runDryRun = async () => {
-    if (!apiKey) { setApiKeyStatus("missing"); return; }
+    // Security check - validate URL input
     const input = url.trim();
-    if (!input) return;
+    if (!input) { setAutoError("Please enter a URL"); return; }
+    if (!input.startsWith('http')) { setAutoError("Invalid URL: Must start with http"); return; }
+    if (input.includes('"') || input.includes('{') || input.includes('<')) { setAutoError("Invalid characters in URL"); return; }
+    const allowedDomains = ['amazon.ae', 'noon.com', 'noon.ae'];
+    if (!allowedDomains.some(d => input.includes(d))) { setAutoError("Only Amazon.ae and Noon UAE allowed"); return; }
+    
+    if (!apiKey) { setApiKeyStatus("missing"); return; }
+    
     if (input.includes("amzn.eu") || input.includes("amzn.to") || input.includes("a.co/")) {
       setAutoError("Shortened link. Open in browser first, copy full URL.");
       return;
     }
+    
     setLoading(true); setAutoError(""); setDryRunData(null); setUaeSimilar(null);
     setIndoResults(null); setMarginData(null); setEditableQueries([]); setNewQueryInput(""); setActiveSection(0);
 
@@ -794,43 +814,46 @@ export default function App() {
     setLoading(false);
   };
 
-  const runApifyActor = async (actorId, input, label) => {
-    if (!apifyKey) throw new Error("Apify API token required.");
-    setStage(label + " \u2014 starting actor...");
-    const startRes = await fetch(
-      "https://api.apify.com/v2/acts/" + encodeURIComponent(actorId) + "/runs?token=" + apifyKey,
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) }
-    );
-    if (!startRes.ok) {
-      const err = await startRes.json().catch(() => ({}));
-      throw new Error("Apify " + startRes.status + ": " + (err.error?.message || "Failed to start"));
-    }
-    const runData = await startRes.json();
-    const runId = runData.data?.id;
-    const datasetId = runData.data?.defaultDatasetId;
-    if (!runId) throw new Error("Apify: no run ID returned");
+const runApifyActor = async (actorId, input, label) => {
+  setStage(label + " — starting actor...");
+  const startRes = await fetch("https://trades-proxy.sadewoahmadm.workers.dev", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: 'apify',
+      data: { actorId, input }
+    })
+  });
+  if (!startRes.ok) {
+    const err = await startRes.json().catch(() => ({}));
+    throw new Error("Apify " + startRes.status + ": " + (err.error?.message || "Failed to start"));
+  }
+  const runData = await startRes.json();
+  const runId = runData.data?.id;
+  const datasetId = runData.data?.defaultDatasetId;
+  if (!runId) throw new Error("Apify: no run ID returned");
 
-    setStage(label + " \u2014 scraping...");
-    let status = "RUNNING";
-    let polls = 0;
-    const maxPolls = 40;
-    while ((status === "RUNNING" || status === "READY") && polls < maxPolls) {
-      await wait(3000);
-      polls++;
-      setProgress(Math.min(90, (polls / maxPolls) * 100));
-      try {
-        const pollRes = await fetch("https://api.apify.com/v2/actor-runs/" + runId + "?token=" + apifyKey);
-        const pollData = await pollRes.json();
-        status = pollData.data?.status || "UNKNOWN";
-      } catch {}
-    }
-    if (status !== "SUCCEEDED") throw new Error("Apify actor " + (status === "RUNNING" ? "timed out" : "failed") + ": " + status);
+  setStage(label + " — scraping...");
+  let status = "RUNNING";
+  let polls = 0;
+  const maxPolls = 40;
+  while ((status === "RUNNING" || status === "READY") && polls < maxPolls) {
+    await wait(3000);
+    polls++;
+    setProgress(Math.min(90, (polls / maxPolls) * 100));
+    try {
+      const pollRes = await fetch("https://api.apify.com/v2/actor-runs/" + runId + "?token=apify_api_placeholder");
+      const pollData = await pollRes.json();
+      status = pollData.data?.status || "UNKNOWN";
+    } catch {}
+  }
+  if (status !== "SUCCEEDED") throw new Error("Apify actor " + (status === "RUNNING" ? "timed out" : "failed") + ": " + status);
 
-    setStage(label + " \u2014 fetching results...");
-    const resultsRes = await fetch("https://api.apify.com/v2/datasets/" + datasetId + "/items?token=" + apifyKey + "&limit=50");
-    if (!resultsRes.ok) throw new Error("Apify: failed to fetch results");
-    return await resultsRes.json();
-  };
+  setStage(label + " — fetching results...");
+  const resultsRes = await fetch("https://api.apify.com/v2/datasets/" + datasetId + "/items?limit=50");
+  if (!resultsRes.ok) throw new Error("Apify: failed to fetch results");
+  return await resultsRes.json();
+};
 
   const normalizeApifyResults = (items, source) => {
     return items.map(item => {
@@ -1040,7 +1063,7 @@ export default function App() {
     if (!marginData) return;
     const m = marginData.margins.median;
     const q = getQty();
-    const html = '<!DOCTYPE html><html><head><title>GT Cross-Trade Analysis</title><style>body{font-family:Arial,sans-serif;padding:40px;max-width:800px;margin:0 auto;color:#1a1a1a}h1{font-size:20px;border-bottom:2px solid #1a7a3a;padding-bottom:8px}h2{font-size:14px;color:#8B6914;margin-top:24px}table{width:100%;border-collapse:collapse;margin:12px 0}td,th{padding:8px 12px;border:1px solid #ddd;text-align:left;font-size:12px}th{background:#f5f2eb;font-weight:700}.green{color:#1a7a3a}.red{color:#dc2626}.gold{color:#8B6914}.big{font-size:28px;font-weight:700;text-align:center;padding:16px}.verdict{padding:12px;text-align:center;border-radius:4px;font-weight:700;margin-top:16px}@media print{body{padding:20px}}</style></head><body><h1>GT Cross-Trade Analysis</h1><p><strong>Date:</strong> '+new Date().toLocaleDateString()+' | <strong>FX:</strong> 1 AED = '+Math.round(fx.AED_TO_IDR)+' IDR</p><h2>Product</h2><table><tr><th>Name</th><td>'+(marginData.uaeProduct?.product_name)+'</td></tr><tr><th>Bahasa</th><td>'+(marginData.normalized?.clean_name_id)+'</td></tr><tr><th>Category</th><td>'+(marginData.normalized?.category)+'</td></tr><tr><th>Source</th><td>'+(marginData.uaeProduct?.source)+' | AED '+(marginData.uaeProduct?.price_aed)+'</td></tr></table><h2>Indonesia Market (Median of '+(marginData.indoResults?.price_stats?.num_results||0)+' listings)</h2><table><tr><th></th><th>Lowest</th><th>Median</th><th>Highest</th></tr><tr><th>IDR</th><td>'+fmtIDR(marginData.lowestPriceIDR)+'</td><td>'+fmtIDR(marginData.medianPriceIDR)+'</td><td>'+fmtIDR(marginData.highestPriceIDR)+'</td></tr></table><h2>Margin Analysis (\xd7'+q+' units)</h2><table><tr><th>Item</th><th>USD</th><th>AED</th><th>IDR</th></tr><tr><th>UAE Sell Price</th><td>'+fmtUSD(m.uaeUSD*q)+'</td><td>'+fmtAED(m.uaeAED*q)+'</td><td>'+fmtIDR(m.uaeIDR*q)+'</td></tr><tr><th>Indo Source</th><td>'+fmtUSD(m.indoUSD*q)+'</td><td>'+fmtAED(m.indoAED*q)+'</td><td>'+fmtIDR(m.indoIDR*q)+'</td></tr><tr><th>Air Freight</th><td>'+fmtUSD(m.freightUSD*q)+'</td><td>'+fmtAED(m.freightAED*q)+'</td><td>'+fmtIDR(m.freightIDR*q)+'</td></tr><tr><th>Customs 5%</th><td>'+fmtUSD(m.dutyUSD*q)+'</td><td>'+fmtAED(m.dutyAED*q)+'</td><td>'+fmtIDR(m.dutyIDR*q)+'</td></tr><tr><th>Last Mile</th><td>'+fmtUSD(m.lastMileUSD*q)+'</td><td>'+fmtAED(m.lastMileAED*q)+'</td><td>'+fmtIDR(m.lastMileIDR*q)+'</td></tr><tr style="font-weight:700;background:#fef2f2"><th class="red">Total Cost</th><td class="red">'+fmtUSD(m.totalUSD*q)+'</td><td class="red">'+fmtAED(m.totalAED*q)+'</td><td class="red">'+fmtIDR(m.totalIDR*q)+'</td></tr><tr style="font-weight:700;background:#e8f5ec"><th class="green">Profit</th><td class="green">'+fmtUSD((m.uaeUSD-m.totalUSD)*q)+'</td><td class="green">'+fmtAED((m.uaeAED-m.totalAED)*q)+'</td><td class="green">'+fmtIDR((m.uaeIDR-m.totalIDR)*q)+'</td></tr></table><div class="big">'+(m.margin>=MARGIN_THRESHOLD.candidate?'<span class="green">':'<span class="red">')+m.margin.toFixed(1)+'% Gross Margin</span></div><div class="verdict" style="background:'+(m.margin>=MARGIN_THRESHOLD.candidate?'#e8f5ec;color:#1a7a3a':m.margin>=MARGIN_THRESHOLD.borderline?'#fdf8ed;color:#8B6914':'#fef2f2;color:#dc2626')+'">'+(m.margin>=MARGIN_THRESHOLD.candidate?"\u2713 CANDIDATE":m.margin>=MARGIN_THRESHOLD.borderline?"\u25cb BORDERLINE":"\u2717 LOW MARGIN")+'</div><script>window.onload=()=>window.print()<\/script></body></html>';
+    const html = '<!DOCTYPE html><html><head><title>GT Cross-Trade Analysis</title><style>body{font-family:Arial,sans-serif;padding:40px;max-width:800px;margin:0 auto;color:#1a1a1a}h1{font-size:20px;border-bottom:2px solid #1a7a3a;padding-bottom:8px}h2{font-size:14px;color:#8B6914;margin-top:24px}table{width:100%;border-collapse:collapse;margin:12px 0}td,th{padding:8px 12px;border:1px solid #ddd;text-align:left;font-size:12px}th{background:#f5f2eb;font-weight:700}.green{color:#1a7a3a}.red{color:#dc2626}.gold{color:#8B6914}.big{font-size:28px;font-weight:700;text-align:center;padding:16px}.verdict{padding:12px;text-align:center;border-radius:4px;font-weight:700;margin-top:16px}@media print{body{padding:20px}}</style></head><body><h1>GT Cross-Trade Analysis</h1><p><strong>Date:</strong> '+new Date().toLocaleDateString()+' | <strong>FX:</strong> 1 AED = '+Math.round(fx.AED_TO_IDR)+' IDR</p><h2>Product</h2><table><tr><th>Name</th><td>'+escapeHtml(marginData.uaeProduct?.product_name)+'</td></tr><tr><th>Bahasa</th><td>'+escapeHtml(marginData.normalized?.clean_name_id)+'</td></tr><tr><th>Category</th><td>'+(marginData.normalized?.category)+'</td></tr><tr><th>Source</th><td>'+(marginData.uaeProduct?.source)+' | AED '+(marginData.uaeProduct?.price_aed)+'</td></tr></table><h2>Indonesia Market (Median of '+(marginData.indoResults?.price_stats?.num_results||0)+' listings)</h2><table><tr><th></th><th>Lowest</th><th>Median</th><th>Highest</th></tr><tr><th>IDR</th><td>'+fmtIDR(marginData.lowestPriceIDR)+'</td><td>'+fmtIDR(marginData.medianPriceIDR)+'</td><td>'+fmtIDR(marginData.highestPriceIDR)+'</td></tr></table><h2>Margin Analysis (\xd7'+q+' units)</h2><table><tr><th>Item</th><th>USD</th><th>AED</th><th>IDR</th></tr><tr><th>UAE Sell Price</th><td>'+fmtUSD(m.uaeUSD*q)+'</td><td>'+fmtAED(m.uaeAED*q)+'</td><td>'+fmtIDR(m.uaeIDR*q)+'</td></tr><tr><th>Indo Source</th><td>'+fmtUSD(m.indoUSD*q)+'</td><td>'+fmtAED(m.indoAED*q)+'</td><td>'+fmtIDR(m.indoIDR*q)+'</td></tr><tr><th>Air Freight</th><td>'+fmtUSD(m.freightUSD*q)+'</td><td>'+fmtAED(m.freightAED*q)+'</td><td>'+fmtIDR(m.freightIDR*q)+'</td></tr><tr><th>Customs 5%</th><td>'+fmtUSD(m.dutyUSD*q)+'</td><td>'+fmtAED(m.dutyAED*q)+'</td><td>'+fmtIDR(m.dutyIDR*q)+'</td></tr><tr><th>Last Mile</th><td>'+fmtUSD(m.lastMileUSD*q)+'</td><td>'+fmtAED(m.lastMileAED*q)+'</td><td>'+fmtIDR(m.lastMileIDR*q)+'</td></tr><tr style="font-weight:700;background:#fef2f2"><th class="red">Total Cost</th><td class="red">'+fmtUSD(m.totalUSD*q)+'</td><td class="red">'+fmtAED(m.totalAED*q)+'</td><td class="red">'+fmtIDR(m.totalIDR*q)+'</td></tr><tr style="font-weight:700;background:#e8f5ec"><th class="green">Profit</th><td class="green">'+fmtUSD((m.uaeUSD-m.totalUSD)*q)+'</td><td class="green">'+fmtAED((m.uaeAED-m.totalAED)*q)+'</td><td class="green">'+fmtIDR((m.uaeIDR-m.totalIDR)*q)+'</td></tr></table><div class="big">'+(m.margin>=MARGIN_THRESHOLD.candidate?'<span class="green">':'<span class="red">')+m.margin.toFixed(1)+'% Gross Margin</span></div><div class="verdict" style="background:'+(m.margin>=MARGIN_THRESHOLD.candidate?'#e8f5ec;color:#1a7a3a':m.margin>=MARGIN_THRESHOLD.borderline?'#fdf8ed;color:#8B6914':'#fef2f2;color:#dc2626')+'">'+(m.margin>=MARGIN_THRESHOLD.candidate?"\u2713 CANDIDATE":m.margin>=MARGIN_THRESHOLD.borderline?"\u25cb BORDERLINE":"\u2717 LOW MARGIN")+'</div><script>window.onload=()=>window.print()<\/script></body></html>';
     const w = window.open("", "_blank");
     w.document.write(html);
     w.document.close();
