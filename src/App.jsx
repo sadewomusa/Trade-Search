@@ -386,6 +386,8 @@ export default function App() {
 
   const [expandedHistoryIdx, setExpandedHistoryIdx] = useState(-1);
   const saveTimerRef = useRef(null);
+  const apiKeyLoadedFromStorage = useRef(false);
+  const apifyKeyLoadedFromStorage = useRef(false);
   const historyRef = useRef(history);
   historyRef.current = history;
   const currentPinRef = useRef(currentPin);
@@ -438,8 +440,8 @@ export default function App() {
       try {
         const config = await storeGet(currentPin + ":config");
         if (config) {
-          if (config.apiKey) { setApiKey(config.apiKey); setApiKeyStatus("loaded"); }
-          if (config.apifyKey) { setApifyKey(config.apifyKey); setApifyStatus("loaded"); }
+          if (config.apiKey) { apiKeyLoadedFromStorage.current = true; setApiKey(config.apiKey); setApiKeyStatus("loaded"); }
+          if (config.apifyKey) { apifyKeyLoadedFromStorage.current = true; setApifyKey(config.apifyKey); setApifyStatus("loaded"); }
           if (config.tokoActorId) setTokoActorId(config.tokoActorId);
           if (config.shopeeActorId) setShopeeActorId(config.shopeeActorId);
           if (config.scrapeMode) setScrapeMode(config.scrapeMode);
@@ -499,6 +501,7 @@ export default function App() {
 
   useEffect(() => {
     if (!apiKey || apiKey.length < 10 || !storageReady) return;
+    if (apiKeyLoadedFromStorage.current) { apiKeyLoadedFromStorage.current = false; return; }
     setApiKeyStatus("saved");
     const t = setTimeout(() => setApiKeyStatus(""), 1500);
     return () => clearTimeout(t);
@@ -506,6 +509,7 @@ export default function App() {
 
   useEffect(() => {
     if (!apifyKey || apifyKey.length < 5 || !storageReady) return;
+    if (apifyKeyLoadedFromStorage.current) { apifyKeyLoadedFromStorage.current = false; return; }
     setApifyStatus("saved");
     const t = setTimeout(() => setApifyStatus(""), 1500);
     return () => clearTimeout(t);
@@ -719,6 +723,24 @@ export default function App() {
         'You are a product researcher. I need to find "' + dryRunData.clean_name_id + '" (English: "' + dryRunData.clean_name_en + '") on ' + platform + ' Indonesia.\n\nDo ALL of these searches — this is critical:\n' + searchLines + '\n\nVERY IMPORTANT:\n- ONLY include results that are clearly from ' + platform + ' (' + site + ')\n- For EVERY listing found, include: product name, price in IDR (Indonesian Rupiah), seller name, sold count, link\n- Indonesian Rupiah uses dots as thousands separator: Rp 25.000 = 25000 IDR\n- Try to find 10-20 listings\n- If a search returns no ' + platform + ' results, move to the next search\n- Report what you found even if only a few results',
         "claude-sonnet-4-20250514", true, 2, 4096), 25);
 
+      // ── Detect blocked/login-wall/CAPTCHA signals in raw response ──
+      const rawLower = raw.toLowerCase();
+      const blockedSignals = [
+        { pattern: /login.{0,20}required|need.{0,10}log.?in|sign.?in.{0,10}to.{0,10}(view|access|see)/i, reason: "login wall detected" },
+        { pattern: /captcha|verify.{0,10}(human|robot|not a bot)|security.{0,10}check/i, reason: "CAPTCHA/bot check" },
+        { pattern: /access.{0,15}denied|forbidden|blocked|403/i, reason: "access denied/blocked" },
+        { pattern: /no.{0,10}results?.{0,10}(found|available)|couldn.?t.{0,10}find.{0,15}(any|results)|did not (find|return)/i, reason: "search returned nothing" },
+        { pattern: /unable to (access|search|find|retrieve).{0,20}(shopee|tokopedia)/i, reason: "platform unreachable" },
+      ];
+      let blockReason = null;
+      for (const sig of blockedSignals) {
+        if (sig.pattern.test(raw)) { blockReason = platform + ": " + sig.reason; break; }
+      }
+      // Also check: if raw response mentions the platform but has no prices at all
+      if (!blockReason && rawLower.includes(platform.toLowerCase()) && !/\d{2,3}\.\d{3}|rp\s*\d|idr\s*\d|\d+\s*rupiah/i.test(raw)) {
+        blockReason = platform + ": response mentions platform but contains no prices";
+      }
+
       setStage(label + "Formatting " + platform + "..."); await wait(1500);
       const fmt = await runWithProgress(() => callClaude(
         'Convert these ' + platform + ' search results to JSON. Extract ONLY ' + platform + ' listings.\n\nRAW DATA:\n' + raw + '\n\nOutput ONLY this JSON:\n{"results":[{"name":"product name","price_idr":NUMBER,"source":"' + platform + '","seller":"seller name","sold":"sold count","url":"product url"}]}\n\nRULES:\n- price_idr must be an INTEGER in Rupiah. "Rp 25.000" = 25000. "Rp 1.500.000" = 1500000\n- source must be exactly "' + platform + '"\n- If no ' + platform + ' results found, return {"results":[]}\nJSON only:',
@@ -726,7 +748,7 @@ export default function App() {
 
       try {
         const p = parseJSON(fmt);
-        return (p.results || p.products || []).map(r => ({
+        const results = (p.results || p.products || []).map(r => ({
           name: r.name || r.product_name || "",
           price_idr: sanitizeIDR(r.price_idr || r.price || 0),
           source: platform,
@@ -738,7 +760,13 @@ export default function App() {
           })(),
           url: r.url || r.link || "",
         }));
-      } catch (e) { console.warn(platform + " parse failed:", e.message); return []; }
+        // If we detected a block and got 0 valid results, pass the reason through
+        const validResults = results.filter(r => r.price_idr >= 1000);
+        return { results, blockReason: validResults.length === 0 ? blockReason : null };
+      } catch (e) {
+        console.warn(platform + " parse failed:", e.message);
+        return { results: [], blockReason: blockReason || (platform + ": JSON parse failed") };
+      }
     };
 
     // ── Shopee-focused fallback search ──
@@ -810,10 +838,10 @@ export default function App() {
       // WAVE 1: Tokopedia
       let tokoCount = 0;
       try {
-        const r = await doSearchPlatform("Tokopedia", sq, "\u2460 ");
-        tokoCount = r.filter(x => x.price_idr >= 1000).length;
-        allResults.push(...r);
-        waves.push({ name: "Tokopedia", status: "ok", count: tokoCount });
+        const { results: tokoResults, blockReason: tokoBlock } = await doSearchPlatform("Tokopedia", sq, "\u2460 ");
+        tokoCount = tokoResults.filter(x => x.price_idr >= 1000).length;
+        allResults.push(...tokoResults);
+        waves.push({ name: "Tokopedia", status: tokoCount > 0 ? "ok" : "empty", count: tokoCount, reason: tokoBlock || "" });
         setWaveStatus([...waves]);
         setStage("Tokopedia: " + tokoCount + " results. Waiting before Shopee...");
         await wait(5000); // 5s gap instead of 2s to avoid rate limits
@@ -828,11 +856,20 @@ export default function App() {
 
       // WAVE 2: Shopee
       let shopeeCount = 0;
+      let shopeeBlockReason = null;
       try {
-        const r = await doSearchPlatform("Shopee", sq, "\u2461 ");
-        shopeeCount = r.filter(x => x.price_idr >= 1000).length;
-        allResults.push(...r);
-        waves.push({ name: "Shopee", status: shopeeCount > 0 ? "ok" : "empty", count: shopeeCount, reason: shopeeCount === 0 ? "Search returned 0 — Shopee may not be indexed by Google" : "" });
+        const { results: shopeeResults, blockReason: shopeeBlock } = await doSearchPlatform("Shopee", sq, "\u2461 ");
+        shopeeCount = shopeeResults.filter(x => x.price_idr >= 1000).length;
+        allResults.push(...shopeeResults);
+        shopeeBlockReason = shopeeBlock;
+        // Smart detection: if Tokopedia got plenty but Shopee got 0, likely blocked
+        let reason = shopeeBlock || "";
+        if (shopeeCount === 0 && !shopeeBlock && tokoCount >= 10) {
+          reason = "Shopee likely blocked — Tokopedia found " + tokoCount + " but Shopee returned 0";
+        } else if (shopeeCount === 0 && !shopeeBlock) {
+          reason = "Search returned 0 — Shopee may not be indexed by Google";
+        }
+        waves.push({ name: "Shopee", status: shopeeCount > 0 ? "ok" : "empty", count: shopeeCount, reason });
         setWaveStatus([...waves]);
         setStage("Shopee: " + shopeeCount + " results.");
         await wait(3000);
@@ -847,14 +884,15 @@ export default function App() {
 
       // WAVE 2.5: Shopee RETRY if Wave 2 got 0 results
       if (shopeeCount === 0) {
-        setStage("Shopee had 0 results — retrying with different queries...");
+        const retryNote = shopeeBlockReason ? " (Wave 2: " + shopeeBlockReason + ")" : "";
+        setStage("Shopee had 0 results" + retryNote + " — retrying with different queries...");
         await wait(5000); // extra breathing room
         try {
           const r = await doShopeeRetry(sq, "\u2461b ");
           const retryCount = r.filter(x => x.price_idr >= 1000).length;
           allResults.push(...r);
           shopeeCount = retryCount;
-          waves.push({ name: "Shopee retry", status: retryCount > 0 ? "ok" : "empty", count: retryCount, reason: retryCount === 0 ? "Retry also returned 0 — Shopee not indexed for this product" : "Retry found results" });
+          waves.push({ name: "Shopee retry", status: retryCount > 0 ? "ok" : "empty", count: retryCount, reason: retryCount === 0 ? "Retry also returned 0" + (shopeeBlockReason ? " — " + shopeeBlockReason : " — try Apify mode for direct scraping") : "Retry found results" });
           setWaveStatus([...waves]);
           await wait(3000);
         } catch (e) {
@@ -942,7 +980,7 @@ export default function App() {
           average_idr: Math.round(cleanPrices.reduce((s, x) => s + x, 0) / cleanPrices.length),
           num_results: cleanPrices.length,
         },
-        search_notes: "3-wave: " + tokoFinal + " Tokopedia, " + shopeeFinal + " Shopee" + (shopeeFinal === 0 ? " (Shopee unavailable)" : ""),
+        search_notes: "3-wave: " + tokoFinal + " Tokopedia, " + shopeeFinal + " Shopee" + (shopeeFinal === 0 ? (shopeeBlockReason ? " (" + shopeeBlockReason + ")" : " (Shopee unavailable — try Apify mode)") : ""),
         wave_status: waves,
       };
       indo.confidence = computeConfidence(indo.results, indo.price_stats);
