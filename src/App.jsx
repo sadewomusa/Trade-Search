@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-
+// ══════════ SUPABASE CONFIG — FILL THESE IN ══════════
+const SUPABASE_URL = "https://cqpxzxafavqflnrilgjh.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_f4N-v3Gs7qJsPW4jUe_fzw_u81VVIg3";
 // ══════════ CONSTANTS ══════════
 const DEFAULT_FX = {
   AEDUSD: 0.2723, IDRUSD: 0.0000613,
@@ -23,7 +25,6 @@ const STATUS_COLORS = {
 };
 const MAX_HISTORY = 2000;
 const FX_CACHE_MS = 86400000;
-const SHARD_SIZE = 400;
 
 // ══════════ HELPERS ══════════
 function marginColor(m) {
@@ -132,66 +133,101 @@ function guessCategory(n) {
 }
 
 // ══════════ PERSISTENT STORAGE LAYER ══════════
-const isClaudeArtifact = typeof window !== "undefined" && typeof window.storage !== "undefined" && typeof window.storage.get === "function";
+// ══════════ SUPABASE + LOCALSTORAGE DUAL-WRITE ══════════
+// Supabase = permanent (survives browser clears, works cross-device)
+// localStorage = fast cache + offline fallback
+
+const supabaseReady = SUPABASE_URL !== "https://YOUR-PROJECT-ID.supabase.co" && SUPABASE_ANON_KEY !== "eyJ...your-anon-key-here...";
+
+async function supabaseGet(key) {
+  if (!supabaseReady) return null;
+  const res = await fetch(
+    SUPABASE_URL + "/rest/v1/kv_store?key=eq." + encodeURIComponent(key) + "&select=value",
+    { headers: { "apikey": SUPABASE_ANON_KEY, "Authorization": "Bearer " + SUPABASE_ANON_KEY } }
+  );
+  if (!res.ok) return null;
+  const rows = await res.json();
+  if (!rows || rows.length === 0) return null;
+  return JSON.parse(rows[0].value);
+}
+
+async function supabaseSet(key, val) {
+  if (!supabaseReady) return false;
+  const res = await fetch(SUPABASE_URL + "/rest/v1/kv_store", {
+    method: "POST",
+    headers: {
+      "apikey": SUPABASE_ANON_KEY, "Authorization": "Bearer " + SUPABASE_ANON_KEY,
+      "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates",
+    },
+    body: JSON.stringify({ key, value: JSON.stringify(val), updated_at: new Date().toISOString() }),
+  });
+  return res.ok;
+}
+
+async function supabaseDel(key) {
+  if (!supabaseReady) return;
+  await fetch(SUPABASE_URL + "/rest/v1/kv_store?key=eq." + encodeURIComponent(key), {
+    method: "DELETE",
+    headers: { "apikey": SUPABASE_ANON_KEY, "Authorization": "Bearer " + SUPABASE_ANON_KEY },
+  });
+}
 
 async function storeGet(key) {
   try {
-    if (isClaudeArtifact) {
-      const r = await window.storage.get(key);
-      return r ? JSON.parse(r.value) : null;
-    } else {
-      const v = localStorage.getItem("gt:" + key);
-      return v ? JSON.parse(v) : null;
+    const val = await supabaseGet(key);
+    if (val !== null) {
+      try { localStorage.setItem("gt:" + key, JSON.stringify(val)); } catch {}
+      return val;
     }
-  } catch { return null; }
-}
-async function storeSet(key, val) {
-  try {
-    const json = JSON.stringify(val);
-    if (isClaudeArtifact) {
-      await window.storage.set(key, json);
-    } else {
-      localStorage.setItem("gt:" + key, json);
-    }
-    return true;
-  } catch (e) { console.warn("storeSet failed:", key, e); return false; }
-}
-async function storeDel(key) {
-  try {
-    if (isClaudeArtifact) {
-      await window.storage.delete(key);
-    } else {
-      localStorage.removeItem("gt:" + key);
-    }
-  } catch {}
+  } catch (e) { console.warn("Supabase get failed:", e.message); }
+  try { const v = localStorage.getItem("gt:" + key); return v ? JSON.parse(v) : null; } catch { return null; }
 }
 
-// Sharded History
+async function storeSet(key, val) {
+  try { localStorage.setItem("gt:" + key, JSON.stringify(val)); } catch {}
+  try { return await supabaseSet(key, val); } catch (e) { console.warn("Supabase set failed:", e.message); return false; }
+}
+
+async function storeDel(key) {
+  try { localStorage.removeItem("gt:" + key); } catch {}
+  try { await supabaseDel(key); } catch {}
+}
+
 async function loadHistory(pin) {
-  const meta = await storeGet(pin + ":meta");
-  if (!meta || !meta.shardCount) return [];
-  const all = [];
-  for (let i = 0; i < meta.shardCount; i++) {
-    const shard = await storeGet(pin + ":history:" + i);
-    if (shard && Array.isArray(shard)) all.push(...shard);
-  }
-  return all.map(expandEntry);
+  try {
+    const data = await storeGet(pin + ":history");
+    if (data && Array.isArray(data) && data.length > 0) return data.map(expandEntry);
+
+    // Migration: try old sharded format from localStorage
+    try {
+      const metaRaw = localStorage.getItem("gt:" + pin + ":meta");
+      if (metaRaw) {
+        const meta = JSON.parse(metaRaw);
+        if (meta && meta.shardCount) {
+          const all = [];
+          for (let i = 0; i < meta.shardCount; i++) {
+            const shardRaw = localStorage.getItem("gt:" + pin + ":history:" + i);
+            if (shardRaw) { const shard = JSON.parse(shardRaw); if (Array.isArray(shard)) all.push(...shard); }
+          }
+          if (all.length > 0) {
+            console.log("Migrating " + all.length + " entries from sharded format...");
+            await storeSet(pin + ":history", all);
+            for (let i = 0; i < meta.shardCount; i++) localStorage.removeItem("gt:" + pin + ":history:" + i);
+            localStorage.removeItem("gt:" + pin + ":meta");
+            return all.map(expandEntry);
+          }
+        }
+      }
+    } catch {}
+    return [];
+  } catch (e) { console.warn("loadHistory failed:", e); return []; }
 }
 
 async function saveHistory(pin, history) {
-  const compressed = history.map(compressEntry);
-  const shardCount = Math.max(1, Math.ceil(compressed.length / SHARD_SIZE));
-  for (let i = 0; i < shardCount; i++) {
-    const slice = compressed.slice(i * SHARD_SIZE, (i + 1) * SHARD_SIZE);
-    await storeSet(pin + ":history:" + i, slice);
-  }
-  const oldMeta = await storeGet(pin + ":meta");
-  if (oldMeta && oldMeta.shardCount > shardCount) {
-    for (let i = shardCount; i < oldMeta.shardCount; i++) {
-      await storeDel(pin + ":history:" + i);
-    }
-  }
-  await storeSet(pin + ":meta", { shardCount, totalEntries: history.length, lastSaved: Date.now() });
+  try {
+    const compressed = history.map(compressEntry);
+    return await storeSet(pin + ":history", compressed);
+  } catch (e) { console.warn("saveHistory failed:", e); return false; }
 }
 
 function compressEntry(h) {
@@ -356,6 +392,8 @@ export default function App() {
   const saveTimerRef = useRef(null);
   const historyRef = useRef(history);
   historyRef.current = history;
+  const currentPinRef = useRef(currentPin);
+  currentPinRef.current = currentPin;
 
   const c = dark ? {
     bg: "#0a0a0a", surface: "#0C0F0C", surface2: "#0E120E", input: "#1a1a1a",
@@ -422,14 +460,21 @@ export default function App() {
     })();
   }, [unlocked, currentPin]);
 
+  // Immediate save for new entries (no delay)
+  const saveHistoryNow = useCallback(async (newHistory) => {
+    if (!currentPinRef.current) return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    await saveHistory(currentPinRef.current, newHistory);
+  }, []);
+
+  // Debounced save for status changes
   const saveHistoryDebounced = useCallback(() => {
-    if (!currentPin) return;
+    if (!currentPinRef.current) return;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(async () => {
-      await saveHistory(currentPin, historyRef.current);
+      await saveHistory(currentPinRef.current, historyRef.current);
     }, 2000);
-  }, [currentPin]);
-
+  }, []);
   useEffect(() => {
     if (!storageReady || !currentPin) return;
     saveHistoryDebounced();
@@ -648,6 +693,7 @@ export default function App() {
     setLoading(false);
   };
 
+  // ══════════ 3-WAVE INDO SEARCH ══════════
   const runIndoSearch = async () => {
     if (!dryRunData || !apiKey) return;
     setLoading(true); setAutoError(""); setIndoResults(null); setMarginData(null);
@@ -656,116 +702,167 @@ export default function App() {
 
     const bahasaQueries = allQueries.filter(q => /[^a-zA-Z0-9\s\-.]/.test(q) || /murah|terlaris|harga|bayi|kaki|wajan|anti|sabun|tas|baju|celana|sepatu|alat|mesin/i.test(q));
     const englishQueries = allQueries.filter(q => !bahasaQueries.includes(q));
-    const primaryQueries = [...bahasaQueries.slice(0, 3), ...englishQueries.slice(0, 2)];
-    if (primaryQueries.length === 0) primaryQueries.push(...allQueries.slice(0, 3));
+    const mainBahasa = bahasaQueries[0] || allQueries[0];
+    const mainEnglish = englishQueries[0] || dryRunData.clean_name_en || allQueries[0];
 
-    const doSearch = async (queries, attemptLabel) => {
-      setStage(attemptLabel + "Searching Indonesian marketplaces... (~25s)");
-      const searchInstructions = queries.slice(0, 3).map(q =>
-        '- Search: "' + q + ' tokopedia terlaris"\n- Search: "' + q + ' shopee paling laku"'
+    // ── Per-platform search ──
+    const doSearchPlatform = async (platform, queries, label) => {
+      const site = platform === "Shopee" ? "shopee.co.id" : "tokopedia.com";
+      const soldTerm = platform === "Shopee" ? "terjual" : "terlaris";
+      const searchLines = queries.slice(0, 3).map(q =>
+        '- Search: "' + q + ' ' + site + ' ' + soldTerm + '"'
       ).join("\n");
 
-      const rawSearch = await runWithProgress(() => callClaude(
-        'You are a product researcher. Search for "' + dryRunData.clean_name_id + '" (English: "' + dryRunData.clean_name_en + '") on Indonesian e-commerce marketplaces.\n\nDo these searches one by one:\n' + searchInstructions + '\n- Search: "' + queries[0] + ' harga terbaru indonesia"\n- Search: "top selling ' + (dryRunData.category || "product") + " " + queries[0] + ' tokopedia shopee"\n\nIMPORTANT:\n- Perform each web search\n- PRIORITIZE listings with sales volume / "terjual" / "sold" counts\n- For EVERY listing found, extract: Product name, Price in IDR, Marketplace, Seller/shop, Units sold, Product URL\n- Include ALL products found\n- Aim for 15-30 listings\n- Pay attention to "terjual" indicators',
-        "claude-sonnet-4-20250514", true, 2, 4096), 30);
+      setStage(label + "Searching " + platform + "... (~20s)");
+      const raw = await runWithProgress(() => callClaude(
+        'You are a product researcher. Search for "' + dryRunData.clean_name_id + '" (English: "' + dryRunData.clean_name_en + '") specifically on ' + platform + ' Indonesia (' + site + ').\n\nDo ALL searches:\n' + searchLines + '\n- Search: "' + queries[0] + ' ' + site + '"\n- Search: "site:' + site + ' ' + queries[0] + '"\n' + (queries[1] ? '- Search: "' + queries[1] + ' ' + site + ' harga"\n' : '') + '\nIMPORTANT:\n- ONLY include ' + platform + ' results\n- For EVERY listing: name, price IDR, seller, sold count ("terjual"), URL\n- Aim for 10-20 listings\n- Dots = thousands: Rp 25.000 = 25000',
+        "claude-sonnet-4-20250514", true, 2, 4096), 25);
 
-      setStage(attemptLabel + "Formatting results... (~5s)");
-      await wait(1500);
-      const formatted = await runWithProgress(() => callClaude(
-        'Convert this Indonesian marketplace search data into valid JSON. No explanation.\n\nRAW SEARCH RESULTS:\n' + rawSearch + '\n\nOutput:\n{"results":[{"name":"product name","price_idr":NUMBER_IN_RUPIAH,"source":"Tokopedia" or "Shopee","seller":"shop","sold":"units sold text","url":"URL"}],"price_stats":{"lowest_idr":N,"highest_idr":N,"median_idr":N,"average_idr":N,"num_results":N},"search_notes":"summary"}\n\nCRITICAL:\n- price_idr MUST be INTEGER in Rupiah\n- "Rp 25.000" = 25000 (NOT 25.0)\n- Indonesian prices use DOTS as thousands separators\n- Valid range: 5000 to 50000000\nJSON only:',
+      setStage(label + "Formatting " + platform + "..."); await wait(1500);
+      const fmt = await runWithProgress(() => callClaude(
+        'Convert ' + platform + ' data to JSON:\n' + raw + '\n\nOutput ONLY:\n{"results":[{"name":"","price_idr":NUMBER,"source":"' + platform + '","seller":"","sold":"","url":""}]}\nprice_idr = INTEGER Rupiah. "Rp 25.000" = 25000. source = "' + platform + '". JSON only:',
         "claude-haiku-4-5-20251001", false, 2, 4096), 8);
-      return formatted;
+
+      try {
+        const p = parseJSON(fmt);
+        return (p.results || p.products || []).map(r => ({
+          name: r.name || r.product_name || "",
+          price_idr: sanitizeIDR(r.price_idr || r.price || 0),
+          source: platform,
+          seller: r.seller || r.shop || r.shop_name || "",
+          sold: (() => {
+            let s = r.sold || r.terjual || "";
+            if (typeof s === "string" && /not visible|not available|n\/a|^0$/i.test(s)) return "";
+            return s;
+          })(),
+          url: r.url || r.link || "",
+        }));
+      } catch (e) { console.warn(platform + " parse failed:", e.message); return []; }
+    };
+
+    // ── Broad search (both platforms) ──
+    const doBroadSearch = async (queries, label) => {
+      setStage(label + "Broad search... (~20s)");
+      const raw = await runWithProgress(() => callClaude(
+        'Search for "' + dryRunData.clean_name_id + '" on Indonesian e-commerce.\n\nDo ALL:\n- Search: "' + queries[0] + ' harga terbaru indonesia"\n- Search: "' + queries[0] + ' beli online murah"\n' + (queries[1] ? '- Search: "' + queries[1] + ' tokopedia shopee terlaris"\n' : '') + '- Search: "' + dryRunData.clean_name_en + ' buy online indonesia IDR"\n\nInclude BOTH Tokopedia AND Shopee. Each: name, price IDR, marketplace, seller, sold, URL. Aim 10-15.',
+        "claude-sonnet-4-20250514", true, 2, 4096), 25);
+
+      setStage(label + "Formatting..."); await wait(1500);
+      const fmt = await runWithProgress(() => callClaude(
+        'Convert to JSON:\n' + raw + '\n\n{"results":[{"name":"","price_idr":NUMBER,"source":"Tokopedia" or "Shopee","seller":"","sold":"","url":""}]}\nJSON only:',
+        "claude-haiku-4-5-20251001", false, 2, 4096), 8);
+
+      try {
+        const p = parseJSON(fmt);
+        return (p.results || p.products || []).map(r => ({
+          name: r.name || "", price_idr: sanitizeIDR(r.price_idr || r.price || 0),
+          source: r.source || "Tokopedia", seller: r.seller || "",
+          sold: (() => { let s = r.sold || ""; if (typeof s === "string" && /not visible|n\/a|^0$/i.test(s)) return ""; return s; })(),
+          url: r.url || "",
+        }));
+      } catch { return []; }
+    };
+
+    // ── Deduplication ──
+    const dedup = (results) => {
+      const seen = new Map();
+      return results.filter(r => {
+        if (!r.name || r.price_idr < 1000) return false;
+        const key = r.name.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 40) + "|" + r.price_idr;
+        if (seen.has(key)) return false;
+        seen.set(key, true);
+        return true;
+      });
     };
 
     try {
-      let formatted = await doSearch(primaryQueries, "");
-      let indo;
-      try { indo = parseJSON(formatted); }
-      catch (e) {
-        setStage("Re-formatting results...");
-        await wait(1000);
-        try {
-          const reformat = await callClaude(
-            'Extract Indonesian marketplace product data into JSON from:\n' + formatted + '\n\nReturn ONLY: {"results":[{"name":"","price_idr":NUMBER,"source":"Tokopedia or Shopee","seller":"","sold":"","url":""}],"price_stats":{"lowest_idr":0,"highest_idr":0,"median_idr":0,"average_idr":0,"num_results":0},"search_notes":""}\nJSON only:',
-            "claude-haiku-4-5-20251001", false, 1, 4096);
-          indo = parseJSON(reformat);
-        } catch { throw new Error("Could not format search results. Try again."); }
-      }
-      if (!indo.results) indo.results = indo.products || [];
+      let allResults = [];
+      const sq = [mainBahasa, ...(bahasaQueries.length > 1 ? [bahasaQueries[1]] : []), mainEnglish].filter(Boolean);
 
-      if (indo.results.length === 0) {
-        const broadQuery = dryRunData.clean_name_id || dryRunData.clean_name_en;
-        const formatted2 = await doSearch([broadQuery, (dryRunData.category || "product") + " murah", dryRunData.clean_name_en], "Retry: ");
+      // WAVE 1: Tokopedia
+      try {
+        const r = await doSearchPlatform("Tokopedia", sq, "\u2460 ");
+        allResults.push(...r);
+        setStage("Tokopedia: " + r.length + ". Starting Shopee...");
+        await wait(2000);
+      } catch (e) {
+        console.warn("Tokopedia:", e.message);
+        if (e.message.includes("429")) { setStage("Rate limited \u2014 15s..."); await wait(15000); }
+      }
+
+      // WAVE 2: Shopee
+      try {
+        const r = await doSearchPlatform("Shopee", sq, "\u2461 ");
+        allResults.push(...r);
+        setStage("Shopee: " + r.length + ".");
+        await wait(2000);
+      } catch (e) {
+        console.warn("Shopee:", e.message);
+        if (e.message.includes("429")) { setStage("Rate limited \u2014 15s..."); await wait(15000); }
+      }
+
+      // WAVE 3: Broad (only if < 15 results)
+      if (allResults.filter(r => r.price_idr >= 1000).length < 15) {
         try {
-          const indo2 = parseJSON(formatted2);
-          if (!indo2.results) indo2.results = indo2.products || [];
-          if (indo2.results.length > 0) indo = indo2;
+          const r = await doBroadSearch(sq, "\u2462 ");
+          allResults.push(...r);
+        } catch (e) { console.warn("Broad:", e.message); }
+      }
+
+      // Fallback
+      if (allResults.filter(r => r.price_idr >= 1000).length === 0) {
+        setStage("Last resort search...");
+        try {
+          const raw = await runWithProgress(() => callClaude(
+            'Search "' + dryRunData.clean_name_en + '" indonesia tokopedia shopee harga',
+            "claude-sonnet-4-20250514", true, 1, 4096), 20);
+          const fmt = await callClaude(
+            'Extract: ' + raw + '\n{"results":[{"name":"","price_idr":NUMBER,"source":"Tokopedia or Shopee","seller":"","sold":"","url":""}]} JSON only:',
+            "claude-haiku-4-5-20251001", false, 1, 4096);
+          const p = parseJSON(fmt);
+          allResults.push(...(p.results || []).map(r => ({
+            name: r.name || "", price_idr: sanitizeIDR(r.price_idr || 0),
+            source: r.source || "Tokopedia", seller: r.seller || "", sold: r.sold || "", url: r.url || "",
+          })));
         } catch {}
       }
 
-      if (indo.results.length === 0) {
-        setStage("Trying broad category search...");
-        try {
-          const lastResort = await runWithProgress(() => callClaude(
-            'Search for "' + dryRunData.clean_name_en + '" products in Indonesia:\n- Search: "' + dryRunData.clean_name_en + ' tokopedia"\n- Search: "' + dryRunData.clean_name_en + ' shopee"\n- Search: "' + dryRunData.category + " " + dryRunData.clean_name_en + ' harga indonesia"\nFind ANY Indonesian e-commerce listings with IDR prices.',
-            "claude-sonnet-4-20250514", true, 1, 4096), 20);
-          const lastFormatted = await callClaude(
-            'Extract products from: ' + lastResort + '\nReturn: {"results":[{"name":"","price_idr":NUMBER,"source":"Tokopedia or Shopee","seller":"","sold":"","url":""}],"price_stats":{"lowest_idr":0,"highest_idr":0,"median_idr":0,"average_idr":0,"num_results":0},"search_notes":""}\nJSON only:',
-            "claude-haiku-4-5-20251001", false, 1, 4096);
-          const indo3 = parseJSON(lastFormatted);
-          if (!indo3.results) indo3.results = indo3.products || [];
-          if (indo3.results.length > 0) indo = indo3;
-        } catch (e) { console.log("Last resort failed:", e); }
-      }
+      // Deduplicate
+      allResults = dedup(allResults);
+      if (allResults.length === 0) throw new Error("No Indonesian listings found. Try simpler Bahasa keywords.");
 
-      if (indo.results.length === 0) throw new Error("No Indonesian listings found. Try simpler Bahasa keywords.");
-
-      indo.results = indo.results.map(r => {
-        let sold = r.sold || r.terjual || "";
-        if (typeof sold === "string" && /not visible|not available|n\/a|^0$/i.test(sold)) sold = "";
-        return {
-          name: r.name || r.product_name || "",
-          price_idr: sanitizeIDR(r.price_idr || r.price || 0),
-          source: r.source || r.platform || "Tokopedia",
-          seller: r.seller || r.shop || r.shop_name || "",
-          sold,
-          url: r.url || r.link || "",
-        };
-      });
-
-      const validResults = indo.results.filter(r => r.price_idr >= 1000);
-      if (validResults.length >= 5) {
-        const sorted = [...validResults].sort((a, b) => a.price_idr - b.price_idr);
-        const lo = sorted[0].price_idr;
-        const hi = sorted[sorted.length - 1].price_idr;
+      // Outlier trimming
+      if (allResults.length >= 5) {
+        const sorted = [...allResults].sort((a, b) => a.price_idr - b.price_idr);
+        const lo = sorted[0].price_idr, hi = sorted[sorted.length - 1].price_idr;
         if (hi / lo > 10) {
-          const trimCount = Math.max(1, Math.floor(validResults.length * 0.1));
-          const trimmed = sorted.slice(trimCount, sorted.length - trimCount);
-          indo.results = trimmed.length >= 3 ? trimmed : validResults;
-        } else {
-          indo.results = validResults;
+          const tc = Math.max(1, Math.floor(allResults.length * 0.1));
+          const trimmed = sorted.slice(tc, sorted.length - tc);
+          allResults = trimmed.length >= 3 ? trimmed : allResults;
         }
-      } else {
-        indo.results = validResults;
       }
 
-      const cleanPrices = indo.results.map(r => r.price_idr).filter(x => x >= 1000).sort((a, b) => a - b);
-      if (cleanPrices.length > 0) {
-        indo.price_stats = {
+      // Price stats
+      const cleanPrices = allResults.map(r => r.price_idr).filter(x => x >= 1000).sort((a, b) => a - b);
+      if (cleanPrices.length === 0) throw new Error("No valid prices found.");
+
+      const indo = {
+        results: allResults,
+        price_stats: {
           lowest_idr: cleanPrices[0],
           highest_idr: cleanPrices[cleanPrices.length - 1],
           median_idr: cleanPrices[Math.floor(cleanPrices.length / 2)],
           average_idr: Math.round(cleanPrices.reduce((s, x) => s + x, 0) / cleanPrices.length),
           num_results: cleanPrices.length,
-        };
-      }
-
-      indo.confidence = computeConfidence(indo.results, indo.price_stats || {});
+        },
+        search_notes: "3-wave: " + allResults.filter(r => r.source === "Tokopedia").length + " Tokopedia, " + allResults.filter(r => r.source === "Shopee").length + " Shopee",
+      };
+      indo.confidence = computeConfidence(indo.results, indo.price_stats);
       setIndoResults(indo);
 
+      // Margin calculation
       const wc = dryRunData.weight_class || "medium";
       const stats = indo.price_stats;
-      if (!stats || !stats.median_idr) throw new Error("No valid prices found.");
       const med = stats.median_idr;
       const low = stats.lowest_idr || med;
       const high = stats.highest_idr || med;
@@ -804,7 +901,12 @@ export default function App() {
           : medianMargin.margin >= MARGIN_THRESHOLD.borderline ? "Investigated" : "Rejected",
       };
       setMarginData(mData);
-      setHistory(prev => [mData, ...prev].slice(0, MAX_HISTORY));
+
+      // IMMEDIATE SAVE
+      const newHistory = [mData, ...historyRef.current].slice(0, MAX_HISTORY);
+      setHistory(newHistory);
+      await saveHistoryNow(newHistory);
+
       setActiveSection(2);
       setStage("");
     } catch (err) {
@@ -812,64 +914,6 @@ export default function App() {
       if (err.message.includes("429") || err.message.includes("Rate")) setCooldown(30);
     }
     setLoading(false);
-  };
-
-const runApifyActor = async (actorId, input, label) => {
-  setStage(label + " — starting actor...");
-  const startRes = await fetch("https://trades-proxy.sadewoahmadm.workers.dev", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      action: 'apify',
-      data: { actorId, input }
-    })
-  });
-  if (!startRes.ok) {
-    const err = await startRes.json().catch(() => ({}));
-    throw new Error("Apify " + startRes.status + ": " + (err.error?.message || "Failed to start"));
-  }
-  const runData = await startRes.json();
-  const runId = runData.data?.id;
-  const datasetId = runData.data?.defaultDatasetId;
-  if (!runId) throw new Error("Apify: no run ID returned");
-
-  setStage(label + " — scraping...");
-  let status = "RUNNING";
-  let polls = 0;
-  const maxPolls = 40;
-  while ((status === "RUNNING" || status === "READY") && polls < maxPolls) {
-    await wait(3000);
-    polls++;
-    setProgress(Math.min(90, (polls / maxPolls) * 100));
-    try {
-      const pollRes = await fetch("https://api.apify.com/v2/actor-runs/" + runId + "?token=apify_api_placeholder");
-      const pollData = await pollRes.json();
-      status = pollData.data?.status || "UNKNOWN";
-    } catch {}
-  }
-  if (status !== "SUCCEEDED") throw new Error("Apify actor " + (status === "RUNNING" ? "timed out" : "failed") + ": " + status);
-
-  setStage(label + " — fetching results...");
-  const resultsRes = await fetch("https://api.apify.com/v2/datasets/" + datasetId + "/items?limit=50");
-  if (!resultsRes.ok) throw new Error("Apify: failed to fetch results");
-  return await resultsRes.json();
-};
-
-  const normalizeApifyResults = (items, source) => {
-    return items.map(item => {
-      const rawPrice = item.price || item.price_idr || item.priceNum || item.normalPrice || 0;
-      return {
-        name: item.name || item.title || item.productName || item.product_name || "",
-        price_idr: sanitizeIDR(rawPrice),
-        source: source || item.source || "Tokopedia",
-        seller: item.seller || item.shopName || item.shop_name || item.storeName || "",
-        sold: typeof (item.sold || item.totalSold || item.itemSold || "") === "number"
-          ? ((item.sold || item.totalSold || 0) > 0 ? (item.sold || item.totalSold) + "+ terjual" : "")
-          : String(item.sold || item.totalSold || item.itemSold || item.terjual || ""),
-        url: item.url || item.link || item.productUrl || "",
-        rating: item.rating || item.ratingScore || 0,
-      };
-    }).filter(r => r.name && r.price_idr >= 1000);
   };
 
   const runIndoSearchApify = async () => {
@@ -965,8 +1009,10 @@ const runApifyActor = async (actorId, input, label) => {
           : medianMargin.margin >= MARGIN_THRESHOLD.borderline ? "Investigated" : "Rejected",
       };
       setMarginData(mData);
-      setHistory(prev => [mData, ...prev].slice(0, MAX_HISTORY));
-      setActiveSection(2); setStage("");
+      const newHistory = [mData, ...historyRef.current].slice(0, MAX_HISTORY);
+      setHistory(newHistory);
+      await saveHistoryNow(newHistory);
+      setActiveSection(2);
     } catch (err) { setAutoError(err.message); setStage(""); }
     setLoading(false);
   };
@@ -1262,6 +1308,7 @@ const runApifyActor = async (actorId, input, label) => {
             <h1 style={{ fontFamily: "'Instrument Serif',serif", fontSize: "28px", fontWeight: 400, color: c.gold, margin: 0 }}>GT Cross-Trade</h1>
             <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "4px", letterSpacing: "2px", textTransform: "uppercase" }}>
               {"UAE \u2190 Indonesia \u00b7 PIN "}{currentPin.slice(0, 2)}{"** \u00b7 "}{fxUpdated ? "FX " + fxUpdated.toLocaleDateString() : "FX: defaults"}
+              {" \u00b7 "}<span style={{ color: supabaseReady ? c.green : c.darkGold }}>{supabaseReady ? "\u25cf DB" : "\u25cb local"}</span>
             </div>
           </div>
           <div style={{ display: "flex", gap: "12px", fontSize: "11px", alignItems: "flex-end" }}>
@@ -1357,7 +1404,7 @@ const runApifyActor = async (actorId, input, label) => {
               <div style={{ fontSize: "12px", color: c.dim }}>Paste a product URL and click Quick Check</div>
               <div style={{ marginTop: "16px", display: "inline-block", padding: "14px 20px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "6px", textAlign: "left", fontSize: "11px", lineHeight: 2 }}>
                 <span style={{ color: c.green }}>{"\u2460 Quick Check"}</span> <span style={{ color: c.dimmer }}>{" \u2014 read + translate"}</span> <span style={{ color: c.dim }}>~$0.02</span><br />
-                <span style={{ color: c.gold }}>{"\u2461 Indo Search & Margins"}</span> <span style={{ color: c.dimmer }}>{" \u2014 Tokopedia + Shopee + cost analysis"}</span> <span style={{ color: c.dim }}>~$0.06-0.08</span>
+                <span style={{ color: c.gold }}>{"\u2461 Indo Search & Margins"}</span> <span style={{ color: c.dimmer }}>{" \u2014 3-wave Tokopedia + Shopee + cost analysis"}</span> <span style={{ color: c.dim }}>~$0.15-0.20</span>
               </div>
             </div>
           )}
@@ -1417,7 +1464,7 @@ const runApifyActor = async (actorId, input, label) => {
                   </>
                 ) : (
                   <button onClick={runIndoSearch} disabled={cooldown > 0 || editableQueries.filter(q => q.trim()).length === 0} style={{ ...btnStyle, padding: "12px 36px", fontSize: "12px", opacity: cooldown > 0 ? 0.4 : 1 }}>
-                    {cooldown > 0 ? "\u23f3 WAIT " + cooldown + "s" : "\ud83d\udd0d SEARCH INDONESIA + MARGINS \u2014 ~$0.06-0.08"}
+                    {cooldown > 0 ? "\u23f3 WAIT " + cooldown + "s" : "\ud83d\udd0d SEARCH INDONESIA + MARGINS \u2014 ~$0.15-0.20"}
                   </button>
                 )}
               </div>
