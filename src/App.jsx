@@ -133,10 +133,6 @@ function guessCategory(n) {
 }
 
 // ══════════ PERSISTENT STORAGE LAYER ══════════
-// ══════════ SUPABASE + LOCALSTORAGE DUAL-WRITE ══════════
-// Supabase = permanent (survives browser clears, works cross-device)
-// localStorage = fast cache + offline fallback
-
 const supabaseReady = SUPABASE_URL !== "https://YOUR-PROJECT-ID.supabase.co" && SUPABASE_ANON_KEY !== "eyJ...your-anon-key-here...";
 
 async function supabaseGet(key) {
@@ -197,8 +193,6 @@ async function loadHistory(pin) {
   try {
     const data = await storeGet(pin + ":history");
     if (data && Array.isArray(data) && data.length > 0) return data.map(expandEntry);
-
-    // Migration: try old sharded format from localStorage
     try {
       const metaRaw = localStorage.getItem("gt:" + pin + ":meta");
       if (metaRaw) {
@@ -367,6 +361,8 @@ export default function App() {
   const [activeSection, setActiveSection] = useState(0);
   const [qty, setQty] = useState(1);
   const [qtyMode, setQtyMode] = useState("unit");
+  // Wave status tracker
+  const [waveStatus, setWaveStatus] = useState([]);
 
   const [bulkTab, setBulkTab] = useState(0);
   const [uaeProducts, setUaeProducts] = useState([]);
@@ -460,14 +456,12 @@ export default function App() {
     })();
   }, [unlocked, currentPin]);
 
-  // Immediate save for new entries (no delay)
   const saveHistoryNow = useCallback(async (newHistory) => {
     if (!currentPinRef.current) return;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     await saveHistory(currentPinRef.current, newHistory);
   }, []);
 
-  // Debounced save for status changes
   const saveHistoryDebounced = useCallback(() => {
     if (!currentPinRef.current) return;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
@@ -550,45 +544,44 @@ export default function App() {
   }, [unlocked]);
 
   const callClaude = async (prompt, model, useSearch = false, retries = 2, maxTokens = 2048) => {
-  const body = { 
-    action: 'claude',
-    data: {
-      model,
-      max_tokens: maxTokens,
-      messages: [{ role: "user", content: prompt }],
-      tools: useSearch ? [{ type: "web_search_20250305", name: "web_search" }] : undefined
+    const body = { 
+      action: 'claude',
+      data: {
+        model,
+        max_tokens: maxTokens,
+        messages: [{ role: "user", content: prompt }],
+        tools: useSearch ? [{ type: "web_search_20250305", name: "web_search" }] : undefined
+      }
+    };
+    const delay = useSearch ? 15000 : 8000;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const r = await fetch("https://trades-proxy.sadewoahmadm.workers.dev", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        if (r.status === 429) {
+          if (attempt < retries) {
+            setStage(s => s.replace(/ \(retry.*/, "") + " (retry in " + Math.round((attempt + 1) * delay / 1000) + "s...)");
+            await wait((attempt + 1) * delay);
+            continue;
+          }
+          throw new Error("Rate limited. Wait 30s and retry. No cost charged.");
+        }
+        if (!r.ok) {
+          let d = "";
+          try { const e = await r.json(); d = e.error?.message || ""; } catch {}
+          throw new Error("API " + r.status + ": " + (d || "error"));
+        }
+        const data = await r.json();
+        return data.content?.map(b => b.text || "").filter(Boolean).join("\n") || "";
+      } catch (err) {
+        if (attempt === retries) throw err;
+        await wait((attempt + 1) * 10000);
+      }
     }
   };
-  
-  const delay = useSearch ? 15000 : 8000;
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const r = await fetch("https://trades-proxy.sadewoahmadm.workers.dev", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
-      });
-      if (r.status === 429) {
-        if (attempt < retries) {
-          setStage(s => s.replace(/ \(retry.*/, "") + " (retry in " + Math.round((attempt + 1) * delay / 1000) + "s...)");
-          await wait((attempt + 1) * delay);
-          continue;
-        }
-        throw new Error("Rate limited. Wait 30s and retry. No cost charged.");
-      }
-      if (!r.ok) {
-        let d = "";
-        try { const e = await r.json(); d = e.error?.message || ""; } catch {}
-        throw new Error("API " + r.status + ": " + (d || "error"));
-      }
-      const data = await r.json();
-      return data.content?.map(b => b.text || "").filter(Boolean).join("\n") || "";
-    } catch (err) {
-      if (attempt === retries) throw err;
-      await wait((attempt + 1) * 10000);
-    }
-  }
-};
 
   const parseJSON = (text) => {
     let s = text.replace(/```json/g, "").replace(/```/g, "").trim();
@@ -636,23 +629,19 @@ export default function App() {
   };
 
   const runDryRun = async () => {
-    // Security check - validate URL input
     const input = url.trim();
     if (!input) { setAutoError("Please enter a URL"); return; }
     if (!input.startsWith('http')) { setAutoError("Invalid URL: Must start with http"); return; }
     if (input.includes('"') || input.includes('{') || input.includes('<')) { setAutoError("Invalid characters in URL"); return; }
     const allowedDomains = ['amazon.ae', 'noon.com', 'noon.ae'];
     if (!allowedDomains.some(d => input.includes(d))) { setAutoError("Only Amazon.ae and Noon UAE allowed"); return; }
-    
     if (!apiKey) { setApiKeyStatus("missing"); return; }
-    
     if (input.includes("amzn.eu") || input.includes("amzn.to") || input.includes("a.co/")) {
       setAutoError("Shortened link. Open in browser first, copy full URL.");
       return;
     }
-    
     setLoading(true); setAutoError(""); setDryRunData(null); setUaeSimilar(null);
-    setIndoResults(null); setMarginData(null); setEditableQueries([]); setNewQueryInput(""); setActiveSection(0);
+    setIndoResults(null); setMarginData(null); setEditableQueries([]); setNewQueryInput(""); setActiveSection(0); setWaveStatus([]);
 
     const asinMatch = input.match(/\/dp\/([A-Z0-9]{10})/i) || input.match(/\/([A-Z0-9]{10})(?:[/?]|$)/i);
     const asin = asinMatch ? asinMatch[1] : "";
@@ -693,10 +682,10 @@ export default function App() {
     setLoading(false);
   };
 
-  // ══════════ 3-WAVE INDO SEARCH ══════════
+  // ══════════ 3-WAVE INDO SEARCH (FIXED) ══════════
   const runIndoSearch = async () => {
     if (!dryRunData || !apiKey) return;
-    setLoading(true); setAutoError(""); setIndoResults(null); setMarginData(null);
+    setLoading(true); setAutoError(""); setIndoResults(null); setMarginData(null); setWaveStatus([]);
     const allQueries = editableQueries.filter(q => q.trim());
     if (allQueries.length === 0) { setAutoError("Add at least one search query."); setLoading(false); return; }
 
@@ -705,22 +694,34 @@ export default function App() {
     const mainBahasa = bahasaQueries[0] || allQueries[0];
     const mainEnglish = englishQueries[0] || dryRunData.clean_name_en || allQueries[0];
 
-    // ── Per-platform search ──
+    // ── Per-platform search (IMPROVED) ──
     const doSearchPlatform = async (platform, queries, label) => {
-      const site = platform === "Shopee" ? "shopee.co.id" : "tokopedia.com";
-      const soldTerm = platform === "Shopee" ? "terjual" : "terlaris";
-      const searchLines = queries.slice(0, 3).map(q =>
-        '- Search: "' + q + ' ' + site + ' ' + soldTerm + '"'
-      ).join("\n");
+      const isToko = platform === "Tokopedia";
+      const site = isToko ? "tokopedia.com" : "shopee.co.id";
+
+      // Multiple search strategies per platform
+      const searchPrompts = [];
+      // Strategy 1: Direct site search
+      searchPrompts.push('"' + queries[0] + ' ' + site + '"');
+      // Strategy 2: Platform name + product (works better for Shopee since Shopee blocks crawlers)
+      searchPrompts.push('"' + queries[0] + ' ' + platform + ' Indonesia harga"');
+      // Strategy 3: Different keyword if available
+      if (queries[1]) searchPrompts.push('"' + queries[1] + ' ' + site + ' harga"');
+      // Strategy 4: Brand + generic name on platform
+      if (dryRunData.brand) searchPrompts.push('"' + dryRunData.brand + ' ' + (dryRunData.clean_name_id || queries[0]) + ' ' + platform + '"');
+      // Strategy 5: English fallback for Shopee (Shopee indexes some English titles)
+      if (!isToko && mainEnglish) searchPrompts.push('"' + mainEnglish + ' shopee indonesia price"');
+
+      const searchLines = searchPrompts.slice(0, 5).map(q => '- Search: ' + q).join("\n");
 
       setStage(label + "Searching " + platform + "... (~20s)");
       const raw = await runWithProgress(() => callClaude(
-        'You are a product researcher. Search for "' + dryRunData.clean_name_id + '" (English: "' + dryRunData.clean_name_en + '") specifically on ' + platform + ' Indonesia (' + site + ').\n\nDo ALL searches:\n' + searchLines + '\n- Search: "' + queries[0] + ' ' + site + '"\n- Search: "site:' + site + ' ' + queries[0] + '"\n' + (queries[1] ? '- Search: "' + queries[1] + ' ' + site + ' harga"\n' : '') + '\nIMPORTANT:\n- ONLY include ' + platform + ' results\n- For EVERY listing: name, price IDR, seller, sold count ("terjual"), URL\n- Aim for 10-20 listings\n- Dots = thousands: Rp 25.000 = 25000',
+        'You are a product researcher. I need to find "' + dryRunData.clean_name_id + '" (English: "' + dryRunData.clean_name_en + '") on ' + platform + ' Indonesia.\n\nDo ALL of these searches — this is critical:\n' + searchLines + '\n\nVERY IMPORTANT:\n- ONLY include results that are clearly from ' + platform + ' (' + site + ')\n- For EVERY listing found, include: product name, price in IDR (Indonesian Rupiah), seller name, sold count, link\n- Indonesian Rupiah uses dots as thousands separator: Rp 25.000 = 25000 IDR\n- Try to find 10-20 listings\n- If a search returns no ' + platform + ' results, move to the next search\n- Report what you found even if only a few results',
         "claude-sonnet-4-20250514", true, 2, 4096), 25);
 
       setStage(label + "Formatting " + platform + "..."); await wait(1500);
       const fmt = await runWithProgress(() => callClaude(
-        'Convert ' + platform + ' data to JSON:\n' + raw + '\n\nOutput ONLY:\n{"results":[{"name":"","price_idr":NUMBER,"source":"' + platform + '","seller":"","sold":"","url":""}]}\nprice_idr = INTEGER Rupiah. "Rp 25.000" = 25000. source = "' + platform + '". JSON only:',
+        'Convert these ' + platform + ' search results to JSON. Extract ONLY ' + platform + ' listings.\n\nRAW DATA:\n' + raw + '\n\nOutput ONLY this JSON:\n{"results":[{"name":"product name","price_idr":NUMBER,"source":"' + platform + '","seller":"seller name","sold":"sold count","url":"product url"}]}\n\nRULES:\n- price_idr must be an INTEGER in Rupiah. "Rp 25.000" = 25000. "Rp 1.500.000" = 1500000\n- source must be exactly "' + platform + '"\n- If no ' + platform + ' results found, return {"results":[]}\nJSON only:',
         "claude-haiku-4-5-20251001", false, 2, 4096), 8);
 
       try {
@@ -740,11 +741,37 @@ export default function App() {
       } catch (e) { console.warn(platform + " parse failed:", e.message); return []; }
     };
 
-    // ── Broad search (both platforms) ──
-    const doBroadSearch = async (queries, label) => {
-      setStage(label + "Broad search... (~20s)");
+    // ── Shopee-focused fallback search ──
+    const doShopeeRetry = async (queries, label) => {
+      setStage(label + "Shopee retry with different queries... (~20s)");
       const raw = await runWithProgress(() => callClaude(
-        'Search for "' + dryRunData.clean_name_id + '" on Indonesian e-commerce.\n\nDo ALL:\n- Search: "' + queries[0] + ' harga terbaru indonesia"\n- Search: "' + queries[0] + ' beli online murah"\n' + (queries[1] ? '- Search: "' + queries[1] + ' tokopedia shopee terlaris"\n' : '') + '- Search: "' + dryRunData.clean_name_en + ' buy online indonesia IDR"\n\nInclude BOTH Tokopedia AND Shopee. Each: name, price IDR, marketplace, seller, sold, URL. Aim 10-15.',
+        'I need to find products on Shopee Indonesia (shopee.co.id). The product is: "' + dryRunData.clean_name_en + '" / "' + dryRunData.clean_name_id + '".\n\nPlease do ALL of these searches:\n- Search: "shopee.co.id ' + queries[0] + '"\n- Search: "shopee ' + dryRunData.clean_name_en + ' indonesia"\n- Search: "' + queries[0] + ' beli di shopee"\n- Search: "shopee indonesia ' + (dryRunData.brand || queries[0]) + ' ' + (dryRunData.category || '') + '"\n' + (queries[1] ? '- Search: "' + queries[1] + ' shopee.co.id harga terbaru"\n' : '') + '\nI know Shopee can be hard to find — try every search above. Report ANY Shopee listing you find with: name, price IDR, seller, sold count, URL.',
+        "claude-sonnet-4-20250514", true, 2, 4096), 25);
+
+      setStage(label + "Formatting Shopee retry..."); await wait(1500);
+      const fmt = await runWithProgress(() => callClaude(
+        'Convert to JSON. ONLY Shopee listings:\n' + raw + '\n\n{"results":[{"name":"","price_idr":NUMBER,"source":"Shopee","seller":"","sold":"","url":""}]}\nprice_idr = INTEGER. "Rp 25.000" = 25000. JSON only:',
+        "claude-haiku-4-5-20251001", false, 2, 4096), 8);
+
+      try {
+        const p = parseJSON(fmt);
+        return (p.results || []).map(r => ({
+          name: r.name || "", price_idr: sanitizeIDR(r.price_idr || r.price || 0),
+          source: "Shopee", seller: r.seller || "",
+          sold: (() => { let s = r.sold || ""; if (typeof s === "string" && /not visible|n\/a|^0$/i.test(s)) return ""; return s; })(),
+          url: r.url || "",
+        }));
+      } catch { return []; }
+    };
+
+    // ── Broad search (both platforms) ──
+    const doBroadSearch = async (queries, label, focusPlatform) => {
+      const focusNote = focusPlatform
+        ? '\nFOCUS especially on finding ' + focusPlatform + ' results — I have very few from there.'
+        : '';
+      setStage(label + (focusPlatform ? focusPlatform + "-focused" : "Broad") + " search... (~20s)");
+      const raw = await runWithProgress(() => callClaude(
+        'Search for "' + dryRunData.clean_name_id + '" on Indonesian e-commerce.\n\nDo ALL:\n- Search: "' + queries[0] + ' harga terbaru indonesia"\n- Search: "' + queries[0] + ' beli online murah"\n' + (queries[1] ? '- Search: "' + queries[1] + ' tokopedia shopee terlaris"\n' : '') + '- Search: "' + dryRunData.clean_name_en + ' buy online indonesia IDR"\n' + (focusPlatform === "Shopee" ? '- Search: "' + queries[0] + ' shopee.co.id"\n- Search: "shopee ' + dryRunData.clean_name_en + ' indonesia harga"\n' : '') + '\nInclude BOTH Tokopedia AND Shopee.' + focusNote + ' Each: name, price IDR, marketplace, seller, sold, URL. Aim 10-15.',
         "claude-sonnet-4-20250514", true, 2, 4096), 25);
 
       setStage(label + "Formatting..."); await wait(1500);
@@ -777,36 +804,87 @@ export default function App() {
 
     try {
       let allResults = [];
+      const waves = [];
       const sq = [mainBahasa, ...(bahasaQueries.length > 1 ? [bahasaQueries[1]] : []), mainEnglish].filter(Boolean);
 
       // WAVE 1: Tokopedia
+      let tokoCount = 0;
       try {
         const r = await doSearchPlatform("Tokopedia", sq, "\u2460 ");
+        tokoCount = r.filter(x => x.price_idr >= 1000).length;
         allResults.push(...r);
-        setStage("Tokopedia: " + r.length + ". Starting Shopee...");
-        await wait(2000);
+        waves.push({ name: "Tokopedia", status: "ok", count: tokoCount });
+        setWaveStatus([...waves]);
+        setStage("Tokopedia: " + tokoCount + " results. Waiting before Shopee...");
+        await wait(5000); // 5s gap instead of 2s to avoid rate limits
       } catch (e) {
         console.warn("Tokopedia:", e.message);
-        if (e.message.includes("429")) { setStage("Rate limited \u2014 15s..."); await wait(15000); }
+        const isRateLimit = e.message.includes("429") || e.message.includes("Rate");
+        waves.push({ name: "Tokopedia", status: "fail", count: 0, reason: isRateLimit ? "Rate limited" : e.message });
+        setWaveStatus([...waves]);
+        if (isRateLimit) { setStage("Rate limited \u2014 waiting 18s..."); await wait(18000); }
+        else await wait(5000);
       }
 
       // WAVE 2: Shopee
+      let shopeeCount = 0;
       try {
         const r = await doSearchPlatform("Shopee", sq, "\u2461 ");
+        shopeeCount = r.filter(x => x.price_idr >= 1000).length;
         allResults.push(...r);
-        setStage("Shopee: " + r.length + ".");
-        await wait(2000);
+        waves.push({ name: "Shopee", status: shopeeCount > 0 ? "ok" : "empty", count: shopeeCount, reason: shopeeCount === 0 ? "Search returned 0 — Shopee may not be indexed by Google" : "" });
+        setWaveStatus([...waves]);
+        setStage("Shopee: " + shopeeCount + " results.");
+        await wait(3000);
       } catch (e) {
         console.warn("Shopee:", e.message);
-        if (e.message.includes("429")) { setStage("Rate limited \u2014 15s..."); await wait(15000); }
+        const isRateLimit = e.message.includes("429") || e.message.includes("Rate");
+        waves.push({ name: "Shopee", status: "fail", count: 0, reason: isRateLimit ? "Rate limited" : e.message });
+        setWaveStatus([...waves]);
+        if (isRateLimit) { setStage("Rate limited \u2014 waiting 18s..."); await wait(18000); }
+        else await wait(5000);
       }
 
-      // WAVE 3: Broad (only if < 15 results)
-      if (allResults.filter(r => r.price_idr >= 1000).length < 15) {
+      // WAVE 2.5: Shopee RETRY if Wave 2 got 0 results
+      if (shopeeCount === 0) {
+        setStage("Shopee had 0 results — retrying with different queries...");
+        await wait(5000); // extra breathing room
         try {
-          const r = await doBroadSearch(sq, "\u2462 ");
+          const r = await doShopeeRetry(sq, "\u2461b ");
+          const retryCount = r.filter(x => x.price_idr >= 1000).length;
           allResults.push(...r);
-        } catch (e) { console.warn("Broad:", e.message); }
+          shopeeCount = retryCount;
+          waves.push({ name: "Shopee retry", status: retryCount > 0 ? "ok" : "empty", count: retryCount, reason: retryCount === 0 ? "Retry also returned 0 — Shopee not indexed for this product" : "Retry found results" });
+          setWaveStatus([...waves]);
+          await wait(3000);
+        } catch (e) {
+          console.warn("Shopee retry:", e.message);
+          waves.push({ name: "Shopee retry", status: "fail", count: 0, reason: e.message });
+          setWaveStatus([...waves]);
+          if (e.message.includes("429")) { await wait(18000); }
+          else await wait(5000);
+        }
+      }
+
+      // WAVE 3: Broad (focus on Shopee if Shopee still has 0)
+      const validSoFar = allResults.filter(r => r.price_idr >= 1000).length;
+      if (validSoFar < 15 || shopeeCount === 0) {
+        const focusPlatform = shopeeCount === 0 ? "Shopee" : null;
+        try {
+          const r = await doBroadSearch(sq, "\u2462 ", focusPlatform);
+          const broadCount = r.filter(x => x.price_idr >= 1000).length;
+          const broadShopee = r.filter(x => x.source === "Shopee" && x.price_idr >= 1000).length;
+          allResults.push(...r);
+          waves.push({ name: "Broad" + (focusPlatform ? " (" + focusPlatform + " focus)" : ""), status: broadCount > 0 ? "ok" : "empty", count: broadCount, reason: focusPlatform && broadShopee === 0 ? "Still no Shopee results found" : "" });
+          setWaveStatus([...waves]);
+        } catch (e) {
+          console.warn("Broad:", e.message);
+          waves.push({ name: "Broad", status: "fail", count: 0, reason: e.message });
+          setWaveStatus([...waves]);
+        }
+      } else {
+        waves.push({ name: "Broad", status: "skip", count: 0, reason: "Skipped — enough results (" + validSoFar + ")" });
+        setWaveStatus([...waves]);
       }
 
       // Fallback
@@ -820,11 +898,17 @@ export default function App() {
             'Extract: ' + raw + '\n{"results":[{"name":"","price_idr":NUMBER,"source":"Tokopedia or Shopee","seller":"","sold":"","url":""}]} JSON only:',
             "claude-haiku-4-5-20251001", false, 1, 4096);
           const p = parseJSON(fmt);
-          allResults.push(...(p.results || []).map(r => ({
+          const fallbackResults = (p.results || []).map(r => ({
             name: r.name || "", price_idr: sanitizeIDR(r.price_idr || 0),
             source: r.source || "Tokopedia", seller: r.seller || "", sold: r.sold || "", url: r.url || "",
-          })));
-        } catch {}
+          }));
+          allResults.push(...fallbackResults);
+          waves.push({ name: "Fallback", status: fallbackResults.length > 0 ? "ok" : "empty", count: fallbackResults.filter(x => x.price_idr >= 1000).length });
+          setWaveStatus([...waves]);
+        } catch {
+          waves.push({ name: "Fallback", status: "fail", count: 0 });
+          setWaveStatus([...waves]);
+        }
       }
 
       // Deduplicate
@@ -846,6 +930,9 @@ export default function App() {
       const cleanPrices = allResults.map(r => r.price_idr).filter(x => x >= 1000).sort((a, b) => a - b);
       if (cleanPrices.length === 0) throw new Error("No valid prices found.");
 
+      const tokoFinal = allResults.filter(r => r.source === "Tokopedia").length;
+      const shopeeFinal = allResults.filter(r => r.source === "Shopee").length;
+
       const indo = {
         results: allResults,
         price_stats: {
@@ -855,7 +942,8 @@ export default function App() {
           average_idr: Math.round(cleanPrices.reduce((s, x) => s + x, 0) / cleanPrices.length),
           num_results: cleanPrices.length,
         },
-        search_notes: "3-wave: " + allResults.filter(r => r.source === "Tokopedia").length + " Tokopedia, " + allResults.filter(r => r.source === "Shopee").length + " Shopee",
+        search_notes: "3-wave: " + tokoFinal + " Tokopedia, " + shopeeFinal + " Shopee" + (shopeeFinal === 0 ? " (Shopee unavailable)" : ""),
+        wave_status: waves,
       };
       indo.confidence = computeConfidence(indo.results, indo.price_stats);
       setIndoResults(indo);
@@ -902,7 +990,6 @@ export default function App() {
       };
       setMarginData(mData);
 
-      // IMMEDIATE SAVE
       const newHistory = [mData, ...historyRef.current].slice(0, MAX_HISTORY);
       setHistory(newHistory);
       await saveHistoryNow(newHistory);
@@ -919,31 +1006,118 @@ export default function App() {
   const runIndoSearchApify = async () => {
     if (!dryRunData || !apifyKey) return;
     if (!apiKey) { setAutoError("Claude API key still needed for translation."); return; }
-    setLoading(true); setAutoError(""); setIndoResults(null); setMarginData(null);
+    setLoading(true); setAutoError(""); setIndoResults(null); setMarginData(null); setWaveStatus([]);
     const allQueries = editableQueries.filter(q => q.trim());
     if (allQueries.length === 0) { setAutoError("Add at least one search query."); setLoading(false); return; }
     const bahasaQuery = allQueries.find(q => /[^a-zA-Z0-9\s\-.]/.test(q) || /murah|terlaris|harga/i.test(q)) || allQueries[0];
 
+    // ── Apify Actor Runner ──
+    const runApifyActor = async (actorId, input, label) => {
+      setStage("Starting " + label + " scraper...");
+      // Start the actor run
+      const startRes = await fetch(
+        "https://api.apify.com/v2/acts/" + encodeURIComponent(actorId) + "/runs?token=" + apifyKey,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) }
+      );
+      if (!startRes.ok) {
+        const errText = await startRes.text();
+        throw new Error(label + " actor failed to start: " + startRes.status + " " + errText);
+      }
+      const runData = await startRes.json();
+      const runId = runData.data?.id;
+      if (!runId) throw new Error(label + " no run ID returned");
+
+      // Poll for completion
+      let status = "RUNNING";
+      let pollCount = 0;
+      while (status === "RUNNING" || status === "READY") {
+        if (pollCount > 60) throw new Error(label + " timed out after 5 minutes");
+        await wait(5000);
+        pollCount++;
+        setStage(label + " running... (" + (pollCount * 5) + "s)");
+        setProgress(Math.min(90, pollCount * 3));
+        const pollRes = await fetch(
+          "https://api.apify.com/v2/actor-runs/" + runId + "?token=" + apifyKey
+        );
+        if (!pollRes.ok) continue;
+        const pollData = await pollRes.json();
+        status = pollData.data?.status || "RUNNING";
+      }
+
+      if (status !== "SUCCEEDED") throw new Error(label + " ended with status: " + status);
+
+      // Fetch results
+      const datasetId = runData.data?.defaultDatasetId;
+      if (!datasetId) throw new Error(label + " no dataset ID");
+      const itemsRes = await fetch(
+        "https://api.apify.com/v2/datasets/" + datasetId + "/items?token=" + apifyKey + "&limit=50"
+      );
+      if (!itemsRes.ok) throw new Error(label + " failed to fetch results");
+      return await itemsRes.json();
+    };
+
+    // ── Normalize Apify results ──
+    const normalizeApifyResults = (items, platform) => {
+      if (!Array.isArray(items)) return [];
+      return items.filter(item => item && (item.price || item.currentPrice || item.salePrice)).map(item => {
+        let price = item.price || item.currentPrice || item.salePrice || 0;
+        if (typeof price === "string") price = sanitizeIDR(price);
+        if (typeof price === "number" && price < 500) price = Math.round(price * 1000);
+        return {
+          name: item.title || item.name || item.productName || "",
+          price_idr: Math.round(price),
+          source: platform,
+          seller: item.shopName || item.sellerName || item.seller || item.shop?.name || "",
+          sold: String(item.sold || item.totalSold || item.historicalSold || item.itemSold || ""),
+          url: item.url || item.link || item.productUrl || "",
+        };
+      }).filter(r => r.price_idr >= 1000 && r.name);
+    };
+
     try {
       let allResults = [];
+      const waves = [];
+
       setStage("Scraping Tokopedia..."); setProgress(0);
       try {
         const tokoItems = await runApifyActor(tokoActorId, { keyword: bahasaQuery, maxItems: 30, sort: "best-selling" }, "Tokopedia");
-        allResults.push(...normalizeApifyResults(tokoItems, "Tokopedia"));
-      } catch (e) { console.warn("Tokopedia:", e.message); setAutoError(prev => prev ? prev + "\n" + e.message : "Tokopedia: " + e.message); }
+        const tokoResults = normalizeApifyResults(tokoItems, "Tokopedia");
+        allResults.push(...tokoResults);
+        waves.push({ name: "Tokopedia (Apify)", status: tokoResults.length > 0 ? "ok" : "empty", count: tokoResults.length });
+        setWaveStatus([...waves]);
+      } catch (e) {
+        console.warn("Tokopedia:", e.message);
+        waves.push({ name: "Tokopedia (Apify)", status: "fail", count: 0, reason: e.message });
+        setWaveStatus([...waves]);
+        setAutoError(prev => prev ? prev + "\n" + e.message : "Tokopedia: " + e.message);
+      }
 
       setStage("Scraping Shopee..."); setProgress(0);
       try {
         const shopeeItems = await runApifyActor(shopeeActorId, { keyword: bahasaQuery, maxItems: 30, sort: "top-sales" }, "Shopee");
-        allResults.push(...normalizeApifyResults(shopeeItems, "Shopee"));
-      } catch (e) { console.warn("Shopee:", e.message); setAutoError(prev => prev ? prev + "\n" + e.message : "Shopee: " + e.message); }
+        const shopeeResults = normalizeApifyResults(shopeeItems, "Shopee");
+        allResults.push(...shopeeResults);
+        waves.push({ name: "Shopee (Apify)", status: shopeeResults.length > 0 ? "ok" : "empty", count: shopeeResults.length, reason: shopeeResults.length === 0 ? "Actor returned no matching products" : "" });
+        setWaveStatus([...waves]);
+      } catch (e) {
+        console.warn("Shopee:", e.message);
+        waves.push({ name: "Shopee (Apify)", status: "fail", count: 0, reason: e.message });
+        setWaveStatus([...waves]);
+        setAutoError(prev => prev ? prev + "\n" + e.message : "Shopee: " + e.message);
+      }
 
       if (allResults.length < 5 && allQueries.length > 1) {
         setStage("Trying second keyword...");
         try {
           const fallbackItems = await runApifyActor(tokoActorId, { keyword: allQueries[1], maxItems: 20, sort: "best-selling" }, "Retry Tokopedia");
-          allResults.push(...normalizeApifyResults(fallbackItems, "Tokopedia"));
-        } catch {}
+          const fallbackResults = normalizeApifyResults(fallbackItems, "Tokopedia");
+          allResults.push(...fallbackResults);
+          waves.push({ name: "Retry (Apify)", status: fallbackResults.length > 0 ? "ok" : "empty", count: fallbackResults.length });
+          setWaveStatus([...waves]);
+        } catch {
+          waves.push({ name: "Retry (Apify)", status: "fail", count: 0 });
+          setWaveStatus([...waves]);
+        }
       }
 
       if (allResults.length === 0) throw new Error("No products found from either marketplace.");
@@ -969,6 +1143,7 @@ export default function App() {
         },
         search_notes: "Apify scrape: " + allResults.filter(r => r.source === "Tokopedia").length + " Tokopedia, " + allResults.filter(r => r.source === "Shopee").length + " Shopee",
         source: "apify",
+        wave_status: waves,
       };
       indo.confidence = computeConfidence(indo.results, indo.price_stats);
       setIndoResults(indo); setAutoError("");
@@ -1229,7 +1404,7 @@ export default function App() {
 
   const resetLookup = () => {
     setDryRunData(null); setUaeSimilar(null); setIndoResults(null); setMarginData(null);
-    setAutoError(""); setUrl(""); setEditableQueries([]); setNewQueryInput(""); setActiveSection(0);
+    setAutoError(""); setUrl(""); setEditableQueries([]); setNewQueryInput(""); setActiveSection(0); setWaveStatus([]);
   };
 
   const inputStyle = { width: "100%", padding: "10px 12px", background: c.input, border: "1px solid " + c.border2, color: c.text, fontFamily: "monospace", fontSize: "13px", borderRadius: "3px", outline: "none" };
@@ -1266,6 +1441,28 @@ export default function App() {
       <div>{fmtIDR(idr)}</div>
     </div>
   );
+
+  // Wave status indicator component
+  const WaveStatusBar = () => {
+    if (!waveStatus.length) return null;
+    return (
+      <div style={{ marginBottom: "12px", padding: "10px 12px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px" }}>
+        <div style={{ fontSize: "9px", color: c.dimmer, letterSpacing: "1px", marginBottom: "6px", textTransform: "uppercase" }}>SEARCH WAVES</div>
+        {waveStatus.map((w, i) => {
+          const icon = w.status === "ok" ? "\u2713" : w.status === "skip" ? "\u2014" : w.status === "empty" ? "\u25cb" : "\u2717";
+          const color = w.status === "ok" ? c.green : w.status === "skip" ? c.dimmer : w.status === "empty" ? c.darkGold : c.red;
+          return (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "3px 0", fontSize: "11px" }}>
+              <span style={{ color, fontWeight: 700, width: "14px", textAlign: "center" }}>{icon}</span>
+              <span style={{ color: c.text, minWidth: "120px" }}>{w.name}</span>
+              <span style={{ color: w.count > 0 ? c.green : c.dimmer, fontWeight: 600 }}>{w.count} results</span>
+              {w.reason && <span style={{ color: c.dim, fontSize: "10px", fontStyle: "italic" }}>{w.reason}</span>}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
 
   const getQty = () => qtyMode === "container" ? Math.floor(24000 / (WEIGHT_KG[dryRunData?.weight_class || "medium"] || 1)) : qtyMode === "custom" ? qty : 1;
 
@@ -1391,6 +1588,7 @@ export default function App() {
               <div style={{ width: "100%", height: "3px", background: c.border, borderRadius: "2px" }}>
                 <div style={{ width: progress + "%", height: "100%", background: c.gold, borderRadius: "2px", transition: "width 0.3s" }} />
               </div>
+              {waveStatus.length > 0 && <WaveStatusBar />}
             </div>
           )}
           {autoError && (
@@ -1497,6 +1695,8 @@ export default function App() {
                 ))}
               </SectionToggle>
               <SectionToggle index={1} title={"Indonesia Market \u2014 " + (indoResults?.source === "apify" ? "Apify Scrape" : "Tokopedia & Shopee")} icon={"\ud83c\uddee\ud83c\udde9"} count={indoResults?.results?.length}>
+                {/* Wave status summary inside results */}
+                {indoResults?.wave_status && indoResults.wave_status.length > 0 && <WaveStatusBar />}
                 {indoResults?.confidence && (
                   <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 12px", marginBottom: "12px", background: indoResults.confidence.level === "high" ? (dark ? "#0D2E1A" : "#E8F5EC") : indoResults.confidence.level === "medium" ? (dark ? "#2A2210" : "#FDF8ED") : (dark ? "#3a1a1a" : "#FEF2F2"), border: "1px solid " + (indoResults.confidence.level === "high" ? c.green + "44" : indoResults.confidence.level === "medium" ? c.gold + "44" : c.red + "44"), borderRadius: "4px" }}>
                     <div style={{ fontSize: "10px", fontWeight: 700, letterSpacing: "0.5px", textTransform: "uppercase", color: indoResults.confidence.level === "high" ? c.green : indoResults.confidence.level === "medium" ? c.gold : c.red }}>
