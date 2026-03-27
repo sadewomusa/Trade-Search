@@ -233,12 +233,11 @@ export default function App() {
   const [waveStatus, setWaveStatus] = useState([]);
 
   // Discovery state
-  const [discSource, setDiscSource] = useState("amazon");
   const [discProducts, setDiscProducts] = useState([]);
   const [discScanning, setDiscScanning] = useState(false);
   const [discScanProgress, setDiscScanProgress] = useState({ done: 0, total: 0, current: "" });
   const [discLastScan, setDiscLastScan] = useState(null);
-  const [discFilter, setDiscFilter] = useState({ dept: "all", minPrice: "", maxPrice: "", minReviews: "", search: "" });
+  const [discFilter, setDiscFilter] = useState({ dept: "all", minPrice: "", maxPrice: "", minReviews: "", search: "", source: "all" });
   const [discSort, setDiscSort] = useState("reviews");
   const [discError, setDiscError] = useState("");
   const [validatingIdx, setValidatingIdx] = useState(-1);
@@ -950,8 +949,9 @@ export default function App() {
   const candidates = history.filter(h => (h.margins?.median?.margin || 0) >= MARGIN_THRESHOLD.candidate);
 
   // ── Discovery filtered/sorted products ──
-  const filteredDisc = (discSource === "noon" ? noonResults : discProducts).filter(p => {
+  const filteredDisc = [...discProducts, ...noonResults].filter(p => {
     const f = discFilter;
+    if (f.source && f.source !== "all" && p.source !== f.source) return false;
     if (f.dept !== "all" && p.department !== f.dept) return false;
     if (f.minPrice && p.price_aed < parseFloat(f.minPrice)) return false;
     if (f.maxPrice && p.price_aed > parseFloat(f.maxPrice)) return false;
@@ -1043,12 +1043,13 @@ export default function App() {
         </div>
         <div style={{ display: "flex", gap: "6px", alignItems: "center", marginBottom: "8px" }}>
           <span style={{ fontSize: "9px", color: c.dim, letterSpacing: "1px", width: "80px" }}>INDO MODE</span>
-          {[{ id: "apify", label: "Apify (~$0.02)" }, { id: "claude", label: "Claude Search (~$0.15)" }].map(m => (
+          {[{ id: "apify", label: "\ud83d\udd17 Apify Scraper (~$0.02)" }, { id: "claude", label: "\ud83d\udd0d Claude Web Search (~$0.15)" }].map(m => (
             <button key={m.id} onClick={() => setIndoMode(m.id)} style={{ padding: "4px 10px", fontSize: "10px", fontFamily: "monospace", cursor: "pointer", background: indoMode === m.id ? (m.id === "apify" ? c.green : c.gold) : "transparent", color: indoMode === m.id ? (m.id === "apify" ? "#fff" : c.btnText) : c.dim, border: "1px solid " + (indoMode === m.id ? (m.id === "apify" ? c.green : c.gold) : c.border2), borderRadius: "3px" }}>{m.label}</button>
           ))}
           <button onClick={() => setShowActorConfig(!showActorConfig)} style={{ ...btnSec, padding: "3px 8px", fontSize: "8px" }}>{showActorConfig ? "\u25be" : "\u2699"}</button>
         </div>
         {showActorConfig && <div style={{ padding: "8px", background: c.cardBg, border: "1px solid " + c.border, borderRadius: "4px", marginBottom: "4px" }}>
+          <div style={{ fontSize: "9px", color: c.dimmer, letterSpacing: "1px", marginBottom: "6px" }}>APIFY ACTOR IDs (format: username/actor-name)</div>
           {[{ l: "Tokopedia", v: tokoActorId, s: setTokoActorId, def: "fatihtahta/tokopedia-scraper" }, { l: "Shopee", v: shopeeActorId, s: setShopeeActorId, def: "fatihtahta/shopee-scraper" }, { l: "Noon", v: noonActorId, s: setNoonActorId, def: "buseta/noon-advanced-scraper" }].map(a => (
             <div key={a.l} style={{ display: "flex", gap: "6px", marginBottom: "4px", alignItems: "center" }}>
               <span style={{ fontSize: "9px", color: c.dim, width: "60px" }}>{a.l}</span>
@@ -1072,15 +1073,17 @@ export default function App() {
 
       {/* ══════════ DISCOVERY TAB ══════════ */}
       {mode === "discovery" && <div style={secStyle}>
-        <div style={{ display: "flex", gap: "8px", marginBottom: "16px", alignItems: "center" }}>
-          {[{ id: "amazon", label: "Amazon.ae" }, { id: "noon", label: "Noon.ae" }].map(s => (
-            <button key={s.id} onClick={() => setDiscSource(s.id)} style={{ padding: "6px 14px", fontSize: "11px", fontFamily: "monospace", cursor: "pointer", background: discSource === s.id ? c.gold : "transparent", color: discSource === s.id ? c.btnText : c.dim, border: "1px solid " + (discSource === s.id ? c.gold : c.border2), borderRadius: "3px" }}>{s.label}</button>
-          ))}
-          {discSource === "amazon" && discLastScan && <span style={{ fontSize: "10px", color: c.dimmer, marginLeft: "8px" }}>Last scan: {new Date(discLastScan).toLocaleDateString()}</span>}
-        </div>
 
-        {discSource === "amazon" && <div style={{ marginBottom: "16px" }}>
-          <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "8px", flexWrap: "wrap" }}>
+        {/* ── AMAZON.AE BESTSELLERS ── */}
+        <div style={{ marginBottom: "16px", padding: "12px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span style={{ fontSize: "10px", color: c.gold, letterSpacing: "1px", fontWeight: 700 }}>AMAZON.AE BESTSELLERS</span>
+              <span style={{ fontSize: "8px", color: c.dimmer, padding: "1px 5px", border: "1px solid " + c.border, borderRadius: "3px" }}>via ScrapingDog</span>
+            </div>
+            {discLastScan && <span style={{ fontSize: "10px", color: c.dimmer }}>Last: {new Date(discLastScan).toLocaleDateString()}</span>}
+          </div>
+          <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
             <select value={scanDept} onChange={e => setScanDept(e.target.value)} disabled={discScanning} style={{ ...inputStyle, width: "auto", padding: "8px 12px", fontSize: "11px" }}>
               <option value="all">All Departments ({AMAZON_AE_DEPTS.length})</option>
               {AMAZON_AE_DEPTS.map(d => <option key={d.slug} value={d.slug}>{d.label}</option>)}
@@ -1096,29 +1099,40 @@ export default function App() {
             )}
             {!scrapingDogKey && <span style={{ fontSize: "10px", color: c.red }}>Add ScrapingDog key</span>}
           </div>
-          {discScanning && <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          {discScanning && <div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "8px" }}>
             <div style={{ flex: 1, height: "3px", background: c.border, borderRadius: "2px" }}><div style={{ width: (discScanProgress.done / Math.max(1, discScanProgress.total) * 100) + "%", height: "100%", background: c.gold, borderRadius: "2px", transition: "width 0.5s" }} /></div>
             <span style={{ fontSize: "10px", color: c.gold, whiteSpace: "nowrap" }}>{discScanProgress.current}... {discProducts.length} products</span>
           </div>}
-        </div>}
+        </div>
 
-        {discSource === "noon" && <div style={{ marginBottom: "16px" }}>
+        {/* ── NOON.AE SEARCH ── */}
+        <div style={{ marginBottom: "16px", padding: "12px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+            <span style={{ fontSize: "10px", color: c.gold, letterSpacing: "1px", fontWeight: 700 }}>NOON.AE SEARCH</span>
+            <span style={{ fontSize: "8px", color: c.dimmer, padding: "1px 5px", border: "1px solid " + c.border, borderRadius: "3px" }}>via Apify</span>
+          </div>
           <div style={{ display: "flex", gap: "8px" }}>
-            <input value={noonKeyword} onChange={e => setNoonKeyword(e.target.value)} onKeyDown={e => e.key === "Enter" && !noonLoading && apifyKey && noonKeyword.trim() && runNoonDiscovery()} placeholder="Search Noon..." style={{ ...inputStyle, flex: 1, padding: "10px 12px" }} />
-            <button onClick={runNoonDiscovery} disabled={noonLoading || !noonKeyword.trim() || !apifyKey} style={{ ...btnStyle, opacity: (noonLoading || !noonKeyword.trim() || !apifyKey) ? 0.4 : 1 }}>{noonLoading ? "SEARCHING..." : "\ud83d\udd0d SEARCH NOON"}</button>
+            <input value={noonKeyword} onChange={e => setNoonKeyword(e.target.value)} onKeyDown={e => e.key === "Enter" && !noonLoading && apifyKey && noonKeyword.trim() && runNoonDiscovery()} placeholder="Search keyword on Noon.ae..." style={{ ...inputStyle, flex: 1, padding: "10px 12px" }} />
+            <button onClick={runNoonDiscovery} disabled={noonLoading || !noonKeyword.trim() || !apifyKey} style={{ ...btnGreen, padding: "10px 24px", fontSize: "11px", opacity: (noonLoading || !noonKeyword.trim() || !apifyKey) ? 0.4 : 1 }}>{noonLoading ? "SEARCHING..." : "\ud83d\udd0d SEARCH NOON"}</button>
           </div>
           {!apifyKey && <div style={{ fontSize: "10px", color: c.red, marginTop: "6px" }}>{"\u26a0"} Enter your Apify API key above to enable Noon search</div>}
-        </div>}
+          {noonResults.length > 0 && <div style={{ fontSize: "10px", color: c.green, marginTop: "6px" }}>{noonResults.length} Noon products loaded</div>}
+        </div>
 
         {discError && <div style={{ padding: "12px", background: dark ? "#3a1a1a" : "#FEF2F2", border: "1px solid " + c.red + "44", borderRadius: "4px", marginBottom: "12px", fontSize: "12px", color: c.red }}>{"\u26a0 "}{discError}</div>}
         {(loading || noonLoading) && stage && <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" }}><Spinner /><span style={{ fontSize: "12px", color: c.gold }}>{stage}</span></div>}
 
         {/* Filters */}
         {(discProducts.length > 0 || noonResults.length > 0) && <div style={{ display: "flex", gap: "6px", marginBottom: "12px", flexWrap: "wrap", alignItems: "center" }}>
-          {discSource === "amazon" && <select value={discFilter.dept} onChange={e => setDiscFilter({ ...discFilter, dept: e.target.value })} style={{ ...inputStyle, width: "auto", padding: "5px 8px", fontSize: "10px" }}>
+          <select value={discFilter.source || "all"} onChange={e => setDiscFilter({ ...discFilter, source: e.target.value })} style={{ ...inputStyle, width: "auto", padding: "5px 8px", fontSize: "10px" }}>
+            <option value="all">All Sources</option>
+            <option value="Amazon.ae">Amazon.ae{discProducts.length > 0 ? ` (${discProducts.length})` : ""}</option>
+            <option value="Noon.ae">Noon.ae{noonResults.length > 0 ? ` (${noonResults.length})` : ""}</option>
+          </select>
+          <select value={discFilter.dept} onChange={e => setDiscFilter({ ...discFilter, dept: e.target.value })} style={{ ...inputStyle, width: "auto", padding: "5px 8px", fontSize: "10px" }}>
             <option value="all">All Departments</option>
             {departments.map(d => <option key={d} value={d}>{d}</option>)}
-          </select>}
+          </select>
           <div style={{ display: "flex", gap: "3px", alignItems: "center" }}>
             <span style={{ fontSize: "9px", color: c.dimmer }}>AED</span>
             <input value={discFilter.minPrice} onChange={e => setDiscFilter({ ...discFilter, minPrice: e.target.value })} placeholder="Min" style={{ ...inputStyle, width: "60px", padding: "5px 6px", fontSize: "10px", textAlign: "center" }} />
@@ -1200,7 +1214,7 @@ export default function App() {
 
         {/* Filter warning — products exist but all hidden by filter */}
         {(discProducts.length > 0 || noonResults.length > 0) && filteredDisc.length === 0 && !discScanning && <div style={{ textAlign: "center", padding: "30px 20px", background: dark ? "#2A2210" : "#FDF8ED", border: "1px solid " + c.darkGold + "44", borderRadius: "4px", margin: "8px 0" }}>
-          <div style={{ fontSize: "14px", color: c.darkGold, marginBottom: "6px" }}>{"\u26a0"} All {discSource === "noon" ? noonResults.length : discProducts.length} products hidden by filters</div>
+          <div style={{ fontSize: "14px", color: c.darkGold, marginBottom: "6px" }}>{"\u26a0"} All {discProducts.length + noonResults.length} products hidden by filters</div>
           <div style={{ fontSize: "11px", color: c.dim }}>
             {discFilter.minReviews && <span>Min reviews: {discFilter.minReviews} {"\u00b7"} </span>}
             {discFilter.minPrice && <span>Min price: AED {discFilter.minPrice} {"\u00b7"} </span>}
@@ -1208,13 +1222,13 @@ export default function App() {
             {discFilter.dept !== "all" && <span>Dept: {discFilter.dept} {"\u00b7"} </span>}
             {discFilter.search && <span>Search: "{discFilter.search}" {"\u00b7"} </span>}
           </div>
-          <button onClick={() => setDiscFilter({ dept: "all", minPrice: "", maxPrice: "", minReviews: "", search: "" })} style={{ marginTop: "10px", padding: "6px 16px", fontSize: "10px", fontFamily: "monospace", cursor: "pointer", background: c.gold, color: c.btnText, border: "none", borderRadius: "3px", fontWeight: 700 }}>CLEAR ALL FILTERS</button>
+          <button onClick={() => setDiscFilter({ dept: "all", minPrice: "", maxPrice: "", minReviews: "", search: "", source: "all" })} style={{ marginTop: "10px", padding: "6px 16px", fontSize: "10px", fontFamily: "monospace", cursor: "pointer", background: c.gold, color: c.btnText, border: "none", borderRadius: "3px", fontWeight: 700 }}>CLEAR ALL FILTERS</button>
         </div>}
 
-        {discSource === "amazon" && !discScanning && discProducts.length === 0 && <div style={{ textAlign: "center", padding: "50px 20px" }}>
+        {!discScanning && discProducts.length === 0 && noonResults.length === 0 && <div style={{ textAlign: "center", padding: "50px 20px" }}>
           <div style={{ fontSize: "36px", marginBottom: "10px", opacity: 0.15 }}>{"\ud83d\udd0d"}</div>
-          <div style={{ fontSize: "12px", color: c.dim }}>Click "Scan Bestsellers" to load ~3,000 products from Amazon.ae</div>
-          <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "6px" }}>Scan uses premium proxies (~$1.50 all depts) {"\u00b7"} Free to browse after</div>
+          <div style={{ fontSize: "12px", color: c.dim }}>Scan Amazon.ae bestsellers above, or search Noon.ae to discover products</div>
+          <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "6px" }}>Amazon uses premium proxies (~$1.50 all depts) {"\u00b7"} Noon uses Apify</div>
         </div>}
       </div>}
 
@@ -1282,9 +1296,11 @@ export default function App() {
           </div>
           {/* Indo search button */}
           {!indoResults && !loading && <div style={{ padding: "14px", background: c.surface2, border: "1px solid " + c.green + "44", borderRadius: "4px", marginBottom: "10px", textAlign: "center" }}>
-            <button onClick={runLookupIndoSearch} disabled={editableQueries.filter(q => q.trim()).length === 0 || (indoMode === "apify" && !apifyKey)} style={{ ...btnGreen, padding: "12px 36px", fontSize: "12px", opacity: editableQueries.filter(q => q.trim()).length === 0 ? 0.4 : 1 }}>
-              {"\ud83d\udd0d"} {indoMode === "apify" ? "SCRAPE TOKO + SHOPEE (~$0.02)" : "CLAUDE SEARCH (~$0.15)"}
+            <button onClick={runLookupIndoSearch} disabled={editableQueries.filter(q => q.trim()).length === 0 || (indoMode === "apify" && !apifyKey)} style={{ ...btnGreen, padding: "12px 36px", fontSize: "12px", opacity: (editableQueries.filter(q => q.trim()).length === 0 || (indoMode === "apify" && !apifyKey)) ? 0.4 : 1 }}>
+              {"\ud83d\udd0d"} {indoMode === "apify" ? "SCRAPE TOKO + SHOPEE via Apify (~$0.02)" : "CLAUDE SEARCH (~$0.15)"}
             </button>
+            {indoMode === "apify" && !apifyKey && <div style={{ fontSize: "10px", color: c.red, marginTop: "8px" }}>{"\u26a0"} Add your Apify API key above to enable Tokopedia + Shopee scraping</div>}
+            {indoMode === "apify" && apifyKey && <div style={{ fontSize: "9px", color: c.dimmer, marginTop: "6px" }}>Toko: {tokoActorId} {"\u00b7"} Shopee: {shopeeActorId}</div>}
           </div>}
 
           {/* Indo Results section */}
