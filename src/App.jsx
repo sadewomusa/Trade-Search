@@ -25,7 +25,60 @@ const AMAZON_AE_DEPTS = [
   { slug: "personal-care", label: "Personal Care" }, { slug: "watches", label: "Watches" },
 ];
 
-// ══════════ v1 FEATURE: BLOCKED-SIGNAL DETECTION ══════════
+// ══════════ BRAND BLOCKLIST (~300 brands) ══════════
+const BRAND_BLOCKLIST_DEFAULT = [
+  // Electronics
+  "Philips","Samsung","Sony","LG","Bosch","Braun","Panasonic","JBL","Bose","Apple","Huawei","Xiaomi","Anker","Logitech","Canon","Nikon","GoPro","DJI","Garmin","Fitbit","Dyson","Sharp","Toshiba","Hisense","TCL","Oppo","Realme","OnePlus","Google","Microsoft","Dell","HP","Lenovo","Asus","Acer","Intel","AMD","Corsair","Razer","SteelSeries","HyperX","Marshall","Sennheiser","Bang & Olufsen","Sonos","Harman Kardon","Ultimate Ears","Beats","AKG","Shure","Audio-Technica",
+  // Kitchen & Appliances
+  "Tefal","KitchenAid","Cuisinart","Ninja","NutriBullet","Le Creuset","Pyrex","Black+Decker","DeLonghi","Breville","Kenwood","Moulinex","Russell Hobbs","Smeg","Instant Pot","Lodge","Calphalon","All-Clad","Zwilling","Wusthof","Henckels","Global","Victorinox","WMF","Fissler","Staub","Emile Henry","Nespresso","Lavazza","Illy","Keurig","Bialetti","Hario","Chemex","Aeropress","Fellow","Vitamix","Blendtec","Hamilton Beach","Oster","Sunbeam","Zojirushi","Tiger","Thermos","Stanley","Yeti","Hydro Flask","Contigo","CamelBak","Klean Kanteen",
+  // Home & Furniture
+  "IKEA","Joseph Joseph","OXO","Rubbermaid","Simplehuman","Dyson","iRobot","Roomba","Shark","Bissell","Karcher","Hoover","Miele","Electrolux","Rowenta","Tefal","Brabantia","Fiskars","3M","Command","Scotch","Weber","Traeger","Big Green Egg","Coleman","Yeti",
+  // Beauty & Personal Care
+  "L'Oreal","Nivea","Dove","Olay","Neutrogena","Maybelline","MAC","Estee Lauder","Clinique","Lancome","Dior","Chanel","Tom Ford","Jo Malone","Guerlain","Shiseido","SK-II","La Mer","Kiehl's","Origins","Aveda","Moroccanoil","Kerastase","Redken","Pantene","Head & Shoulders","TRESemme","Garnier","Revlon","NYX","Urban Decay","Too Faced","Benefit","Charlotte Tilbury","NARS","Bobbi Brown","Fenty Beauty","Rare Beauty","Glossier","The Ordinary","CeraVe","La Roche-Posay","Vichy","Bioderma","Eucerin","Cetaphil","Aveeno","Vaseline","Gillette","Oral-B","Philips Sonicare","Waterpik","Braun","Foreo",
+  // Fashion & Accessories
+  "Nike","Adidas","Puma","New Balance","Reebok","Under Armour","Columbia","The North Face","Patagonia","Arc'teryx","Timberland","Dr Martens","Converse","Vans","Skechers","Crocs","Birkenstock","Havaianas","Ray-Ban","Oakley","Fossil","Casio","G-Shock","Seiko","Citizen","Tissot","Swatch","Michael Kors","Coach","Kate Spade","Tommy Hilfiger","Calvin Klein","Ralph Lauren","Lacoste","Hugo Boss","Zara","H&M","Uniqlo","Levi's","Wrangler","Lee","Guess","Diesel",
+  // Baby & Kids
+  "Pampers","Huggies","Johnson & Johnson","Chicco","Graco","Maxi-Cosi","Britax","BabyBjorn","Philips Avent","Tommee Tippee","NUK","MAM","Fisher-Price","VTech","LeapFrog","Melissa & Doug","LEGO","Playmobil","Hasbro","Mattel","Nerf","Hot Wheels","Barbie",
+  // Sports & Fitness
+  "Nike","Adidas","Reebok","Puma","Under Armour","Speedo","Arena","TYR","Wilson","Head","Babolat","Yonex","Prince","Callaway","TaylorMade","Titleist","Ping","Garmin","Polar","Suunto","Fitbit","Theragun","Hyperice","Bowflex","NordicTrack","Peloton","Manduka","Lululemon","Gaiam",
+  // Office & Stationery
+  "Staedtler","Faber-Castell","Pilot","Uni","Zebra","Parker","Waterman","Montblanc","Cross","Moleskine","Leuchtturm","Rhodia","Lamy","TWSBI","Fellowes","Swingline","Bostitch",
+  // Tools & Hardware
+  "DeWalt","Makita","Milwaukee","Bosch","Stanley","Black+Decker","Dremel","Festool","Hilti","Ryobi","Craftsman","Irwin","Klein","Knipex","Wera","Wiha","Leatherman","Gerber","Victorinox",
+  // Automotive
+  "Castrol","Mobil","Shell","3M","Meguiar's","Chemical Guys","Turtle Wax","Armor All","Rain-X","Bosch","Denso","NGK","Thule","Yakima",
+  // Health & Supplements
+  "Centrum","Nature Made","NOW Foods","Garden of Life","Optimum Nutrition","MuscleTech","BSN","Cellucor","GNC","Ensure","Boost","SlimFast",
+  // Pet
+  "Royal Canin","Purina","Hill's","Pedigree","Whiskas","Fancy Feast","Blue Buffalo","Orijen","Acana",
+  // Premium/Luxury Kitchen
+  "Cole & Mason","Jamie Oliver","Gordon Ramsay","Martha Stewart","Rachel Ray","Berghoff","Scanpan","Mauviel","de Buyer","Riedel","Waterford","Wedgwood","Royal Doulton","Villeroy & Boch","Noritake","Denby","Corelle","CorningWare","Anchor Hocking","Libbey","Bormioli","Luigi Bormioli","Spiegelau","Schott Zwiesel",
+  // Other branded
+  "MUJI","Daiso","Miniso","Crate & Barrel","Williams Sonoma","Pottery Barn","West Elm","Restoration Hardware","CB2","Anthropologie"
+];
+
+// ══════════ INDONESIA-SIGNAL KEYWORDS ══════════
+const INDO_SIGNAL_WORDS = ["handmade","handcrafted","hand carved","hand woven","handwoven","wooden","wood","bamboo","rattan","coconut","teak","acacia","mango wood","mahogany","sono wood","natural","organic","artisan","traditional","rustic","woven","seagrass","palm","batik","ceramic","pottery","stone","volcanic","lava","mortar","pestle","cobek","ulekan","incense","frankincense","kemenyan","essential oil","herbal","jamu","luwak","toraja","arabica","robusta","pandan","sambal","tempeh","vanilla","clove","cinnamon","nutmeg","turmeric","ginger","galangal","lemongrass","eco-friendly","sustainable","zero waste","reusable","plant-based","fiber","sisal","abaca","kapok","horn","bone","shell","mother of pearl","batik","ikat","songket","tenun"];
+
+// ══════════ DEFAULT KEYWORD BANK ══════════
+const DEFAULT_KEYWORDS = [
+  "coconut bowl","teak cutting board","rattan basket","bamboo organizer","essential oil diffuser","mortar pestle stone",
+  "batik fabric","wooden spoon set","incense sticks natural","coffee beans arabica","herbal supplement",
+  "coconut oil organic","spice grinder manual","woven placemat","ceramic handmade","wooden toy",
+  "jamu herbal","sambal sauce","pandan extract","frankincense resin","wooden coffee dripper",
+  "seagrass basket","bamboo straw","moringa powder","vanilla beans","clove oil",
+  "teak serving bowl","banana leaf plate","tempeh starter","luwak coffee"
+];
+
+// ══════════ NOON BRAINSTORM CATEGORIES ══════════
+const NOON_BRAINSTORM_CATS = [
+  "kitchen wooden","home decor natural","bamboo organizer","coconut products","essential oil","handmade craft",
+  "rattan storage","coffee accessories","spice grinder","herbal supplement","organic beauty","natural soap",
+  "ceramic tableware","wooden toys","incense burner","woven basket","teak wood","eco friendly kitchen",
+  "natural candle","aromatherapy","stone mortar"
+];
+
+// ══════════ BLOCKED-SIGNAL DETECTION ══════════
 const BLOCKED_SIGNALS = [
   { pattern: /login.{0,20}required|need.{0,10}log.?in|sign.?in.{0,10}to.{0,10}(view|access|see)/i, reason: "login wall detected" },
   { pattern: /captcha|verify.{0,10}(human|robot|not a bot)|security.{0,10}check/i, reason: "CAPTCHA/bot check" },
@@ -33,17 +86,7 @@ const BLOCKED_SIGNALS = [
   { pattern: /no.{0,10}results?.{0,10}(found|available)|couldn.?t.{0,10}find.{0,15}(any|results)|did not (find|return)/i, reason: "search returned nothing" },
   { pattern: /unable to (access|search|find|retrieve).{0,20}(shopee|tokopedia)/i, reason: "platform unreachable" },
 ];
-
-function detectBlockedSignals(rawText, platform) {
-  for (const sig of BLOCKED_SIGNALS) {
-    if (sig.pattern.test(rawText)) return platform + ": " + sig.reason;
-  }
-  // Check: response mentions the platform but has no prices at all
-  if (rawText.toLowerCase().includes(platform.toLowerCase()) && !/\d{2,3}\.\d{3}|rp\s*\d|idr\s*\d|\d+\s*rupiah/i.test(rawText)) {
-    return platform + ": response mentions platform but contains no prices";
-  }
-  return null;
-}
+function detectBlockedSignals(rawText, platform) { for (const sig of BLOCKED_SIGNALS) { if (sig.pattern.test(rawText)) return platform + ": " + sig.reason; } if (rawText.toLowerCase().includes(platform.toLowerCase()) && !/\d{2,3}\.\d{3}|rp\s*\d|idr\s*\d|\d+\s*rupiah/i.test(rawText)) { return platform + ": response mentions platform but contains no prices"; } return null; }
 
 // ══════════ HELPERS ══════════
 function marginColor(m) { return isNaN(m) ? "#f87171" : m >= MARGIN_THRESHOLD.candidate ? "#2EAA5A" : m >= MARGIN_THRESHOLD.borderline ? "#D4A843" : "#f87171"; }
@@ -51,40 +94,28 @@ function fmtIDR(n) { return n != null && !isNaN(n) ? "IDR " + Math.round(n).toLo
 function fmtAED(n) { return n != null && !isNaN(n) ? "AED " + n.toFixed(2) : "\u2014"; }
 function fmtUSD(n) { return n != null && !isNaN(n) ? "$" + n.toFixed(2) : "\u2014"; }
 function escapeHtml(s) { return !s ? "" : String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+function sanitizeIDR(price) { if (typeof price === "string") { price = parseInt(price.replace(/^[Rr]p.?\s*/, "").replace(/\./g, "").replace(/,/g, "").trim(), 10) || 0; } if (typeof price !== "number" || isNaN(price)) return 0; if (price > 0 && price < 500) price = Math.round(price * 1000); if (price > 0 && price < 1000) price = Math.round(price * 1000); return Math.round(price); }
+function computeConfidence(results, priceStats) { const vp = results.filter(r => (r.price_idr || 0) >= 1000); const ws = results.filter(r => r.sold && r.sold.trim() && !/^-|^\u2014/.test(r.sold)).length; const spread = priceStats.highest_idr && priceStats.lowest_idr > 0 ? priceStats.highest_idr / priceStats.lowest_idr : 999; let score = 0, flags = []; if (vp.length >= 10) score += 40; else if (vp.length >= 5) score += 30; else if (vp.length >= 3) score += 20; else { score += 5; flags.push("Few valid prices"); } if (spread <= 3) score += 30; else if (spread <= 5) score += 20; else if (spread <= 10) score += 10; else flags.push("Wide spread (" + spread.toFixed(0) + "\u00d7)"); if (ws >= 5) score += 20; else if (ws >= 2) score += 10; else flags.push("No sold data"); const dr = results.length > 0 ? (results.length - vp.length) / results.length : 1; if (dr <= 0.1) score += 10; else if (dr <= 0.3) score += 5; else flags.push(Math.round(dr * 100) + "% discarded"); return { score, level: score >= 70 ? "high" : score >= 40 ? "medium" : "low", flags, validCount: vp.length, totalCount: results.length, withSold: ws, spread: spread < 999 ? spread : null }; }
+function guessCategory(n) { const l = (n || "").toLowerCase(); if (/phone|charger|cable|headphone|speaker|power bank|usb|bluetooth|watch/i.test(l)) return "electronics"; if (/pan|pot|kitchen|cook|bake|knife|blender|mixer|plate/i.test(l)) return "kitchen"; if (/cream|serum|lotion|shampoo|perfume|makeup|lipstick|skincare/i.test(l)) return "beauty"; if (/shirt|dress|shoe|bag|wallet|belt|hat|socks|jacket/i.test(l)) return "fashion"; if (/pillow|curtain|lamp|rug|mat|towel|organizer|shelf/i.test(l)) return "home"; if (/toy|game|puzzle|doll|lego|figure/i.test(l)) return "toys"; if (/ball|fitness|gym|yoga|exercise|bottle/i.test(l)) return "sports"; if (/baby|diaper|pacifier|stroller/i.test(l)) return "baby"; if (/pen|notebook|stapler|tape|folder|desk/i.test(l)) return "office"; return "other"; }
 
-function sanitizeIDR(price) {
-  if (typeof price === "string") { price = parseInt(price.replace(/^[Rr]p.?\s*/, "").replace(/\./g, "").replace(/,/g, "").trim(), 10) || 0; }
-  if (typeof price !== "number" || isNaN(price)) return 0;
-  if (price > 0 && price < 500) price = Math.round(price * 1000);
-  if (price > 0 && price < 1000) price = Math.round(price * 1000);
-  return Math.round(price);
+// ══════════ BRAND FILTER ══════════
+function isBrandBlocked(productName, brandName, blocklist) {
+  const name = (productName || "").toLowerCase();
+  const brand = (brandName || "").toLowerCase();
+  for (const b of blocklist) {
+    const bl = b.toLowerCase();
+    if (brand && brand.includes(bl)) return true;
+    // Check product name — match as whole word boundary
+    const re = new RegExp("(^|\\s|\\b)" + bl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(\\s|$|\\b|'s)", "i");
+    if (re.test(name)) return true;
+  }
+  return false;
 }
-
-function computeConfidence(results, priceStats) {
-  const vp = results.filter(r => (r.price_idr || 0) >= 1000);
-  const ws = results.filter(r => r.sold && r.sold.trim() && !/^-|^\u2014/.test(r.sold)).length;
-  const spread = priceStats.highest_idr && priceStats.lowest_idr > 0 ? priceStats.highest_idr / priceStats.lowest_idr : 999;
-  let score = 0, flags = [];
-  if (vp.length >= 10) score += 40; else if (vp.length >= 5) score += 30; else if (vp.length >= 3) score += 20; else { score += 5; flags.push("Few valid prices"); }
-  if (spread <= 3) score += 30; else if (spread <= 5) score += 20; else if (spread <= 10) score += 10; else flags.push("Wide spread (" + spread.toFixed(0) + "\u00d7)");
-  if (ws >= 5) score += 20; else if (ws >= 2) score += 10; else flags.push("No sold data");
-  const dr = results.length > 0 ? (results.length - vp.length) / results.length : 1;
-  if (dr <= 0.1) score += 10; else if (dr <= 0.3) score += 5; else flags.push(Math.round(dr * 100) + "% discarded");
-  return { score, level: score >= 70 ? "high" : score >= 40 ? "medium" : "low", flags, validCount: vp.length, totalCount: results.length, withSold: ws, spread: spread < 999 ? spread : null };
-}
-
-function guessCategory(n) {
-  const l = (n || "").toLowerCase();
-  if (/phone|charger|cable|headphone|speaker|power bank|usb|bluetooth|watch/i.test(l)) return "electronics";
-  if (/pan|pot|kitchen|cook|bake|knife|blender|mixer|plate/i.test(l)) return "kitchen";
-  if (/cream|serum|lotion|shampoo|perfume|makeup|lipstick|skincare/i.test(l)) return "beauty";
-  if (/shirt|dress|shoe|bag|wallet|belt|hat|socks|jacket/i.test(l)) return "fashion";
-  if (/pillow|curtain|lamp|rug|mat|towel|organizer|shelf/i.test(l)) return "home";
-  if (/toy|game|puzzle|doll|lego|figure/i.test(l)) return "toys";
-  if (/ball|fitness|gym|yoga|exercise|bottle/i.test(l)) return "sports";
-  if (/baby|diaper|pacifier|stroller/i.test(l)) return "baby";
-  if (/pen|notebook|stapler|tape|folder|desk/i.test(l)) return "office";
-  return "other";
+function getIndoSignalScore(name) {
+  const l = (name || "").toLowerCase();
+  let score = 0, matched = [];
+  for (const w of INDO_SIGNAL_WORDS) { if (l.includes(w.toLowerCase())) { score += w.split(" ").length > 1 ? 3 : 2; matched.push(w); } }
+  return { score, matched };
 }
 
 // ══════════ STORAGE LAYER ══════════
@@ -94,87 +125,19 @@ async function supabaseSet(key, val) { if (!supabaseReady) return false; const r
 async function storeGet(key) { try { const v = await supabaseGet(key); if (v !== null) { try { localStorage.setItem("gt:" + key, JSON.stringify(v)); } catch {} return v; } } catch {} try { const v = localStorage.getItem("gt:" + key); return v ? JSON.parse(v) : null; } catch { return null; } }
 async function storeSet(key, val) { try { localStorage.setItem("gt:" + key, JSON.stringify(val)); } catch {} try { return await supabaseSet(key, val); } catch { return false; } }
 
-function compressEntry(h) {
-  const mm = h.margins?.median || {};
-  return { pn: h.uaeProduct?.product_name || "", pid: h.normalized?.clean_name_id || h.uaeProduct?.clean_name_id || "", pen: h.uaeProduct?.clean_name_en || h.normalized?.clean_name_en || "", br: h.uaeProduct?.brand || "", cat: h.normalized?.category || h.uaeProduct?.category || "", wc: h.weightClass || "medium", src: h.uaeProduct?.source || "", url: h.uaeProduct?.url || "", pa: h.uaeProduct?.price_aed || 0, pq: h.uaeProduct?.pack_quantity || 1, ir: (h.indoResults?.results || []).slice(0, 50).map(r => ({ n: r.name || "", p: r.price_idr || 0, s: r.source === "Shopee" ? "S" : "T", sl: r.seller || "", sd: r.sold || "" })), lo: h.lowestPriceIDR || 0, md: h.medianPriceIDR || 0, hi: h.highestPriceIDR || 0, nr: h.indoResults?.price_stats?.num_results || 0, mb: h.margins?.best?.margin || 0, mm: h.margins?.median?.margin || 0, mw: h.margins?.worst?.margin || 0, mc: { uU: mm.uaeUSD||0, uA: mm.uaeAED||0, uI: mm.uaeIDR||0, iU: mm.indoUSD||0, iA: mm.indoAED||0, iI: mm.indoIDR||0, fU: mm.freightUSD||0, fA: mm.freightAED||0, fI: mm.freightIDR||0, dU: mm.dutyUSD||0, dA: mm.dutyAED||0, dI: mm.dutyIDR||0, lU: mm.lastMileUSD||0, lA: mm.lastMileAED||0, lI: mm.lastMileIDR||0, tU: mm.totalUSD||0, tA: mm.totalAED||0, tI: mm.totalIDR||0 }, cs: h.confidence?.score || 0, cl: h.confidence?.level || "low", cf: h.confidence?.flags || [], st: h.status || "", ts: h.timestamp || "", ap: h.source === "apify" ? 1 : 0 };
-}
-function expandEntry(c) {
-  if (c.uaeProduct) return c;
-  const mc = c.mc || {};
-  return { uaeProduct: { product_name: c.pn, clean_name_en: c.pen, clean_name_id: c.pid, brand: c.br, category: c.cat, weight_class: c.wc, source: c.src, url: c.url, price_aed: c.pa, pack_quantity: c.pq || 1 }, normalized: { clean_name_id: c.pid, clean_name_en: c.pen, category: c.cat, weight_class: c.wc }, indoResults: { results: (c.ir || []).map(r => ({ name: r.n, price_idr: r.p, source: r.s === "S" ? "Shopee" : "Tokopedia", seller: r.sl, sold: r.sd, url: "" })), price_stats: { lowest_idr: c.lo, median_idr: c.md, highest_idr: c.hi, num_results: c.nr }, confidence: { score: c.cs, level: c.cl, flags: c.cf } }, margins: { best: { margin: c.mb }, median: { margin: c.mm, uaeUSD: mc.uU, uaeAED: mc.uA, uaeIDR: mc.uI, indoUSD: mc.iU, indoAED: mc.iA, indoIDR: mc.iI, freightUSD: mc.fU, freightAED: mc.fA, freightIDR: mc.fI, dutyUSD: mc.dU, dutyAED: mc.dA, dutyIDR: mc.dI, lastMileUSD: mc.lU, lastMileAED: mc.lA, lastMileIDR: mc.lI, totalUSD: mc.tU, totalAED: mc.tA, totalIDR: mc.tI }, worst: { margin: c.mw } }, confidence: { score: c.cs, level: c.cl, flags: c.cf }, medianPriceIDR: c.md, lowestPriceIDR: c.lo, highestPriceIDR: c.hi, weightClass: c.wc, status: c.st, timestamp: c.ts, source: c.ap ? "apify" : "legacy" };
-}
+function compressEntry(h) { const mm = h.margins?.median || {}; return { pn: h.uaeProduct?.product_name || "", pid: h.normalized?.clean_name_id || h.uaeProduct?.clean_name_id || "", pen: h.uaeProduct?.clean_name_en || h.normalized?.clean_name_en || "", br: h.uaeProduct?.brand || "", cat: h.normalized?.category || h.uaeProduct?.category || "", wc: h.weightClass || "medium", src: h.uaeProduct?.source || "", url: h.uaeProduct?.url || "", pa: h.uaeProduct?.price_aed || 0, pq: h.uaeProduct?.pack_quantity || 1, ir: (h.indoResults?.results || []).slice(0, 50).map(r => ({ n: r.name || "", p: r.price_idr || 0, s: r.source === "Shopee" ? "S" : "T", sl: r.seller || "", sd: r.sold || "" })), lo: h.lowestPriceIDR || 0, md: h.medianPriceIDR || 0, hi: h.highestPriceIDR || 0, nr: h.indoResults?.price_stats?.num_results || 0, mb: h.margins?.best?.margin || 0, mm: h.margins?.median?.margin || 0, mw: h.margins?.worst?.margin || 0, mc: { uU: mm.uaeUSD||0, uA: mm.uaeAED||0, uI: mm.uaeIDR||0, iU: mm.indoUSD||0, iA: mm.indoAED||0, iI: mm.indoIDR||0, fU: mm.freightUSD||0, fA: mm.freightAED||0, fI: mm.freightIDR||0, dU: mm.dutyUSD||0, dA: mm.dutyAED||0, dI: mm.dutyIDR||0, lU: mm.lastMileUSD||0, lA: mm.lastMileAED||0, lI: mm.lastMileIDR||0, tU: mm.totalUSD||0, tA: mm.totalAED||0, tI: mm.totalIDR||0 }, cs: h.confidence?.score || 0, cl: h.confidence?.level || "low", cf: h.confidence?.flags || [], st: h.status || "", ts: h.timestamp || "", ap: h.source === "apify" ? 1 : 0 }; }
+function expandEntry(c) { if (c.uaeProduct) return c; const mc = c.mc || {}; return { uaeProduct: { product_name: c.pn, clean_name_en: c.pen, clean_name_id: c.pid, brand: c.br, category: c.cat, weight_class: c.wc, source: c.src, url: c.url, price_aed: c.pa, pack_quantity: c.pq || 1 }, normalized: { clean_name_id: c.pid, clean_name_en: c.pen, category: c.cat, weight_class: c.wc }, indoResults: { results: (c.ir || []).map(r => ({ name: r.n, price_idr: r.p, source: r.s === "S" ? "Shopee" : "Tokopedia", seller: r.sl, sold: r.sd, url: "" })), price_stats: { lowest_idr: c.lo, median_idr: c.md, highest_idr: c.hi, num_results: c.nr }, confidence: { score: c.cs, level: c.cl, flags: c.cf } }, margins: { best: { margin: c.mb }, median: { margin: c.mm, uaeUSD: mc.uU, uaeAED: mc.uA, uaeIDR: mc.uI, indoUSD: mc.iU, indoAED: mc.iA, indoIDR: mc.iI, freightUSD: mc.fU, freightAED: mc.fA, freightIDR: mc.fI, dutyUSD: mc.dU, dutyAED: mc.dA, dutyIDR: mc.dI, lastMileUSD: mc.lU, lastMileAED: mc.lA, lastMileIDR: mc.lI, totalUSD: mc.tU, totalAED: mc.tA, totalIDR: mc.tI }, worst: { margin: c.mw } }, confidence: { score: c.cs, level: c.cl, flags: c.cf }, medianPriceIDR: c.md, lowestPriceIDR: c.lo, highestPriceIDR: c.hi, weightClass: c.wc, status: c.st, timestamp: c.ts, source: c.ap ? "apify" : "legacy" }; }
 async function loadHistory(pin) { try { const d = await storeGet(pin + ":history"); return d?.length ? d.map(expandEntry) : []; } catch { return []; } }
 async function saveHistory(pin, h) { try { return await storeSet(pin + ":history", h.map(compressEntry)); } catch { return false; } }
 async function hashPin(pin) { const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(pin + "arb-salt-2026")); return Array.from(new Uint8Array(b)).map(x => x.toString(16).padStart(2, "0")).join(""); }
 
 const Badge = ({ text, color = "#2EAA5A", bg = "#0D2E1A" }) => <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: "3px", fontSize: "10px", fontFamily: "monospace", background: bg, color, border: "1px solid " + color + "33" }}>{text}</span>;
 const Spinner = () => <div style={{ width: "14px", height: "14px", border: "2px solid #C9A84C", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite", display: "inline-block" }} />;
-
-// ══════════ v1 FEATURE: CONFIDENCE BADGE (reusable) ══════════
-const ConfidenceBadge = ({ confidence, c }) => {
-  if (!confidence) return null;
-  const color = confidence.level === "high" ? c.green : confidence.level === "medium" ? c.darkGold : c.red;
-  return <span style={{ fontSize: "9px", fontWeight: 700, color, padding: "1px 5px", borderRadius: "3px", border: "1px solid " + color + "44", fontFamily: "monospace" }}>{confidence.score}/100</span>;
-};
-
-// ══════════ v1 FEATURE: WAVE STATUS BAR (reusable) ══════════
-const WaveStatusBar = ({ waves, c }) => {
-  if (!waves?.length) return null;
-  return (
-    <div style={{ marginBottom: "12px", padding: "10px 12px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px" }}>
-      <div style={{ fontSize: "9px", color: c.dimmer, letterSpacing: "1px", marginBottom: "6px", textTransform: "uppercase" }}>SEARCH WAVES</div>
-      {waves.map((w, i) => {
-        const icon = w.status === "ok" ? "\u2713" : w.status === "skip" ? "\u2014" : w.status === "empty" ? "\u25cb" : "\u2717";
-        const wColor = w.status === "ok" ? c.green : w.status === "skip" ? c.dimmer : w.status === "empty" ? c.darkGold : c.red;
-        return (
-          <div key={i} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "3px 0", fontSize: "11px" }}>
-            <span style={{ color: wColor, fontWeight: 700, width: "14px", textAlign: "center" }}>{icon}</span>
-            <span style={{ color: c.text, minWidth: "120px" }}>{w.name}</span>
-            <span style={{ color: w.count > 0 ? c.green : c.dimmer, fontWeight: 600 }}>{w.count} results</span>
-            {w.reason && <span style={{ color: c.dim, fontSize: "10px", fontStyle: "italic" }}>{w.reason}</span>}
-          </div>
-        );
-      })}
-    </div>
-  );
-};
+const ConfidenceBadge = ({ confidence, c }) => { if (!confidence) return null; const color = confidence.level === "high" ? c.green : confidence.level === "medium" ? c.darkGold : c.red; return <span style={{ fontSize: "9px", fontWeight: 700, color, padding: "1px 5px", borderRadius: "3px", border: "1px solid " + color + "44", fontFamily: "monospace" }}>{confidence.score}/100</span>; };
+const WaveStatusBar = ({ waves, c }) => { if (!waves?.length) return null; return (<div style={{ marginBottom: "12px", padding: "10px 12px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px" }}><div style={{ fontSize: "9px", color: c.dimmer, letterSpacing: "1px", marginBottom: "6px", textTransform: "uppercase" }}>SEARCH WAVES</div>{waves.map((w, i) => { const icon = w.status === "ok" ? "\u2713" : w.status === "skip" ? "\u2014" : w.status === "empty" ? "\u25cb" : "\u2717"; const wColor = w.status === "ok" ? c.green : w.status === "skip" ? c.dimmer : w.status === "empty" ? c.darkGold : c.red; return (<div key={i} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "3px 0", fontSize: "11px" }}><span style={{ color: wColor, fontWeight: 700, width: "14px", textAlign: "center" }}>{icon}</span><span style={{ color: c.text, minWidth: "120px" }}>{w.name}</span><span style={{ color: w.count > 0 ? c.green : c.dimmer, fontWeight: 600 }}>{w.count} results</span>{w.reason && <span style={{ color: c.dim, fontSize: "10px", fontStyle: "italic" }}>{w.reason}</span>}</div>); })}</div>); };
 
 // ══════════ COOKIE WIZARD ══════════
-function CookieWizard({ c, onSave, onClose }) {
-  const [step, setStep] = useState(0);
-  const [pasted, setPasted] = useState("");
-  const isValid = pasted.trim().startsWith("[") && pasted.trim().endsWith("]");
-  const hasContent = pasted.trim().length > 5;
-  const steps = [
-    { title: "Open Shopee in Edge", body: "Open Microsoft Edge, go to shopee.co.id, and log in with your Shopee account. Make sure you can see your profile name at the top." },
-    { title: "Open EditThisCookie", body: "Click the cookie icon in your Edge toolbar (top right). If you don\u2019t see it, install EditThisCookie v3 from Chrome Web Store \u2014 it works on Edge." },
-    { title: "Export the Cookie", body: "In the EditThisCookie panel, look at the small icons at the top. Click the Export button \u2014 5th icon from the left, looks like an upload arrow. Your clipboard now has the cookie." },
-    { title: "Paste it here", body: null },
-  ];
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(4px)" }} onClick={onClose}>
-      <div style={{ width: "520px", maxWidth: "95vw", maxHeight: "90vh", overflowY: "auto", background: c.surface, border: "1px solid " + c.border2, borderRadius: "8px", padding: "28px" }} onClick={e => e.stopPropagation()}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
-          <h3 style={{ fontFamily: "'Instrument Serif',serif", fontSize: "20px", color: c.gold, margin: 0 }}>{"\ud83c\udf6a"} Shopee Cookie Setup</h3>
-          <button onClick={onClose} style={{ background: "transparent", border: "none", color: c.dim, fontSize: "18px", cursor: "pointer" }}>{"\u2715"}</button>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", marginBottom: "24px", gap: "4px" }}>
-          {steps.map((_, i) => (<div key={i} style={{ display: "flex", alignItems: "center", flex: i < 3 ? 1 : 0 }}><div style={{ width: "28px", height: "28px", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: i <= step ? c.gold : "transparent", color: i <= step ? c.btnText : c.dimmer, border: "2px solid " + (i <= step ? c.gold : c.border2), fontSize: "12px", fontWeight: 700, fontFamily: "monospace", flexShrink: 0 }}>{i + 1}</div>{i < 3 && <div style={{ flex: 1, height: "2px", background: i < step ? c.gold : c.border2, margin: "0 6px" }} />}</div>))}
-        </div>
-        <div style={{ padding: "16px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "6px", marginBottom: "20px", minHeight: "120px" }}>
-          <div style={{ fontSize: "14px", fontWeight: 600, color: c.gold, marginBottom: "10px", fontFamily: "monospace" }}>{steps[step].title}</div>
-          {step < 3 && <div style={{ fontSize: "13px", color: c.text, lineHeight: 1.7 }}>{steps[step].body}{step === 1 && <div style={{ marginTop: "10px" }}><a href="https://chromewebstore.google.com/detail/editthiscookie-v3/ojfpfkonmheifpbbmbaanpkgjhonbghc" target="_blank" rel="noopener" style={{ color: c.gold, fontSize: "11px", textDecoration: "underline" }}>{"\u2197 Install EditThisCookie v3"}</a></div>}</div>}
-          {step === 3 && <div><textarea value={pasted} onChange={e => setPasted(e.target.value)} placeholder="Paste cookie JSON here..." style={{ width: "100%", minHeight: "120px", padding: "10px", background: c.input, border: "1px solid " + c.border2, color: c.text, fontFamily: "monospace", fontSize: "11px", borderRadius: "4px", outline: "none", resize: "vertical" }} />{hasContent && <div style={{ marginTop: "8px", fontSize: "12px", display: "flex", alignItems: "center", gap: "6px" }}>{isValid ? <><span style={{ color: c.green, fontSize: "16px" }}>{"\u2713"}</span><span style={{ color: c.green }}>Looks good</span></> : <><span style={{ color: c.red, fontSize: "16px" }}>{"\u2717"}</span><span style={{ color: c.red }}>Doesn't look right</span></>}</div>}</div>}
-        </div>
-        <div style={{ display: "flex", justifyContent: "space-between" }}>
-          <button onClick={() => step > 0 && setStep(step - 1)} style={{ padding: "8px 20px", background: "transparent", color: step > 0 ? c.dim : c.dimmest, border: "1px solid " + (step > 0 ? c.border2 : c.border), borderRadius: "4px", cursor: step > 0 ? "pointer" : "default", fontFamily: "monospace", fontSize: "11px" }}>{"< BACK"}</button>
-          {step < 3 ? <button onClick={() => setStep(step + 1)} style={{ padding: "8px 24px", background: c.gold, color: c.btnText, border: "none", borderRadius: "4px", cursor: "pointer", fontFamily: "monospace", fontSize: "11px", fontWeight: 700 }}>{"NEXT >"}</button>
-          : <button onClick={() => { if (isValid) { onSave(pasted.trim()); onClose(); } }} disabled={!isValid} style={{ padding: "8px 24px", background: isValid ? c.green : c.dimmest, color: "#fff", border: "none", borderRadius: "4px", cursor: isValid ? "pointer" : "default", fontFamily: "monospace", fontSize: "11px", fontWeight: 700, opacity: isValid ? 1 : 0.4 }}>{"\ud83c\udf6a SAVE COOKIE"}</button>}
-        </div>
-      </div>
-    </div>
-  );
-}
+function CookieWizard({ c, onSave, onClose }) { const [step, setStep] = useState(0); const [pasted, setPasted] = useState(""); const isValid = pasted.trim().startsWith("[") && pasted.trim().endsWith("]"); const hasContent = pasted.trim().length > 5; const steps = [ { title: "Open Shopee in Edge", body: "Open Microsoft Edge, go to shopee.co.id, and log in with your Shopee account." }, { title: "Open EditThisCookie", body: "Click the cookie icon in your Edge toolbar. Install EditThisCookie v3 from Chrome Web Store if needed." }, { title: "Export the Cookie", body: "Click the Export button (5th icon from left). Your clipboard now has the cookie." }, { title: "Paste it here", body: null } ]; return (<div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(4px)" }} onClick={onClose}><div style={{ width: "520px", maxWidth: "95vw", maxHeight: "90vh", overflowY: "auto", background: c.surface, border: "1px solid " + c.border2, borderRadius: "8px", padding: "28px" }} onClick={e => e.stopPropagation()}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}><h3 style={{ fontFamily: "'Instrument Serif',serif", fontSize: "20px", color: c.gold, margin: 0 }}>{"\ud83c\udf6a"} Shopee Cookie Setup</h3><button onClick={onClose} style={{ background: "transparent", border: "none", color: c.dim, fontSize: "18px", cursor: "pointer" }}>{"\u2715"}</button></div><div style={{ display: "flex", alignItems: "center", marginBottom: "24px", gap: "4px" }}>{steps.map((_, i) => (<div key={i} style={{ display: "flex", alignItems: "center", flex: i < 3 ? 1 : 0 }}><div style={{ width: "28px", height: "28px", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: i <= step ? c.gold : "transparent", color: i <= step ? c.btnText : c.dimmer, border: "2px solid " + (i <= step ? c.gold : c.border2), fontSize: "12px", fontWeight: 700, fontFamily: "monospace", flexShrink: 0 }}>{i + 1}</div>{i < 3 && <div style={{ flex: 1, height: "2px", background: i < step ? c.gold : c.border2, margin: "0 6px" }} />}</div>))}</div><div style={{ padding: "16px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "6px", marginBottom: "20px", minHeight: "120px" }}><div style={{ fontSize: "14px", fontWeight: 600, color: c.gold, marginBottom: "10px", fontFamily: "monospace" }}>{steps[step].title}</div>{step < 3 && <div style={{ fontSize: "13px", color: c.text, lineHeight: 1.7 }}>{steps[step].body}</div>}{step === 3 && <div><textarea value={pasted} onChange={e => setPasted(e.target.value)} placeholder="Paste cookie JSON here..." style={{ width: "100%", minHeight: "120px", padding: "10px", background: c.input, border: "1px solid " + c.border2, color: c.text, fontFamily: "monospace", fontSize: "11px", borderRadius: "4px", outline: "none", resize: "vertical" }} />{hasContent && <div style={{ marginTop: "8px", fontSize: "12px", display: "flex", alignItems: "center", gap: "6px" }}>{isValid ? <><span style={{ color: c.green }}>{"\u2713"}</span><span style={{ color: c.green }}>Looks good</span></> : <><span style={{ color: c.red }}>{"\u2717"}</span><span style={{ color: c.red }}>Doesn't look right</span></>}</div>}</div>}</div><div style={{ display: "flex", justifyContent: "space-between" }}><button onClick={() => step > 0 && setStep(step - 1)} style={{ padding: "8px 20px", background: "transparent", color: step > 0 ? c.dim : c.dimmest, border: "1px solid " + (step > 0 ? c.border2 : c.border), borderRadius: "4px", cursor: step > 0 ? "pointer" : "default", fontFamily: "monospace", fontSize: "11px" }}>{"< BACK"}</button>{step < 3 ? <button onClick={() => setStep(step + 1)} style={{ padding: "8px 24px", background: c.gold, color: c.btnText, border: "none", borderRadius: "4px", cursor: "pointer", fontFamily: "monospace", fontSize: "11px", fontWeight: 700 }}>{"NEXT >"}</button> : <button onClick={() => { if (isValid) { onSave(pasted.trim()); onClose(); } }} disabled={!isValid} style={{ padding: "8px 24px", background: isValid ? c.green : c.dimmest, color: "#fff", border: "none", borderRadius: "4px", cursor: isValid ? "pointer" : "default", fontFamily: "monospace", fontSize: "11px", fontWeight: 700, opacity: isValid ? 1 : 0.4 }}>{"\ud83c\udf6a SAVE"}</button>}</div></div></div>); }
 
 // ══════════ MAIN APP ══════════
 export default function App() {
@@ -188,8 +151,9 @@ export default function App() {
   const [storageReady, setStorageReady] = useState(false);
   const [dark, setDark] = useState(true);
   const toggleTheme = async () => { const n = !dark; setDark(n); await storeSet("global:theme", n ? "dark" : "light"); };
+  const isBrainstormPin = currentPin === "240996";
 
-  const [mode, setMode] = useState("discovery");
+  const [mode, setMode] = useState("discover");
   const [apiKey, setApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
   const [apiKeyStatus, setApiKeyStatus] = useState("");
@@ -209,10 +173,19 @@ export default function App() {
   const [shopeeCookieUpdatedAt, setShopeeCookieUpdatedAt] = useState(null);
   const [showCookieWizard, setShowCookieWizard] = useState(false);
   const [indoMode, setIndoMode] = useState("apify");
-  const [tokoActorId, setTokoActorId] = useState("fatihtahta/tokopedia-scraper");
-  const [shopeeActorId, setShopeeActorId] = useState("fatihtahta/shopee-scraper");
-  const [noonActorId, setNoonActorId] = useState("buseta/noon-advanced-scraper");
-  const [showActorConfig, setShowActorConfig] = useState(false);
+  const tokoActorId = "jupri/tokopedia-scraper";
+  const shopeeActorId = "fatihtahta/shopee-scraper";
+  const noonActorId = "buseta/noon-advanced-scraper";
+
+  // Brand blocklist
+  const [customBrands, setCustomBrands] = useState([]);
+  const [showBrandList, setShowBrandList] = useState(false);
+  const [newBrandInput, setNewBrandInput] = useState("");
+  const allBrands = [...new Set([...BRAND_BLOCKLIST_DEFAULT, ...customBrands])];
+
+  // Keyword bank
+  const [keywords, setKeywords] = useState([...DEFAULT_KEYWORDS]);
+  const [newKeywordInput, setNewKeywordInput] = useState("");
 
   // Lookup state
   const [url, setUrl] = useState("");
@@ -232,38 +205,41 @@ export default function App() {
   const [qtyMode, setQtyMode] = useState("unit");
   const [waveStatus, setWaveStatus] = useState([]);
 
-  // Discovery state
-  const [discProducts, setDiscProducts] = useState([]);
-  const [discScanning, setDiscScanning] = useState(false);
-  const [discScanProgress, setDiscScanProgress] = useState({ done: 0, total: 0, current: "" });
-  const [discLastScan, setDiscLastScan] = useState(null);
-  const [discFilter, setDiscFilter] = useState({ dept: "all", minPrice: "", maxPrice: "", minReviews: "", search: "", source: "all" });
-  const [discSort, setDiscSort] = useState("reviews");
+  // Discover state
+  const [discSearchInput, setDiscSearchInput] = useState("");
+  const [discAmazonResults, setDiscAmazonResults] = useState([]);
+  const [discNoonResults, setDiscNoonResults] = useState([]);
+  const [discSearchingAmazon, setDiscSearchingAmazon] = useState(false);
+  const [discSearchingNoon, setDiscSearchingNoon] = useState(false);
   const [discError, setDiscError] = useState("");
-  const [validatingIdx, setValidatingIdx] = useState(-1);
-  const [validationResults, setValidationResults] = useState({});
-  // v1 FEATURE: UAE Similar in Discovery
-  const [discSimilarIdx, setDiscSimilarIdx] = useState(-1);
-  const [discSimilarResults, setDiscSimilarResults] = useState({});
-  // Noon discovery
-  const [noonKeyword, setNoonKeyword] = useState("");
-  const [noonLoading, setNoonLoading] = useState(false);
-  const [noonResults, setNoonResults] = useState([]);
-  // Scan controls
-  const [scanDept, setScanDept] = useState("all");
-  const scanAbortRef = useRef(false);
+  const [discValidatingIdx, setDiscValidatingIdx] = useState(null);
+  const [discValidationResults, setDiscValidationResults] = useState({});
 
-  // ── Diagnostic Log ──
+  // Brainstorm state
+  const [bsAmazonProducts, setBsAmazonProducts] = useState([]);
+  const [bsNoonProducts, setBsNoonProducts] = useState([]);
+  const [bsLastScan, setBsLastScan] = useState(null);
+  const [bsDept, setBsDept] = useState("kitchen");
+  const [bsStep, setBsStep] = useState(0); // 0=idle, 1=extracting subcats, 2=reviewing subcats, 3=scraping, 4=filtering, 5=done
+  const [bsSubcats, setBsSubcats] = useState([]);
+  const [bsProgress, setBsProgress] = useState({ done: 0, total: 0, current: "" });
+  const [bsError, setBsError] = useState("");
+  const [bsHideBranded, setBsHideBranded] = useState(true);
+  const [bsBoostIndo, setBsBoostIndo] = useState(true);
+  const [bsFilter, setBsFilter] = useState({ search: "", minPrice: "", maxPrice: "", dept: "all" });
+  const [bsSort, setBsSort] = useState("signal");
+  const [bsValidatingIdx, setBsValidatingIdx] = useState(null);
+  const [bsValidationResults, setBsValidationResults] = useState({});
+  const [bsNoonCats, setBsNoonCats] = useState(NOON_BRAINSTORM_CATS.map(c => ({ keyword: c, enabled: true })));
+  const [bsNoonScanning, setBsNoonScanning] = useState(false);
+  const bsAbortRef = useRef(false);
+
+  // Diagnostic Log
   const [diagLogs, setDiagLogs] = useState([]);
   const [showDiag, setShowDiag] = useState(false);
   const [diagFilter, setDiagFilter] = useState("all");
   const diagRef = useRef([]);
-  const addDiag = (level, label, message, data = null) => {
-    const entry = { ts: new Date().toISOString().slice(11, 23), level, label, message, data: data != null ? (typeof data === "string" ? data.slice(0, 2000) : JSON.stringify(data).slice(0, 2000)) : null };
-    console.log(`[DIAG ${level}] ${label}: ${message}`, data != null ? data : "");
-    diagRef.current = [entry, ...diagRef.current].slice(0, 200);
-    setDiagLogs([...diagRef.current]);
-  };
+  const addDiag = (level, label, message, data = null) => { const entry = { ts: new Date().toISOString().slice(11, 23), level, label, message, data: data != null ? (typeof data === "string" ? data.slice(0, 2000) : JSON.stringify(data).slice(0, 2000)) : null }; console.log(`[DIAG ${level}] ${label}: ${message}`, data != null ? data : ""); diagRef.current = [entry, ...diagRef.current].slice(0, 200); setDiagLogs([...diagRef.current]); };
   const clearDiag = () => { diagRef.current = []; setDiagLogs([]); };
 
   const [expandedHistoryIdx, setExpandedHistoryIdx] = useState(-1);
@@ -276,26 +252,10 @@ export default function App() {
   const currentPinRef = useRef(currentPin);
   currentPinRef.current = currentPin;
 
-  const c = dark ? {
-    bg: "#0a0a0a", surface: "#0C0F0C", surface2: "#0E120E", input: "#1a1a1a",
-    border: "#222", border2: "#333", text: "#d4d4d4", dim: "#888", dimmer: "#555", dimmest: "#444",
-    gold: "#C9A84C", green: "#2EAA5A", red: "#f87171", darkGold: "#D4A843",
-    cardBg: "#080808", btnText: "#0f0f0f", sectionBg: "#0D1F15",
-  } : {
-    bg: "#F5F2EB", surface: "#FFFFFF", surface2: "#F0EDE4", input: "#FFFFFF",
-    border: "#D4CFC4", border2: "#C0BAB0", text: "#1A1A1A", dim: "#555", dimmer: "#888", dimmest: "#AAA",
-    gold: "#8B6914", green: "#1A7A3A", red: "#DC2626", darkGold: "#9A7A1C",
-    cardBg: "#F8F6F0", btnText: "#FFFFFF", sectionBg: "#E8F5EC",
-  };
+  const c = dark ? { bg: "#0a0a0a", surface: "#0C0F0C", surface2: "#0E120E", input: "#1a1a1a", border: "#222", border2: "#333", text: "#d4d4d4", dim: "#888", dimmer: "#555", dimmest: "#444", gold: "#C9A84C", green: "#2EAA5A", red: "#f87171", darkGold: "#D4A843", cardBg: "#080808", btnText: "#0f0f0f", sectionBg: "#0D1F15" } : { bg: "#F5F2EB", surface: "#FFFFFF", surface2: "#F0EDE4", input: "#FFFFFF", border: "#D4CFC4", border2: "#C0BAB0", text: "#1A1A1A", dim: "#555", dimmer: "#888", dimmest: "#AAA", gold: "#8B6914", green: "#1A7A3A", red: "#DC2626", darkGold: "#9A7A1C", cardBg: "#F8F6F0", btnText: "#FFFFFF", sectionBg: "#E8F5EC" };
 
   const wait = (ms) => new Promise(r => setTimeout(r, ms));
-
-  // v1 FEATURE: Progress bar helper
-  const runWithProgress = async (fn, estimatedSec) => {
-    setProgress(0);
-    const interval = setInterval(() => { setProgress(p => { const next = p + (100 / estimatedSec / 4); return next > 95 ? 95 : next; }); }, 250);
-    try { const result = await fn(); setProgress(100); clearInterval(interval); return result; } catch (e) { clearInterval(interval); setProgress(0); throw e; }
-  };
+  const runWithProgress = async (fn, estimatedSec) => { setProgress(0); const interval = setInterval(() => { setProgress(p => { const next = p + (100 / estimatedSec / 4); return next > 95 ? 95 : next; }); }, 250); try { const result = await fn(); setProgress(100); clearInterval(interval); return result; } catch (e) { clearInterval(interval); setProgress(0); throw e; } };
 
   // ── Init ──
   useEffect(() => { (async () => { const h1 = await hashPin("766911"); const h2 = await hashPin("240996"); setPinHashes({ [h1]: "766911", [h2]: "240996" }); const t = await storeGet("global:theme"); if (t === "light") setDark(false); })(); }, []);
@@ -312,176 +272,110 @@ export default function App() {
           if (cfg.apiKey) { apiKeyLoaded.current = true; setApiKey(cfg.apiKey); setApiKeyStatus("loaded"); }
           if (cfg.apifyKey) { apifyKeyLoaded.current = true; setApifyKey(cfg.apifyKey); setApifyStatus("loaded"); }
           if (cfg.scrapingDogKey) { sdKeyLoaded.current = true; setScrapingDogKey(cfg.scrapingDogKey); setSdStatus("loaded"); }
-          // ── ACTOR ID VALIDATION: force-reset any broken/stale actor IDs ──
-          const VALID_TOKO = ["fatihtahta/tokopedia-scraper"];
-          const VALID_SHOPEE = ["fatihtahta/shopee-scraper"];
-          const VALID_NOON = ["buseta/noon-advanced-scraper", "shahidirfan/noon-com-scraper"];
-          const fixActor = (stored, valids, fallback) => {
-            if (!stored) return fallback;
-            const normalized = stored.replace(/~/g, "/");
-            if (valids.includes(normalized)) return normalized;
-            addDiag("warn", "config", `Resetting bad actor ID "${stored}" → "${fallback}"`);
-            return fallback;
-          };
-          setTokoActorId(fixActor(cfg.tokoActorId, VALID_TOKO, "fatihtahta/tokopedia-scraper"));
-          setShopeeActorId(fixActor(cfg.shopeeActorId, VALID_SHOPEE, "fatihtahta/shopee-scraper"));
-          setNoonActorId(fixActor(cfg.noonActorId, VALID_NOON, "buseta/noon-advanced-scraper"));
           if (cfg.indoMode) setIndoMode(cfg.indoMode);
           if (cfg.freight) setFreight(cfg.freight);
           if (cfg.shopeeCookie) setShopeeCookie(cfg.shopeeCookie);
           if (cfg.shopeeCookieUpdatedAt) setShopeeCookieUpdatedAt(cfg.shopeeCookieUpdatedAt);
         }
         setHistory(await loadHistory(currentPin));
-        const disc = await storeGet(currentPin + ":discovery");
-        if (disc?.products?.length) { setDiscProducts(disc.products); setDiscLastScan(disc.scannedAt); }
+        const kw = await storeGet(currentPin + ":keywords");
+        if (kw?.length) setKeywords(kw);
+        const bl = await storeGet(currentPin + ":brandlist");
+        if (bl?.length) setCustomBrands(bl);
+        const bsA = await storeGet(currentPin + ":brainstorm:amazon");
+        if (bsA?.products?.length) { setBsAmazonProducts(bsA.products); setBsLastScan(bsA.scannedAt); }
+        const bsN = await storeGet(currentPin + ":brainstorm:noon");
+        if (bsN?.products?.length) setBsNoonProducts(bsN.products);
+        const disc = await storeGet(currentPin + ":discover:results");
+        if (disc?.amazon?.length) setDiscAmazonResults(disc.amazon);
+        if (disc?.noon?.length) setDiscNoonResults(disc.noon);
       } catch (e) { console.warn("Load failed:", e); }
       setStorageReady(true);
     })();
   }, [unlocked, currentPin]);
 
   // ── Auto-save config ──
-  useEffect(() => {
-    if (!storageReady || !currentPin) return;
-    const t = setTimeout(() => storeSet(currentPin + ":config", { apiKey, apifyKey, scrapingDogKey, tokoActorId, shopeeActorId, noonActorId, indoMode, freight: freight.source === "live" ? freight : null, shopeeCookie, shopeeCookieUpdatedAt }), 1500);
-    return () => clearTimeout(t);
-  }, [storageReady, currentPin, apiKey, apifyKey, scrapingDogKey, tokoActorId, shopeeActorId, noonActorId, indoMode, freight, shopeeCookie, shopeeCookieUpdatedAt]);
-
-  // ── Auto-save history ──
+  useEffect(() => { if (!storageReady || !currentPin) return; const t = setTimeout(() => storeSet(currentPin + ":config", { apiKey, apifyKey, scrapingDogKey, indoMode, freight: freight.source === "live" ? freight : null, shopeeCookie, shopeeCookieUpdatedAt }), 1500); return () => clearTimeout(t); }, [storageReady, currentPin, apiKey, apifyKey, scrapingDogKey, indoMode, freight, shopeeCookie, shopeeCookieUpdatedAt]);
+  // Auto-save history
   const saveHistoryNow = useCallback(async (h) => { if (currentPinRef.current) await saveHistory(currentPinRef.current, h); }, []);
   useEffect(() => { if (!storageReady || !currentPin) return; if (saveTimerRef.current) clearTimeout(saveTimerRef.current); saveTimerRef.current = setTimeout(() => saveHistory(currentPin, history), 2000); }, [history, storageReady, currentPin]);
+  // Auto-save keywords
+  useEffect(() => { if (!storageReady || !currentPin) return; const t = setTimeout(() => storeSet(currentPin + ":keywords", keywords), 1500); return () => clearTimeout(t); }, [keywords, storageReady, currentPin]);
+  // Auto-save brand list
+  useEffect(() => { if (!storageReady || !currentPin) return; const t = setTimeout(() => storeSet(currentPin + ":brandlist", customBrands), 1500); return () => clearTimeout(t); }, [customBrands, storageReady, currentPin]);
 
-  // ── Key status indicators ──
+  // Key status indicators
   useEffect(() => { if (!apiKey || apiKey.length < 10 || !storageReady) return; if (apiKeyLoaded.current) { apiKeyLoaded.current = false; return; } setApiKeyStatus("saved"); const t = setTimeout(() => setApiKeyStatus(""), 1500); return () => clearTimeout(t); }, [apiKey, storageReady]);
   useEffect(() => { if (!apifyKey || apifyKey.length < 5 || !storageReady) return; if (apifyKeyLoaded.current) { apifyKeyLoaded.current = false; return; } setApifyStatus("saved"); const t = setTimeout(() => setApifyStatus(""), 1500); return () => clearTimeout(t); }, [apifyKey, storageReady]);
   useEffect(() => { if (!scrapingDogKey || scrapingDogKey.length < 5 || !storageReady) return; if (sdKeyLoaded.current) { sdKeyLoaded.current = false; return; } setSdStatus("saved"); const t = setTimeout(() => setSdStatus(""), 1500); return () => clearTimeout(t); }, [scrapingDogKey, storageReady]);
 
-  // ── Cooldown & FX ──
+  // Cooldown & FX
   useEffect(() => { if (cooldown <= 0) return; const t = setInterval(() => setCooldown(x => x <= 1 ? 0 : x - 1), 1000); return () => clearInterval(t); }, [cooldown]);
-  useEffect(() => { if (!unlocked) return; (async () => { const cached = await storeGet("global:fx"); if (cached && Date.now() - cached.ts < FX_CACHE_MS) { const b = cached.rates; setFx({ AEDUSD: b.AEDUSD || 0.2723, IDRUSD: b.IDRUSD || 0.0000613, AED_TO_IDR: (b.AEDUSD || 0.2723) / (b.IDRUSD || 0.0000613), IDR_TO_AED: (b.IDRUSD || 0.0000613) / (b.AEDUSD || 0.2723) }); setFxUpdated(new Date(cached.ts)); return; } try { const r = await fetch("https://api.frankfurter.app/latest?from=USD&to=AED,IDR"); const d = await r.json(); const aedusd = 1/d.rates.AED, idrusd = 1/d.rates.IDR; const rates = { AEDUSD: aedusd, IDRUSD: idrusd, AED_TO_IDR: aedusd/idrusd, IDR_TO_AED: idrusd/aedusd }; setFx(rates); setFxUpdated(new Date()); await storeSet("global:fx", { rates, ts: Date.now() }); } catch (fxErr) { console.warn("FX fetch failed:", fxErr); } })(); }, [unlocked]);
+  useEffect(() => { if (!unlocked) return; (async () => { const cached = await storeGet("global:fx"); if (cached && Date.now() - cached.ts < FX_CACHE_MS) { const b = cached.rates; setFx({ AEDUSD: b.AEDUSD || 0.2723, IDRUSD: b.IDRUSD || 0.0000613, AED_TO_IDR: (b.AEDUSD || 0.2723) / (b.IDRUSD || 0.0000613), IDR_TO_AED: (b.IDRUSD || 0.0000613) / (b.AEDUSD || 0.2723) }); setFxUpdated(new Date(cached.ts)); return; } try { const r = await fetch("https://api.frankfurter.app/latest?from=USD&to=AED,IDR"); const d = await r.json(); const aedusd = 1/d.rates.AED, idrusd = 1/d.rates.IDR; const rates = { AEDUSD: aedusd, IDRUSD: idrusd, AED_TO_IDR: aedusd/idrusd, IDR_TO_AED: idrusd/aedusd }; setFx(rates); setFxUpdated(new Date()); await storeSet("global:fx", { rates, ts: Date.now() }); } catch {} })(); }, [unlocked]);
 
   // ══════════ CORE: callClaude ══════════
   const callClaude = async (prompt, model, useSearch = false, retries = 2, maxTokens = 2048) => {
-    const shortPrompt = prompt.slice(0, 120).replace(/\n/g, " ");
-    addDiag("info", "callClaude", `model=${model} search=${useSearch} maxTok=${maxTokens}`, shortPrompt);
+    addDiag("info", "callClaude", `model=${model} search=${useSearch}`, prompt.slice(0, 120));
     const body = { action: "claude", data: { model, max_tokens: maxTokens, messages: [{ role: "user", content: prompt }], tools: useSearch ? [{ type: "web_search_20250305", name: "web_search" }] : undefined } };
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
         const r = await fetch("https://trades-proxy.sadewoahmadm.workers.dev", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-        addDiag(r.ok ? "info" : "error", "proxy_response", `status=${r.status} attempt=${attempt}/${retries}`);
-        if (r.status === 429) { addDiag("warn", "rate_limit", `429 on attempt ${attempt}, waiting...`); if (attempt < retries) { setStage(s => s.replace(/ \(retry.*/, "") + " (retry " + Math.round((attempt + 1) * (useSearch ? 15 : 8)) + "s...)"); await wait((attempt + 1) * (useSearch ? 15000 : 8000)); continue; } throw new Error("Rate limited. Wait 30s."); }
-        if (!r.ok) { let d = ""; try { d = (await r.json()).error?.message || ""; } catch {} addDiag("error", "api_error", `${r.status}: ${d}`); throw new Error("API " + r.status + ": " + (d || "error")); }
+        if (r.status === 429) { if (attempt < retries) { setStage(s => s.replace(/ \(retry.*/, "") + " (retry...)"); await wait((attempt + 1) * (useSearch ? 15000 : 8000)); continue; } throw new Error("Rate limited. Wait 30s."); }
+        if (!r.ok) { let d = ""; try { d = (await r.json()).error?.message || ""; } catch {} throw new Error("API " + r.status + ": " + (d || "error")); }
         const data = await r.json();
-        const blockTypes = (data.content || []).map(b => b.type + ":" + (b.text?.length || 0));
-        addDiag("info", "api_blocks", `${data.content?.length || 0} blocks: [${blockTypes.join(", ")}]`);
-        const textResult = data.content?.map(b => b.text || "").filter(Boolean).join("\n") || "";
-        addDiag(textResult ? "ok" : "warn", "api_text", `${textResult.length} chars extracted`, textResult.slice(0, 500));
-        return textResult;
-      } catch (err) { addDiag("error", "callClaude_err", `attempt ${attempt}: ${err.message}`); if (attempt === retries) throw err; await wait((attempt + 1) * 10000); }
+        return data.content?.map(b => b.text || "").filter(Boolean).join("\n") || "";
+      } catch (err) { if (attempt === retries) throw err; await wait((attempt + 1) * 10000); }
     }
   };
 
   const parseJSON = (text) => {
-    addDiag("info", "parseJSON", `input ${text.length} chars`, text.slice(0, 300));
     let s = text.replace(/```json/g, "").replace(/```/g, "").trim();
     const matches = []; let depth = 0, start = -1;
     for (let i = 0; i < s.length; i++) { if (s[i] === "{") { if (depth === 0) start = i; depth++; } if (s[i] === "}") { depth--; if (depth === 0 && start >= 0) { matches.push(s.substring(start, i + 1)); start = -1; } } }
-    addDiag("info", "parseJSON", `found ${matches.length} JSON candidates (sizes: ${matches.map(m => m.length).join(",")})`);
-    for (const m of matches.sort((a, b) => b.length - a.length)) { try { const p = JSON.parse(m); if (p.product_name || p.results || p.clean_name_en || p.similar || p.products) { addDiag("ok", "parseJSON", `matched! keys: [${Object.keys(p).join(",")}] results=${(p.results||p.products||[]).length}`); return p; } } catch (e) { addDiag("warn", "parseJSON", `candidate failed: ${e.message}`, m.slice(0, 200)); } }
-    try { const p = JSON.parse(s); addDiag("ok", "parseJSON", `fallback parse ok, keys: [${Object.keys(p).join(",")}]`); return p; } catch {} 
-    addDiag("error", "parseJSON", "NO VALID JSON FOUND", s.slice(0, 500));
+    for (const m of matches.sort((a, b) => b.length - a.length)) { try { const p = JSON.parse(m); if (p.product_name || p.results || p.clean_name_en || p.similar || p.products || p.subcategories) return p; } catch {} }
+    try { return JSON.parse(s); } catch {}
     throw new Error("No valid JSON");
   };
 
-  // ══════════ MARGIN CALCULATOR (shared) ══════════
+  // ══════════ MARGIN CALCULATOR ══════════
   const calcMargin = (uaePriceAed, packQty, indoIDR, weightClass) => {
-    const uaeUnitAed = uaePriceAed / (packQty || 1);
-    const uaeUSD = uaeUnitAed * fx.AEDUSD;
-    const indoUSD = indoIDR * fx.IDRUSD;
-    const wkg = WEIGHT_KG[weightClass] || 1.0;
-    const fr = (freight.air?.rate_per_kg || 4) * wkg;
-    const duty = (indoUSD + fr) * CUSTOMS_DUTY;
-    const lm = LAST_MILE_AED * fx.AEDUSD;
-    const total = indoUSD + fr + duty + lm;
-    const margin = uaeUSD > 0 ? ((uaeUSD - total) / uaeUSD) * 100 : 0;
+    const uaeUnitAed = uaePriceAed / (packQty || 1); const uaeUSD = uaeUnitAed * fx.AEDUSD; const indoUSD = indoIDR * fx.IDRUSD; const wkg = WEIGHT_KG[weightClass] || 1.0; const fr = (freight.air?.rate_per_kg || 4) * wkg; const duty = (indoUSD + fr) * CUSTOMS_DUTY; const lm = LAST_MILE_AED * fx.AEDUSD; const total = indoUSD + fr + duty + lm; const margin = uaeUSD > 0 ? ((uaeUSD - total) / uaeUSD) * 100 : 0;
     return { uaeUSD, uaeAED: uaeUnitAed, uaeIDR: uaeUnitAed * fx.AED_TO_IDR, indoUSD, indoAED: indoUSD / fx.AEDUSD, indoIDR, freightUSD: fr, freightAED: fr / fx.AEDUSD, freightIDR: fr / fx.IDRUSD, dutyUSD: duty, dutyAED: duty / fx.AEDUSD, dutyIDR: duty / fx.IDRUSD, lastMileUSD: lm, lastMileAED: LAST_MILE_AED, lastMileIDR: LAST_MILE_AED * fx.AED_TO_IDR, totalUSD: total, totalAED: total / fx.AEDUSD, totalIDR: total / fx.IDRUSD, margin };
   };
 
-  // ══════════ INDO SEARCH — APIFY MODE ══════════
+  // ══════════ INDO SEARCH — APIFY ══════════
   const runApifyActor = async (actorId, input, label) => {
-    addDiag("info", "apify_start", `${label} actor=${actorId}`, input);
-    setStage("Starting " + label + "...");
-    const apiActorId = actorId.replace(/\//g, "~"); // Apify API uses ~ not / in URLs
+    setStage("Starting " + label + "..."); const apiActorId = actorId.replace(/\//g, "~");
     const sr = await fetch("https://api.apify.com/v2/acts/" + apiActorId + "/runs?token=" + apifyKey, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) });
-    addDiag(sr.ok ? "info" : "error", "apify_run", `${label} POST status=${sr.status}`);
-    if (!sr.ok) { const errBody = await sr.text().catch(() => ""); addDiag("error", "apify_run", `${label} response body`, errBody); throw new Error(label + " failed: " + sr.status); }
-    const rd = await sr.json(); const runId = rd.data?.id; if (!runId) { addDiag("error", "apify_run", `${label} no run ID`, rd); throw new Error(label + " no run ID"); }
-    addDiag("info", "apify_run", `${label} runId=${runId} datasetId=${rd.data?.defaultDatasetId}`);
+    if (!sr.ok) throw new Error(label + " failed: " + sr.status);
+    const rd = await sr.json(); const runId = rd.data?.id; if (!runId) throw new Error(label + " no run ID");
     let status = "RUNNING", pc = 0;
-    while (status === "RUNNING" || status === "READY") {
-      if (pc > 60) throw new Error(label + " timeout"); await wait(5000); pc++;
-      setStage(label + " (" + (pc * 5) + "s)"); setProgress(Math.min(90, pc * 3));
-      try { const pr = await fetch("https://api.apify.com/v2/actor-runs/" + runId + "?token=" + apifyKey); if (pr.ok) { const prd = await pr.json(); status = prd.data?.status || "RUNNING"; addDiag("info", "apify_poll", `${label} status=${status} (${pc * 5}s)`); } } catch {}
-    }
-    if (status !== "SUCCEEDED") { addDiag("error", "apify_run", `${label} final status: ${status}`); throw new Error(label + " status: " + status); }
+    while (status === "RUNNING" || status === "READY") { if (pc > 60) throw new Error(label + " timeout"); await wait(5000); pc++; setStage(label + " (" + (pc * 5) + "s)"); setProgress(Math.min(90, pc * 3)); try { const pr = await fetch("https://api.apify.com/v2/actor-runs/" + runId + "?token=" + apifyKey); if (pr.ok) status = (await pr.json()).data?.status || "RUNNING"; } catch {} }
+    if (status !== "SUCCEEDED") throw new Error(label + " status: " + status);
     const dsId = rd.data?.defaultDatasetId; if (!dsId) throw new Error(label + " no dataset");
     const ir = await fetch("https://api.apify.com/v2/datasets/" + dsId + "/items?token=" + apifyKey + "&limit=50");
-    const items = ir.ok ? await ir.json() : [];
-    addDiag(items.length > 0 ? "ok" : "warn", "apify_results", `${label} returned ${items.length} raw items`);
-    if (items.length > 0) {
-      addDiag("info", "apify_sample", `${label} first item keys: [${Object.keys(items[0]).join(",")}]`, items[0]);
-    }
-    return items;
+    return ir.ok ? await ir.json() : [];
   };
 
   const normalizeApifyResults = (items, platform) => {
-    if (!Array.isArray(items)) { addDiag("warn", "normalize", `${platform}: items is not array (${typeof items})`); return []; }
-    addDiag("info", "normalize", `${platform}: normalizing ${items.length} raw items`);
-    if (items.length > 0) {
-      addDiag("info", "normalize", `${platform}: sample item keys: [${Object.keys(items[0]).join(", ")}]`, items[0]);
-    }
-
-    const results = items.filter(i => i).map(i => {
-      // Broad price extraction — try many known field names
-      let price = i.price || i.currentPrice || i.salePrice || i.price_idr || i.discountedPrice || i.promo_price || i.finalPrice || i.sale_price || i.normal_price || i.current_price || i.item_basic?.price || i.price_min || i.price_max || 0;
+    if (!Array.isArray(items)) return [];
+    return items.filter(i => i).map(i => {
+      let price = i.price || i.currentPrice || i.salePrice || i.price_idr || i.discountedPrice || i.promo_price || i.finalPrice || i.sale_price || i.normal_price || i.current_price || i.item_basic?.price || i.price_min || 0;
       if (typeof price === "object" && price !== null) price = price.min || price.max || price.value || 0;
       if (typeof price === "string") price = sanitizeIDR(price);
       if (typeof price === "number" && price > 0 && price < 500) price = Math.round(price * 1000);
-      // Some actors return price in cents/units (price / 100000 for Shopee)
       if (typeof price === "number" && price > 1000000000) price = Math.round(price / 100000);
-
-      const name = i.title || i.name || i.productName || i.item_name || i.product_name || i.item_basic?.name || "";
-      const seller = i.shopName || i.sellerName || i.seller || i.shop?.name || i.shop_name || i.store_name || i.merchant || i.shop?.shopName || "";
-      const sold = String(i.sold || i.totalSold || i.historicalSold || i.itemSold || i.historical_sold || i.total_sold || i.orders || i.item_basic?.sold || i.item_basic?.historical_sold || "");
-      const url = i.url || i.link || i.productUrl || i.item_url || i.product_url || i.itemUrl || "";
-
-      return { name, price_idr: Math.round(price), source: platform, seller, sold, url };
+      return { name: i.title || i.name || i.productName || i.item_name || "", price_idr: Math.round(price), source: platform, seller: i.shopName || i.sellerName || i.seller || i.shop?.name || "", sold: String(i.sold || i.totalSold || i.historicalSold || i.item_basic?.sold || ""), url: i.url || i.link || i.productUrl || "" };
     }).filter(r => r.price_idr >= 1000 && r.name);
-
-    const withPrice = items.filter(i => {
-      const p = i.price || i.currentPrice || i.salePrice || i.price_idr || i.discountedPrice || i.promo_price || i.finalPrice || i.sale_price || i.normal_price || i.current_price || i.item_basic?.price || i.price_min || 0;
-      return p && p !== 0;
-    });
-    addDiag("info", "normalize", `${platform}: ${withPrice.length}/${items.length} have a recognizable price field`);
-    if (items.length > 0 && withPrice.length === 0) {
-      const sampleKeys = Object.keys(items[0]).join(", ");
-      addDiag("error", "normalize", `${platform}: NO items matched any price field. Actual keys: [${sampleKeys}]`, items[0]);
-    }
-    addDiag(results.length > 0 ? "ok" : "warn", "normalize", `${platform}: ${results.length} valid after normalize (price>=1000 & name)`);
-    if (results.length > 0) addDiag("info", "normalize", `${platform} sample: "${results[0].name}" IDR${results[0].price_idr} seller="${results[0].seller}"`);
-    return results;
   };
 
   const runIndoApify = async (bahasaQuery, allQueries) => {
-    addDiag("info", "indo_apify", `query="${bahasaQuery}" mode=apify`);
     const waves = [];
     const tokoInput = { querystring: bahasaQuery, filters: { price_min: 10000, price_max: 800000, sort: "reviews" }, limit: 30 };
     const shopeeUrl = "https://shopee.co.id/search?keyword=" + encodeURIComponent(bahasaQuery) + "&price_min=10000&price_max=800000&sort=7";
     const shopeeInput = { searchUrls: [shopeeUrl], country: "ID", maxProducts: 30, scrapeMode: "fast" };
     if (shopeeCookie) shopeeInput.cookies = shopeeCookie;
-    addDiag("info", "indo_apify", `Toko input:`, tokoInput);
-    addDiag("info", "indo_apify", `Shopee input:`, shopeeInput);
-
-    setStage("Scraping Toko + Shopee parallel..."); setProgress(10);
+    setStage("Scraping Toko + Shopee..."); setProgress(10);
     const [tokoR, shopeeR] = await Promise.all([
       (async () => { try { return { items: await runApifyActor(tokoActorId, tokoInput, "Tokopedia"), err: null }; } catch (e) { return { items: [], err: e.message }; } })(),
       (async () => { try { return { items: await runApifyActor(shopeeActorId, shopeeInput, "Shopee"), err: null }; } catch (e) { return { items: [], err: e.message }; } })(),
@@ -489,243 +383,58 @@ export default function App() {
     const tokoResults = normalizeApifyResults(tokoR.items, "Tokopedia");
     const shopeeResults = normalizeApifyResults(shopeeR.items, "Shopee");
     waves.push({ name: "Tokopedia", status: tokoResults.length > 0 ? "ok" : tokoR.err ? "fail" : "empty", count: tokoResults.length, reason: tokoR.err || "" });
-    // v1 FEATURE: Check Shopee blocked signals on raw Apify failure
-    let shopeeReason = shopeeR.err || "";
-    if (!shopeeReason && shopeeResults.length === 0 && !shopeeCookie) shopeeReason = "No cookie set \u2014 Shopee may block unauthenticated scrapes";
-    if (!shopeeReason && shopeeResults.length === 0 && tokoResults.length >= 10) shopeeReason = "Shopee likely blocked \u2014 Tokopedia found " + tokoResults.length + " but Shopee returned 0";
-    waves.push({ name: "Shopee", status: shopeeResults.length > 0 ? "ok" : shopeeR.err ? "fail" : "empty", count: shopeeResults.length, reason: shopeeReason });
+    waves.push({ name: "Shopee", status: shopeeResults.length > 0 ? "ok" : shopeeR.err ? "fail" : "empty", count: shopeeResults.length, reason: shopeeR.err || "" });
     let allResults = [...tokoResults, ...shopeeResults];
-
     if (allResults.length < 5 && allQueries.length > 1) {
       try { const ri = await runApifyActor(tokoActorId, { querystring: allQueries[1], filters: { price_min: 10000, price_max: 800000, sort: "reviews" }, limit: 20 }, "Retry"); allResults.push(...normalizeApifyResults(ri, "Tokopedia")); waves.push({ name: "Retry", status: "ok", count: ri.length }); } catch { waves.push({ name: "Retry", status: "fail", count: 0 }); }
     }
     return { allResults, waves, source: "apify" };
   };
 
-  // ══════════ INDO SEARCH — CLAUDE SEARCH MODE (with v1 blocked detection) ══════════
+  // ══════════ INDO SEARCH — CLAUDE ══════════
   const runIndoClaude = async (productData, queries) => {
-    addDiag("info", "indo_claude", `Starting Claude search. queries=[${queries.join(", ")}]`);
-    const waves = [];
-    const mainQ = queries[0];
-    const brandQ = productData.brand ? productData.brand + " " + (productData.clean_name_id || queries[0]) : null;
-
+    const waves = []; const mainQ = queries[0];
     const doSearch = async (platform, label) => {
       const site = platform === "Tokopedia" ? "tokopedia.com" : "shopee.co.id";
-      addDiag("info", "indo_wave", `${label} ${platform}: searching ${site}`);
       setStage(label + " " + platform + "...");
-      const searchLines = [
-        '- Search: "' + mainQ + ' ' + site + '"',
-        '- Search: "' + mainQ + ' ' + platform + ' Indonesia harga"',
-        queries[1] ? '- Search: "' + queries[1] + ' ' + site + '"' : null,
-        brandQ ? '- Search: "' + brandQ + ' ' + platform + '"' : null,
-        platform === "Shopee" && productData.clean_name_en ? '- Search: "' + productData.clean_name_en + ' shopee indonesia price"' : null,
-      ].filter(Boolean).join("\n");
-
-      const raw = await runWithProgress(() => callClaude(
-        'Find "' + productData.clean_name_id + '" (English: "' + (productData.clean_name_en || "") + '") on ' + platform + ' Indonesia.\n\n' + searchLines + '\n\nONLY ' + platform + ' (' + site + ') results. Include: name, price IDR, seller, sold count, link. Rp uses dots: Rp 25.000 = 25000. Try to find 10-20 listings.',
-        "claude-sonnet-4-20250514", true, 2, 4096
-      ), 25);
-
-      // v1 FEATURE: Detect blocked signals in raw response
+      const raw = await runWithProgress(() => callClaude('Find "' + productData.clean_name_id + '" on ' + platform + ' Indonesia.\nSearch: "' + mainQ + ' ' + site + '"\nSearch: "' + mainQ + ' ' + platform + ' Indonesia harga"\nONLY ' + platform + '. Include name, price IDR, seller, sold, link.', "claude-sonnet-4-20250514", true, 2, 4096), 25);
       const blockReason = detectBlockedSignals(raw, platform);
-
-      await wait(1500);
-      setStage(label + " Formatting...");
-      const fmt = await runWithProgress(() => callClaude(
-        'Convert to JSON. ONLY ' + platform + ':\n' + raw + '\n{"results":[{"name":"","price_idr":NUMBER,"source":"' + platform + '","seller":"","sold":"","url":""}]}\nprice_idr = INTEGER. JSON only:',
-        "claude-haiku-4-5-20251001", false, 2, 4096
-      ), 8);
-
-      try {
-        const p = parseJSON(fmt);
-        const results = (p.results || []).map(r => ({
-          name: r.name || "", price_idr: sanitizeIDR(r.price_idr || r.price || 0), source: platform, seller: r.seller || "",
-          sold: (() => { let s = r.sold || ""; if (typeof s === "string" && /not visible|n\/a|^0$/i.test(s)) return ""; return s; })(),
-          url: r.url || "",
-        }));
-        const validResults = results.filter(r => r.price_idr >= 1000);
-        addDiag(validResults.length > 0 ? "ok" : "warn", "indo_wave", `${platform}: ${results.length} parsed, ${validResults.length} valid (price>=1000)`);
-        return { results, blockReason: validResults.length === 0 ? blockReason : null };
-      } catch (e) { addDiag("error", "indo_wave", `${platform}: format parse failed: ${e.message}`); return { results: [], blockReason: blockReason || (platform + ": JSON parse failed") }; }
+      await wait(1500); setStage(label + " Formatting...");
+      const fmt = await runWithProgress(() => callClaude('Convert to JSON. ONLY ' + platform + ':\n' + raw + '\n{"results":[{"name":"","price_idr":NUMBER,"source":"' + platform + '","seller":"","sold":"","url":""}]}\nJSON only:', "claude-haiku-4-5-20251001", false, 2, 4096), 8);
+      try { const p = parseJSON(fmt); const results = (p.results || []).map(r => ({ name: r.name || "", price_idr: sanitizeIDR(r.price_idr || r.price || 0), source: platform, seller: r.seller || "", sold: (() => { let s = r.sold || ""; if (typeof s === "string" && /not visible|n\/a|^0$/i.test(s)) return ""; return s; })(), url: r.url || "" })); const valid = results.filter(r => r.price_idr >= 1000); return { results, blockReason: valid.length === 0 ? blockReason : null }; } catch { return { results: [], blockReason }; }
     };
-
     let allResults = [];
-
-    // Wave 1: Tokopedia
-    try {
-      const { results, blockReason } = await doSearch("Tokopedia", "\u2460");
-      allResults.push(...results);
-      const vc = results.filter(x => x.price_idr >= 1000).length;
-      waves.push({ name: "Tokopedia", status: vc > 0 ? "ok" : "empty", count: vc, reason: blockReason || "" });
-    } catch (e) { waves.push({ name: "Tokopedia", status: "fail", count: 0, reason: e.message }); }
+    try { const { results, blockReason } = await doSearch("Tokopedia", "\u2460"); allResults.push(...results); waves.push({ name: "Tokopedia", status: results.filter(x => x.price_idr >= 1000).length > 0 ? "ok" : "empty", count: results.filter(x => x.price_idr >= 1000).length, reason: blockReason || "" }); } catch (e) { waves.push({ name: "Tokopedia", status: "fail", count: 0, reason: e.message }); }
     await wait(5000);
-
-    // Wave 2: Shopee
-    let shopeeCount = 0;
-    try {
-      const { results, blockReason } = await doSearch("Shopee", "\u2461");
-      allResults.push(...results);
-      shopeeCount = results.filter(x => x.price_idr >= 1000).length;
-      let reason = blockReason || "";
-      if (shopeeCount === 0 && !blockReason) reason = "Shopee may not be indexed by Google \u2014 try Apify mode";
-      waves.push({ name: "Shopee", status: shopeeCount > 0 ? "ok" : "empty", count: shopeeCount, reason });
-    } catch (e) { waves.push({ name: "Shopee", status: "fail", count: 0, reason: e.message }); }
-
-    // Wave 3: Broad if needed
+    try { const { results, blockReason } = await doSearch("Shopee", "\u2461"); allResults.push(...results); waves.push({ name: "Shopee", status: results.filter(x => x.price_idr >= 1000).length > 0 ? "ok" : "empty", count: results.filter(x => x.price_idr >= 1000).length, reason: blockReason || "" }); } catch (e) { waves.push({ name: "Shopee", status: "fail", count: 0, reason: e.message }); }
     if (allResults.filter(r => r.price_idr >= 1000).length < 10) {
-      await wait(5000);
-      const focusPlatform = shopeeCount === 0 ? "Shopee" : null;
-      const focusNote = focusPlatform ? '\nFOCUS especially on ' + focusPlatform + ' results.' : '';
-      setStage("\u2462 Broad search...");
-      try {
-        const raw = await runWithProgress(() => callClaude(
-          'Search "' + mainQ + ' harga terbaru indonesia"\nSearch "' + (productData.clean_name_en || mainQ) + ' buy online indonesia IDR"\n' + (focusPlatform === "Shopee" ? 'Search "' + mainQ + ' shopee.co.id"\nSearch "shopee ' + (productData.clean_name_en || mainQ) + ' indonesia harga"\n' : '') + 'Both Tokopedia AND Shopee. Name, price IDR, marketplace, seller, sold, URL.' + focusNote,
-          "claude-sonnet-4-20250514", true, 2, 4096
-        ), 25);
-        await wait(1500);
-        const fmt = await callClaude('Convert:\n' + raw + '\n{"results":[{"name":"","price_idr":NUMBER,"source":"Tokopedia or Shopee","seller":"","sold":"","url":""}]} JSON only:', "claude-haiku-4-5-20251001", false, 2, 4096);
-        try {
-          const p = parseJSON(fmt);
-          const r = (p.results || []).map(r => ({ name: r.name || "", price_idr: sanitizeIDR(r.price_idr || 0), source: r.source || "Tokopedia", seller: r.seller || "", sold: r.sold || "", url: r.url || "" }));
-          allResults.push(...r);
-          waves.push({ name: "Broad" + (focusPlatform ? " (" + focusPlatform + " focus)" : ""), status: r.length > 0 ? "ok" : "empty", count: r.filter(x => x.price_idr >= 1000).length });
-        } catch (bErr) { addDiag("warn", "indo_wave", `Broad search parse failed: ${bErr.message}`); }
-      } catch (e) { waves.push({ name: "Broad", status: "fail", count: 0, reason: e.message }); }
+      await wait(5000); setStage("\u2462 Broad search...");
+      try { const raw = await runWithProgress(() => callClaude('Search "' + mainQ + ' harga terbaru indonesia"\nBoth Tokopedia AND Shopee. Name, price IDR, marketplace, seller, sold, URL.', "claude-sonnet-4-20250514", true, 2, 4096), 25); await wait(1500); const fmt = await callClaude('Convert:\n' + raw + '\n{"results":[{"name":"","price_idr":NUMBER,"source":"Tokopedia or Shopee","seller":"","sold":"","url":""}]} JSON only:', "claude-haiku-4-5-20251001", false, 2, 4096); try { const p = parseJSON(fmt); allResults.push(...(p.results || []).map(r => ({ name: r.name || "", price_idr: sanitizeIDR(r.price_idr || 0), source: r.source || "Tokopedia", seller: r.seller || "", sold: r.sold || "", url: r.url || "" }))); waves.push({ name: "Broad", status: "ok", count: (p.results || []).length }); } catch {} } catch (e) { waves.push({ name: "Broad", status: "fail", count: 0, reason: e.message }); }
     }
     return { allResults, waves, source: "claude" };
   };
 
   // ══════════ SHARED: run Indo + build margin ══════════
   const runFullIndoSearch = async (productData, bahasaQueries) => {
-    addDiag("info", "full_indo", `Starting. mode=${indoMode} queries=[${bahasaQueries.join(", ")}] product=${productData.clean_name_id || productData.product_name}`);
-    const { allResults: raw, waves, source } = indoMode === "apify"
-      ? await runIndoApify(bahasaQueries[0], bahasaQueries)
-      : await runIndoClaude(productData, bahasaQueries);
-
-    addDiag("info", "full_indo", `Raw results: ${raw.length} from ${source}`);
-
-    // Dedup
+    const { allResults: raw, waves, source } = indoMode === "apify" ? await runIndoApify(bahasaQueries[0], bahasaQueries) : await runIndoClaude(productData, bahasaQueries);
     const seen = new Map();
     let allResults = raw.filter(r => { if (!r.name || r.price_idr < 1000) return false; const k = r.name.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 40) + "|" + r.price_idr; if (seen.has(k)) return false; seen.set(k, true); return true; });
-    addDiag("info", "full_indo", `After dedup: ${allResults.length} (removed ${raw.length - allResults.length})`);
-    if (allResults.length === 0) { addDiag("error", "full_indo", "ZERO results after dedup — throwing error"); throw new Error("No Indonesian listings found."); }
-
-    // Outlier trim
+    if (allResults.length === 0) throw new Error("No Indonesian listings found.");
     if (allResults.length >= 5) { const sorted = [...allResults].sort((a, b) => a.price_idr - b.price_idr); if (sorted[sorted.length - 1].price_idr / sorted[0].price_idr > 10) { const tc = Math.max(1, Math.floor(allResults.length * 0.1)); const trimmed = sorted.slice(tc, sorted.length - tc); if (trimmed.length >= 3) allResults = trimmed; } }
-
     const prices = allResults.map(r => r.price_idr).sort((a, b) => a - b);
     const indo = { results: allResults, price_stats: { lowest_idr: prices[0], highest_idr: prices[prices.length - 1], median_idr: prices[Math.floor(prices.length / 2)], average_idr: Math.round(prices.reduce((s, x) => s + x, 0) / prices.length), num_results: prices.length }, wave_status: waves, source };
     indo.confidence = computeConfidence(indo.results, indo.price_stats);
-
-    const wc = productData.weight_class || "medium";
-    const med = indo.price_stats.median_idr, low = indo.price_stats.lowest_idr, high = indo.price_stats.highest_idr;
+    const wc = productData.weight_class || "medium"; const med = indo.price_stats.median_idr, low = indo.price_stats.lowest_idr, high = indo.price_stats.highest_idr;
     const margins = { median: calcMargin(productData.price_aed, productData.pack_quantity || 1, med, wc), best: calcMargin(productData.price_aed, productData.pack_quantity || 1, low, wc), worst: calcMargin(productData.price_aed, productData.pack_quantity || 1, high, wc) };
     const status = margins.median.margin >= MARGIN_THRESHOLD.candidate ? "Candidate" : margins.median.margin >= MARGIN_THRESHOLD.borderline ? "Investigated" : "Rejected";
     return { indo, margins, status, medianPriceIDR: med, lowestPriceIDR: low, highestPriceIDR: high, weightClass: wc };
   };
 
-  // ══════════ DISCOVERY: Amazon.ae Bestseller Scan ══════════
-  const stopScan = () => { scanAbortRef.current = true; addDiag("warn", "disc_scan", "User requested STOP"); };
-
-  const runBestsellerScan = async () => {
-    if (!scrapingDogKey || !apiKey) { setDiscError("Add ScrapingDog + Claude keys first."); return; }
-    scanAbortRef.current = false;
-    const depts = scanDept === "all" ? AMAZON_AE_DEPTS : AMAZON_AE_DEPTS.filter(d => d.slug === scanDept);
-    if (!depts.length) { setDiscError("No department selected."); return; }
-    setDiscScanning(true); setDiscError(""); setDiscScanProgress({ done: 0, total: depts.length, current: "" });
-    addDiag("info", "disc_scan", `Starting scan: ${depts.length} dept(s) [${depts.map(d => d.label).join(", ")}]`);
-    // Keep existing products from other departments when scanning a single dept
-    let allProducts = scanDept === "all" ? [] : discProducts.filter(p => !depts.some(d => d.label === p.department));
-    let deptStats = [];
-    for (let i = 0; i < depts.length; i++) {
-      if (scanAbortRef.current) { addDiag("warn", "disc_scan", `Stopped after ${i}/${depts.length} depts (${allProducts.length} products)`); deptStats.push({ dept: "STOPPED", status: "ABORTED", detail: `${depts.length - i} skipped` }); break; }
-      const dept = depts[i];
-      setDiscScanProgress({ done: i, total: depts.length, current: dept.label });
-      try {
-        const pageUrl = "https://www.amazon.ae/gp/bestsellers/" + dept.slug;
-        addDiag("info", "disc_dept", `[${i+1}/${AMAZON_AE_DEPTS.length}] ${dept.label}: fetching ${pageUrl}`);
-        const sdRes = await fetch("https://api.scrapingdog.com/scrape?api_key=" + encodeURIComponent(scrapingDogKey) + "&url=" + encodeURIComponent(pageUrl) + "&dynamic=true&premium=true");
-        if (!sdRes.ok) { addDiag("error", "disc_dept", `${dept.label}: ScrapingDog HTTP ${sdRes.status}`); deptStats.push({ dept: dept.label, status: "SD_ERROR", detail: `HTTP ${sdRes.status}` }); continue; }
-        const html = await sdRes.text();
-        addDiag("info", "disc_dept", `${dept.label}: got ${html.length} chars HTML`);
-        if (html.length < 500) { 
-          addDiag("warn", "disc_dept", `${dept.label}: HTML too short (${html.length} chars) — likely CAPTCHA/block`, html.slice(0, 300)); 
-          deptStats.push({ dept: dept.label, status: "BLOCKED", detail: `Only ${html.length} chars` }); 
-          continue; 
-        }
-        // Check for bot detection signals
-        if (/captcha|robot|verify|blocked|denied/i.test(html.slice(0, 2000))) {
-          addDiag("warn", "disc_dept", `${dept.label}: bot detection keywords found in HTML`);
-        }
-        if (scanAbortRef.current) { addDiag("warn", "disc_scan", "Stopped before extraction"); break; }
-        const parsed = await callClaude('Extract ALL products from this Amazon.ae Best Sellers HTML. Return ONLY JSON:\n{"products":[{"name":"product name","price_aed":NUMBER,"rating":NUMBER,"reviews":NUMBER,"asin":"ASIN if visible","url":"product URL if visible"}]}\nRULES:\n- price_aed must be NUMBER. "AED 49.00" = 49.\n- reviews must be INTEGER. "1,234" = 1234.\n- Extract ALL, aim 30-100.\nJSON only:\n' + html.slice(0, 60000), "claude-sonnet-4-20250514", false, 1, 4096);
-        try {
-          const data = parseJSON(parsed);
-          const products = (data.products || data.results || []).map(p => ({ name: p.name || p.title || "", price_aed: parseFloat(p.price_aed || p.price || 0) || 0, rating: parseFloat(p.rating || 0) || 0, reviews: parseInt(p.reviews || 0) || 0, asin: p.asin || "", url: p.url || "", department: dept.label, source: "Amazon.ae" })).filter(p => p.name && p.name.length > 5 && p.price_aed > 0 && !/please wait|loading|extract all|best sellers? |no products?|sign.?in|robot|captcha|access denied|error occurred|try again|javascript|DOCTYPE|<html|<div/i.test(p.name));
-          const junkCount = (data.products || data.results || []).length - products.length;
-          if (junkCount > 0) addDiag("warn", "disc_dept", `${dept.label}: filtered out ${junkCount} junk entries`);
-          addDiag(products.length > 0 ? "ok" : "warn", "disc_dept", `${dept.label}: extracted ${products.length} products`);
-          if (products.length > 0) addDiag("info", "disc_sample", `${dept.label} sample: ${products[0].name} AED${products[0].price_aed} reviews=${products[0].reviews}`);
-          deptStats.push({ dept: dept.label, status: products.length > 0 ? "OK" : "EMPTY", detail: `${products.length} products` });
-          allProducts.push(...products);
-          setDiscProducts([...allProducts]); // ── INCREMENTAL: show as each dept finishes ──
-        } catch (e) { 
-          addDiag("error", "disc_dept", `${dept.label}: parseJSON failed: ${e.message}`); 
-          deptStats.push({ dept: dept.label, status: "PARSE_FAIL", detail: e.message }); 
-        }
-      } catch (e) { 
-        addDiag("error", "disc_dept", `${dept.label}: exception: ${e.message}`); 
-        deptStats.push({ dept: dept.label, status: "EXCEPTION", detail: e.message }); 
-      }
-      await wait(1500);
-    }
-    addDiag("info", "disc_scan", `Done: ${allProducts.length} products from ${depts.length} depts`);
-    addDiag("info", "disc_summary", deptStats.map(d => d.dept + "=" + d.status).join(", "));
-    setDiscScanProgress({ done: depts.length, total: depts.length, current: scanAbortRef.current ? "Stopped" : "Done" });
-    const ts = new Date().toISOString();
-    setDiscProducts(allProducts); setDiscLastScan(ts);
-    await storeSet(currentPin + ":discovery", { products: allProducts, scannedAt: ts });
-    setDiscScanning(false); scanAbortRef.current = false;
-    if (allProducts.length === 0) {
-      const failures = deptStats.filter(d => d.status !== "OK").map(d => d.dept + ": " + d.detail).join("; ");
-      setDiscError("0 products extracted. Check DIAG panel. Failures: " + (failures || "unknown"));
-    }
-  };
-
-  // ══════════ DISCOVERY: Noon Search ══════════
-  const runNoonDiscovery = async () => {
-    if (!apifyKey || !noonKeyword.trim()) return;
-    setNoonLoading(true); setDiscError("");
-    addDiag("info", "noon_disc", `Searching Noon for "${noonKeyword.trim()}" actor=${noonActorId}`);
-    try {
-      setStage("Noon scraper...");
-      const noonApiActorId = noonActorId.replace(/\//g, "~");
-      addDiag("info", "noon_disc", `Calling actor=${noonActorId} (API: ${noonApiActorId})`);
-      const sr = await fetch("https://api.apify.com/v2/acts/" + noonApiActorId + "/runs?token=" + apifyKey + "&timeout=60", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scrape_type: "search", search_query: noonKeyword.trim() }) });
-      addDiag(sr.ok ? "info" : "error", "noon_disc", `Noon actor POST status=${sr.status}`);
-      if (!sr.ok) throw new Error("Noon actor failed: " + sr.status);
-      const rd = await sr.json(); const runId = rd.data?.id, dsId = rd.data?.defaultDatasetId;
-      addDiag("info", "noon_disc", `runId=${runId} dsId=${dsId}`);
-      let status = "RUNNING", pc = 0;
-      while (status === "RUNNING" || status === "READY") { if (pc > 25) break; await wait(3000); pc++; setStage("Noon (" + (pc * 3) + "s)..."); try { const pr = await fetch("https://api.apify.com/v2/actor-runs/" + runId + "?token=" + apifyKey); if (pr.ok) status = (await pr.json()).data?.status || "RUNNING"; } catch {} }
-      addDiag("info", "noon_disc", `Final status=${status}`);
-      let items = [];
-      if (dsId) { try { const ir = await fetch("https://api.apify.com/v2/datasets/" + dsId + "/items?token=" + apifyKey + "&limit=30"); if (ir.ok) items = await ir.json(); } catch {} }
-      addDiag(items.length > 0 ? "ok" : "warn", "noon_disc", `Raw items: ${items.length}`);
-      if (items.length > 0) addDiag("info", "noon_disc", `Sample keys: [${Object.keys(items[0]).join(",")}]`, items[0]);
-      try { await fetch("https://api.apify.com/v2/actor-runs/" + runId + "/abort?token=" + apifyKey, { method: "POST" }); } catch {}
-      const mapped = items.map(i => ({ name: i.title || i.name || "", price_aed: parseFloat(i.price || i.sale_price || i.now || 0) || 0, rating: parseFloat(i.rating || 0) || 0, reviews: parseInt(i.reviews || i.ratings_count || 0) || 0, source: "Noon.ae", url: i.url || i.link || "", department: "Noon" })).filter(p => p.name && p.price_aed > 0);
-      addDiag(mapped.length > 0 ? "ok" : "warn", "noon_disc", `After mapping: ${mapped.length} valid products`);
-      setNoonResults(mapped);
-    } catch (e) { addDiag("error", "noon_disc", e.message); setDiscError(e.message); }
-    setNoonLoading(false); setStage("");
-  };
-
-  // ══════════ DISCOVERY: Validate inline ══════════
-  const validateProduct = async (product, idx) => {
+  // ══════════ VALIDATE (shared by Discover + Brainstorm) ══════════
+  const validateProduct = async (product, setValidIdx, setResults) => {
     if (!apiKey) return;
-    setValidatingIdx(idx);
-    addDiag("info", "validate", `Validating "${product.name}" AED${product.price_aed}`);
+    const pk = product.asin || product.url || `${product.name}_${product.price_aed}`;
+    setValidIdx(pk);
     try {
       setStage("Translating...");
       const fmt = await callClaude('Translate for Indonesian marketplace. JSON only:\n{"clean_name_id":"Bahasa Indonesia","category":"electronics/kitchen/beauty/fashion/home/toys/sports/baby/office/other","weight_class":"light/medium/heavy","search_queries_id":["q1","q2","q3"]}\nProduct: "' + product.name + '" AED ' + product.price_aed + '\nJSON only:', "claude-sonnet-4-20250514", false, 1, 1024);
@@ -736,94 +445,242 @@ export default function App() {
       const mData = { uaeProduct: productData, normalized: productData, indoResults: result.indo, margins: result.margins, confidence: result.indo.confidence, medianPriceIDR: result.medianPriceIDR, lowestPriceIDR: result.lowestPriceIDR, highestPriceIDR: result.highestPriceIDR, weightClass: result.weightClass, timestamp: new Date().toISOString(), source: result.indo.source, status: result.status };
       const newHistory = [mData, ...historyRef.current].slice(0, MAX_HISTORY);
       setHistory(newHistory); await saveHistoryNow(newHistory);
-      // v1 FEATURE: Include confidence in validation results
-      setValidationResults(prev => ({ ...prev, [idx]: { margin: result.margins.median.margin, status: result.status, indo: result.indo, confidence: result.indo.confidence } }));
-    } catch (e) { setValidationResults(prev => ({ ...prev, [idx]: { margin: null, status: "Error", error: e.message } })); }
-    setValidatingIdx(-1); setStage("");
+      setResults(prev => ({ ...prev, [pk]: { margin: result.margins.median.margin, status: result.status, confidence: result.indo.confidence } }));
+    } catch (e) { setResults(prev => ({ ...prev, [pk]: { margin: null, status: "Error", error: e.message } })); }
+    setValidIdx(null); setStage("");
   };
 
-  // ══════════ v1 FEATURE: UAE SIMILAR PRODUCTS (in Discovery) ══════════
-  const runUaeSimilar = async (product, idx) => {
-    if (!apiKey) return;
-    setDiscSimilarIdx(idx);
+  // ══════════ DISCOVER: ScrapingDog Amazon Search ══════════
+  const searchAmazonSD = async (keyword) => {
+    if (!keyword.trim() || !scrapingDogKey) return;
+    setDiscSearchingAmazon(true); setDiscError("");
+    addDiag("info", "disc_amazon", `Searching Amazon.ae: "${keyword}"`);
     try {
-      setStage("Finding similar UAE products...");
-      const rawSearch = await runWithProgress(() => callClaude(
-        'Search Amazon.ae and Noon UAE for 8-10 products similar to "' + product.name + '".\nCategory: ' + (product.department || "general") + ' | Price: ~AED ' + product.price_aed + '\n\nSearch: "' + product.name + ' amazon.ae" and "' + product.name + ' noon uae"\n\nFind best sellers. List each with name, AED price, marketplace, ratings.',
-        "claude-sonnet-4-20250514", true, 2, 4096
-      ), 18);
-      await wait(2000);
-      setStage("Formatting...");
-      const formatted = await runWithProgress(() => callClaude(
-        'Convert to JSON:\n' + rawSearch + '\n\n{"similar":[{"name":"","price_aed":number,"source":"Amazon.ae or Noon","rating":0,"url":""}],"price_stats":{"lowest_aed":0,"highest_aed":0,"median_aed":0,"num_results":0}}\nAll prices AED. JSON only:',
-        "claude-haiku-4-5-20251001", false, 2, 4096
-      ), 6);
-      const uaeData = parseJSON(formatted);
-      if (!uaeData.similar) uaeData.similar = uaeData.results || [];
-      if (!uaeData.price_stats && uaeData.similar.length > 0) {
-        const p = uaeData.similar.map(x => x.price_aed || 0).filter(x => x > 0).sort((a, b) => a - b);
-        uaeData.price_stats = { lowest_aed: p[0], highest_aed: p[p.length - 1], median_aed: p[Math.floor(p.length / 2)], num_results: p.length };
-      }
-      setDiscSimilarResults(prev => ({ ...prev, [idx]: uaeData }));
-    } catch (e) { setDiscSimilarResults(prev => ({ ...prev, [idx]: { error: e.message } })); }
-    setDiscSimilarIdx(-1); setStage("");
+      const sdUrl = "https://api.scrapingdog.com/amazon/search?api_key=" + encodeURIComponent(scrapingDogKey) + "&domain=ae&keyword=" + encodeURIComponent(keyword.trim()) + "&page=1";
+      const r = await fetch(sdUrl);
+      if (!r.ok) throw new Error("ScrapingDog HTTP " + r.status);
+      const data = await r.json();
+      addDiag("info", "disc_amazon", `Raw response keys: [${Object.keys(data).join(",")}]`);
+      // ScrapingDog Amazon search returns structured data
+      const products = (data.results || data.organic_results || data.search_results || data || []);
+      const items = (Array.isArray(products) ? products : []).map(p => ({
+        name: p.title || p.name || "",
+        price_aed: parseFloat(String(p.price || p.extracted_price || "0").replace(/[^0-9.]/g, "")) || 0,
+        rating: parseFloat(p.rating || p.stars || 0) || 0,
+        reviews: parseInt(String(p.reviews || p.total_reviews || p.ratings_total || "0").replace(/[^0-9]/g, "")) || 0,
+        asin: p.asin || "",
+        url: p.link || p.url || (p.asin ? "https://www.amazon.ae/dp/" + p.asin : ""),
+        source: "Amazon.ae",
+        department: keyword,
+        brand: p.brand || ""
+      })).filter(p => p.name && p.name.length > 3 && p.price_aed > 0);
+      addDiag(items.length > 0 ? "ok" : "warn", "disc_amazon", `${items.length} products extracted`);
+      setDiscAmazonResults(items);
+      await storeSet(currentPin + ":discover:results", { amazon: items, noon: discNoonResults });
+    } catch (e) { addDiag("error", "disc_amazon", e.message); setDiscError(e.message); }
+    setDiscSearchingAmazon(false);
   };
 
-  // ══════════ LOOKUP: Quick Check ══════════
+  // ══════════ DISCOVER: Noon Search (Apify) ══════════
+  const searchNoonApify = async (keyword) => {
+    if (!keyword.trim() || !apifyKey) return;
+    setDiscSearchingNoon(true); setDiscError("");
+    addDiag("info", "disc_noon", `Searching Noon: "${keyword}"`);
+    try {
+      const noonApiActorId = noonActorId.replace(/\//g, "~");
+      const sr = await fetch("https://api.apify.com/v2/acts/" + noonApiActorId + "/runs?token=" + apifyKey + "&timeout=60", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scrape_type: "search", search: keyword.trim(), country: "uae", sort_by: "popularity", max_reviews_per_product: 0 }) });
+      if (!sr.ok) throw new Error("Noon actor HTTP " + sr.status);
+      const rd = await sr.json(); const runId = rd.data?.id, dsId = rd.data?.defaultDatasetId;
+      let status = "RUNNING", pc = 0;
+      while (status === "RUNNING" || status === "READY") { if (pc > 25) break; await wait(3000); pc++; setStage("Noon (" + (pc * 3) + "s)..."); try { const pr = await fetch("https://api.apify.com/v2/actor-runs/" + runId + "?token=" + apifyKey); if (pr.ok) status = (await pr.json()).data?.status || "RUNNING"; } catch {} }
+      let items = [];
+      if (dsId) { try { const ir = await fetch("https://api.apify.com/v2/datasets/" + dsId + "/items?token=" + apifyKey + "&limit=30"); if (ir.ok) items = await ir.json(); } catch {} }
+      try { await fetch("https://api.apify.com/v2/actor-runs/" + runId + "/abort?token=" + apifyKey, { method: "POST" }); } catch {}
+      const mapped = items.map(i => ({ name: i.title || i.name || "", price_aed: parseFloat(i.price || i.sale_price || i.now || 0) || 0, rating: parseFloat(i.rating || 0) || 0, reviews: parseInt(i.reviews || i.ratings_count || 0) || 0, source: "Noon.ae", url: i.url || i.link || "", department: keyword, brand: i.brand || "" })).filter(p => p.name && p.price_aed > 0);
+      addDiag(mapped.length > 0 ? "ok" : "warn", "disc_noon", `${mapped.length} products`);
+      setDiscNoonResults(mapped);
+      await storeSet(currentPin + ":discover:results", { amazon: discAmazonResults, noon: mapped });
+    } catch (e) { addDiag("error", "disc_noon", e.message); setDiscError(e.message); }
+    setDiscSearchingNoon(false); setStage("");
+  };
+
+  // ══════════ BRAINSTORM: Amazon Pipeline ══════════
+  const bsExtractSubcats = async () => {
+    if (!scrapingDogKey || !apiKey) { setBsError("Add ScrapingDog + Claude keys."); return; }
+    setBsStep(1); setBsError(""); setBsSubcats([]);
+    addDiag("info", "bs_subcats", `Extracting sub-categories for ${bsDept}`);
+    try {
+      setStage("Scraping main page...");
+      const pageUrl = "https://www.amazon.ae/gp/bestsellers/" + bsDept;
+      const sdRes = await fetch("https://api.scrapingdog.com/scrape?api_key=" + encodeURIComponent(scrapingDogKey) + "&url=" + encodeURIComponent(pageUrl) + "&dynamic=true&premium=true");
+      if (!sdRes.ok) throw new Error("ScrapingDog HTTP " + sdRes.status);
+      const html = await sdRes.text();
+      addDiag("info", "bs_subcats", `Got ${html.length} chars HTML`);
+      if (html.length < 500) throw new Error("Page blocked or empty (" + html.length + " chars)");
+
+      setStage("Extracting sub-categories...");
+      const subcatRaw = await callClaude(
+        'Extract ALL sub-category links from this Amazon.ae Best Sellers sidebar/navigation HTML. These are the child categories listed in the left sidebar.\n\nReturn ONLY JSON:\n{"subcategories":[{"name":"Sub-category Name","url":"/gp/bestsellers/kitchen/12345","slug":"12345"}]}\n\nExtract the name and full URL path. JSON only:\n\n' + html.slice(0, 40000),
+        "claude-sonnet-4-20250514", false, 1, 2048
+      );
+      const parsed = parseJSON(subcatRaw);
+      const subcats = (parsed.subcategories || []).filter(s => s.name && s.url);
+      addDiag("info", "bs_subcats", `Found ${subcats.length} sub-categories`);
+      if (subcats.length === 0) throw new Error("No sub-categories found. Try a different department.");
+
+      setStage("Classifying sub-categories...");
+      const classifyRaw = await callClaude(
+        'Classify each Amazon sub-category. For each, decide if it likely contains generic/unbranded/artisan products sourceable from Southeast Asia.\n\nSub-categories:\n' + subcats.map((s, i) => (i + 1) + ". " + s.name).join("\n") + '\n\nReturn JSON:\n{"classified":[{"name":"...","action":"SCRAPE or SKIP","reason":"short reason"}]}\n\nSCRAPE = likely has generic/artisan/handmade/natural products.\nSKIP = likely all branded/appliance/electronics.\nJSON only:',
+        "claude-sonnet-4-20250514", false, 1, 2048
+      );
+      const classified = parseJSON(classifyRaw);
+      const merged = subcats.map((s, i) => {
+        const cl = (classified.classified || [])[i] || (classified.classified || []).find(c => c.name?.toLowerCase() === s.name?.toLowerCase());
+        return { ...s, action: cl?.action || "SCRAPE", reason: cl?.reason || "", enabled: (cl?.action || "SCRAPE") === "SCRAPE" };
+      });
+      setBsSubcats(merged);
+      setBsStep(2); // Review step
+      setStage("");
+    } catch (e) { setBsError(e.message); setBsStep(0); setStage(""); }
+  };
+
+  const bsScrapeApproved = async () => {
+    const approved = bsSubcats.filter(s => s.enabled);
+    if (!approved.length) { setBsError("Enable at least one sub-category."); return; }
+    bsAbortRef.current = false;
+    setBsStep(3); setBsError("");
+    setBsProgress({ done: 0, total: approved.length, current: "" });
+    addDiag("info", "bs_scrape", `Scraping ${approved.length} sub-categories`);
+    let allProducts = [];
+    for (let i = 0; i < approved.length; i++) {
+      if (bsAbortRef.current) { addDiag("warn", "bs_scrape", "Stopped"); break; }
+      const sc = approved[i];
+      setBsProgress({ done: i, total: approved.length, current: sc.name });
+      try {
+        setStage("Scraping " + sc.name + "...");
+        const scUrl = sc.url.startsWith("http") ? sc.url : "https://www.amazon.ae" + sc.url;
+        const sdRes = await fetch("https://api.scrapingdog.com/scrape?api_key=" + encodeURIComponent(scrapingDogKey) + "&url=" + encodeURIComponent(scUrl) + "&dynamic=true&premium=true");
+        if (!sdRes.ok) { addDiag("error", "bs_scrape", `${sc.name}: HTTP ${sdRes.status}`); continue; }
+        const html = await sdRes.text();
+        if (html.length < 500) { addDiag("warn", "bs_scrape", `${sc.name}: blocked (${html.length} chars)`); continue; }
+        setStage("Extracting " + sc.name + "...");
+        const parsed = await callClaude('Extract ALL products from this Amazon.ae Best Sellers HTML. Return ONLY JSON:\n{"products":[{"name":"","price_aed":NUMBER,"rating":NUMBER,"reviews":NUMBER,"asin":"","url":"","brand":""}]}\nRULES: price_aed=NUMBER. reviews=INTEGER. Include brand if visible. Extract ALL.\nJSON only:\n' + html.slice(0, 60000), "claude-sonnet-4-20250514", false, 1, 4096);
+        try {
+          const data = parseJSON(parsed);
+          const products = (data.products || []).map(p => ({
+            name: p.name || p.title || "", price_aed: parseFloat(p.price_aed || p.price || 0) || 0, rating: parseFloat(p.rating || 0) || 0, reviews: parseInt(p.reviews || 0) || 0, asin: p.asin || "", url: p.url || "", brand: p.brand || "",
+            department: AMAZON_AE_DEPTS.find(d => d.slug === bsDept)?.label || bsDept, subcategory: sc.name, source: "Amazon.ae",
+            isBranded: isBrandBlocked(p.name || "", p.brand || "", allBrands),
+            indoSignal: getIndoSignalScore(p.name || "")
+          })).filter(p => p.name && p.name.length > 5 && p.price_aed > 0 && !/please wait|loading|sign.?in|robot|captcha|error|DOCTYPE/i.test(p.name));
+          addDiag(products.length > 0 ? "ok" : "warn", "bs_scrape", `${sc.name}: ${products.length} products`);
+          allProducts.push(...products);
+          setBsAmazonProducts([...allProducts]);
+        } catch (e) { addDiag("error", "bs_scrape", `${sc.name}: parse failed: ${e.message}`); }
+      } catch (e) { addDiag("error", "bs_scrape", `${sc.name}: ${e.message}`); }
+      await wait(1500);
+    }
+
+    // Step 5: Claude classify remaining non-blocklisted products
+    const nonBranded = allProducts.filter(p => !p.isBranded);
+    if (nonBranded.length > 0 && nonBranded.length <= 200) {
+      setStage("Claude classifying...");
+      try {
+        const batch = nonBranded.map((p, i) => (i + 1) + ". " + p.name + (p.brand ? " [" + p.brand + "]" : "")).join("\n");
+        const clRaw = await callClaude('Classify each product. Is it GENERIC (unbranded/artisan/sourceable from SE Asia) or BRANDED (known brand, not sourceable)?\n\n' + batch + '\n\n{"classified":[{"index":1,"type":"GENERIC or BRANDED"}]}\nJSON only:', "claude-haiku-4-5-20251001", false, 1, 4096);
+        try {
+          const clData = parseJSON(clRaw);
+          (clData.classified || []).forEach(cl => {
+            const idx = (cl.index || 0) - 1;
+            if (idx >= 0 && idx < nonBranded.length && cl.type === "BRANDED") {
+              const p = nonBranded[idx];
+              const realIdx = allProducts.findIndex(ap => ap === p);
+              if (realIdx >= 0) allProducts[realIdx].isBranded = true;
+            }
+          });
+        } catch {}
+      } catch (e) { addDiag("warn", "bs_classify", `Classification failed: ${e.message}`); }
+    }
+
+    setBsAmazonProducts(allProducts);
+    setBsProgress({ done: approved.length, total: approved.length, current: "Done" });
+    setBsStep(5);
+    setStage("");
+    const ts = new Date().toISOString();
+    setBsLastScan(ts);
+    await storeSet(currentPin + ":brainstorm:amazon", { products: allProducts, scannedAt: ts });
+  };
+
+  // ══════════ BRAINSTORM: Noon Pipeline ══════════
+  const bsRunNoon = async () => {
+    if (!apifyKey) { setBsError("Add Apify key."); return; }
+    const enabled = bsNoonCats.filter(c => c.enabled);
+    if (!enabled.length) { setBsError("Enable at least one category."); return; }
+    bsAbortRef.current = false;
+    setBsNoonScanning(true); setBsError("");
+    setBsProgress({ done: 0, total: enabled.length, current: "" });
+    let allProducts = [];
+    for (let i = 0; i < enabled.length; i++) {
+      if (bsAbortRef.current) break;
+      const cat = enabled[i];
+      setBsProgress({ done: i, total: enabled.length, current: cat.keyword });
+      try {
+        setStage("Noon: " + cat.keyword + "...");
+        const noonApiActorId = noonActorId.replace(/\//g, "~");
+        const sr = await fetch("https://api.apify.com/v2/acts/" + noonApiActorId + "/runs?token=" + apifyKey + "&timeout=60", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scrape_type: "search", search: cat.keyword, country: "uae", sort_by: "popularity", max_reviews_per_product: 0 }) });
+        if (!sr.ok) { addDiag("error", "bs_noon", `${cat.keyword}: HTTP ${sr.status}`); continue; }
+        const rd = await sr.json(); const runId = rd.data?.id, dsId = rd.data?.defaultDatasetId;
+        let status = "RUNNING", pc = 0;
+        while (status === "RUNNING" || status === "READY") { if (pc > 20) break; await wait(3000); pc++; try { const pr = await fetch("https://api.apify.com/v2/actor-runs/" + runId + "?token=" + apifyKey); if (pr.ok) status = (await pr.json()).data?.status || "RUNNING"; } catch {} }
+        let items = [];
+        if (dsId) { try { const ir = await fetch("https://api.apify.com/v2/datasets/" + dsId + "/items?token=" + apifyKey + "&limit=30"); if (ir.ok) items = await ir.json(); } catch {} }
+        try { await fetch("https://api.apify.com/v2/actor-runs/" + runId + "/abort?token=" + apifyKey, { method: "POST" }); } catch {}
+        const mapped = items.map(it => ({
+          name: it.title || it.name || "", price_aed: parseFloat(it.price || it.sale_price || 0) || 0, rating: parseFloat(it.rating || 0) || 0, reviews: parseInt(it.reviews || it.ratings_count || 0) || 0,
+          source: "Noon.ae", url: it.url || it.link || "", department: cat.keyword, brand: it.brand || "",
+          isBranded: isBrandBlocked(it.title || it.name || "", it.brand || "", allBrands),
+          indoSignal: getIndoSignalScore(it.title || it.name || "")
+        })).filter(p => p.name && p.price_aed > 0);
+        addDiag(mapped.length > 0 ? "ok" : "warn", "bs_noon", `${cat.keyword}: ${mapped.length} products`);
+        allProducts.push(...mapped);
+        setBsNoonProducts([...allProducts]);
+      } catch (e) { addDiag("error", "bs_noon", `${cat.keyword}: ${e.message}`); }
+      await wait(1000);
+    }
+    setBsNoonProducts(allProducts);
+    setBsProgress({ done: enabled.length, total: enabled.length, current: "Done" });
+    setBsNoonScanning(false); setStage("");
+    await storeSet(currentPin + ":brainstorm:noon", { products: allProducts, scannedAt: new Date().toISOString() });
+  };
+
+  // ══════════ LOOKUP ══════════
   const runDryRun = async () => {
     const input = url.trim();
     if (!input || !input.startsWith("http")) { setAutoError("Invalid URL"); return; }
     if (!['amazon.ae','noon.com','noon.ae'].some(d => input.includes(d))) { setAutoError("Only Amazon.ae and Noon"); return; }
     if (!apiKey) { setApiKeyStatus("missing"); return; }
-    addDiag("info", "lookup", `Starting dry run: ${input}`);
     setLoading(true); setAutoError(""); setDryRunData(null); setUaeSimilar(null); setIndoResults(null); setMarginData(null); setEditableQueries([]); setActiveSection(0); setWaveStatus([]);
     const isNoon = input.includes("noon.com"); const marketplace = isNoon ? "Noon UAE" : "Amazon.ae";
     const asinMatch = input.match(/\/dp\/([A-Z0-9]{10})/i) || input.match(/\/([A-Z0-9]{10})(?:[/?]|$)/i);
     const asin = asinMatch ? asinMatch[1] : "";
     try {
       let rawInfo = "";
-      let sdProductData = null;
-
-      // ── FIX #1: Use ScrapingDog Amazon Product API when ASIN available ──
       if (!isNoon && asin && scrapingDogKey) {
         setStage("ScrapingDog Product API...");
-        addDiag("info", "lookup", `Using ScrapingDog Product API for ASIN=${asin} domain=ae`);
         try {
           const sdUrl = "https://api.scrapingdog.com/amazon/product?api_key=" + encodeURIComponent(scrapingDogKey) + "&domain=ae&asin=" + asin;
           const sdRes = await fetch(sdUrl);
-          addDiag(sdRes.ok ? "ok" : "error", "sd_product", `HTTP ${sdRes.status}`);
           if (sdRes.ok) {
-            sdProductData = await sdRes.json();
-            addDiag("ok", "sd_product", `Got structured data: "${(sdProductData.title || "").slice(0, 80)}" keys=[${Object.keys(sdProductData).join(",")}]`);
-            // Extract price from ScrapingDog response
+            const sdData = await sdRes.json();
             let priceAed = 0;
-            if (sdProductData.price) {
-              const pm = String(sdProductData.price).match(/[\d,.]+/);
-              if (pm) priceAed = parseFloat(pm[0].replace(/,/g, ""));
-            }
-            if (!priceAed && sdProductData.sale_price) {
-              const pm = String(sdProductData.sale_price).match(/[\d,.]+/);
-              if (pm) priceAed = parseFloat(pm[0].replace(/,/g, ""));
-            }
-            if (!priceAed && sdProductData.mrp) {
-              const pm = String(sdProductData.mrp).match(/[\d,.]+/);
-              if (pm) priceAed = parseFloat(pm[0].replace(/,/g, ""));
-            }
-            rawInfo = "ScrapingDog structured data:\nTitle: " + (sdProductData.title || "") + "\nPrice: AED " + priceAed + "\nBrand: " + (sdProductData.product_information?.Brand || sdProductData.product_information?.Manufacturer || "") + "\nRating: " + (sdProductData.average_rating || "") + "\nReviews: " + (sdProductData.total_ratings || sdProductData.total_reviews || "") + "\nASIN: " + asin;
-            addDiag("ok", "sd_product", `Extracted: price=${priceAed} rating=${sdProductData.average_rating} reviews=${sdProductData.total_ratings}`);
+            for (const f of [sdData.price, sdData.sale_price, sdData.mrp]) { if (f) { const pm = String(f).match(/[\d,.]+/); if (pm) { priceAed = parseFloat(pm[0].replace(/,/g, "")); if (priceAed) break; } } }
+            rawInfo = "Title: " + (sdData.title || "") + "\nPrice: AED " + priceAed + "\nBrand: " + (sdData.product_information?.Brand || sdData.product_information?.Manufacturer || "") + "\nRating: " + (sdData.average_rating || "") + "\nReviews: " + (sdData.total_ratings || "") + "\nASIN: " + asin;
           }
-        } catch (sdErr) {
-          addDiag("warn", "sd_product", `ScrapingDog failed: ${sdErr.message}, falling back to Claude search`);
-        }
+        } catch {}
       }
-
-      // Fallback to Claude web search if no ScrapingDog data
-      if (!rawInfo) {
-        setStage("Reading product... (~10s)");
-        rawInfo = await runWithProgress(() => callClaude("Find EXACT product details for this " + marketplace + " listing.\nURL: " + input + "\n" + (asin ? "ASIN: " + asin + "\n" : "") + "Search the URL and product ID. I need: exact name, price AED, brand, rating, reviews, key specs, pack size/quantity.", "claude-sonnet-4-20250514", true, 2, 4096), 12);
-      }
-      setStage("Formatting... (~5s)"); await wait(2000);
-      const formatted = await runWithProgress(() => callClaude("Convert to JSON:\n" + rawInfo + "\nURL: " + input + "\nMarketplace: " + marketplace + "\n\n{\"product_name\":\"\",\"price_aed\":NUMBER,\"pack_quantity\":NUMBER,\"brand\":\"\",\"rating\":NUMBER,\"reviews\":NUMBER,\"source\":\"" + marketplace + "\",\"clean_name_en\":\"\",\"clean_name_id\":\"Bahasa translation\",\"category\":\"\",\"weight_class\":\"light/medium/heavy\",\"search_queries_id\":[\"q1\",\"q2\",\"q3\"],\"search_queries_en\":[\"q1\",\"q2\"]}\n\nCRITICAL: price_aed=NUMBER. pack_quantity=INTEGER (how many items in bundle/multipack, default 1). search_queries_id=Bahasa. JSON only:", "claude-sonnet-4-20250514", false, 2, 2048), 6);
+      if (!rawInfo) { setStage("Reading product..."); rawInfo = await runWithProgress(() => callClaude("Find product details for " + marketplace + " listing.\nURL: " + input + (asin ? "\nASIN: " + asin : "") + "\nI need: name, price AED, brand, rating, reviews, pack size.", "claude-sonnet-4-20250514", true, 2, 4096), 12); }
+      setStage("Formatting..."); await wait(2000);
+      const formatted = await runWithProgress(() => callClaude("Convert:\n" + rawInfo + "\nURL: " + input + "\nMarketplace: " + marketplace + '\n\n{"product_name":"","price_aed":NUMBER,"pack_quantity":NUMBER,"brand":"","rating":NUMBER,"reviews":NUMBER,"source":"' + marketplace + '","clean_name_en":"","clean_name_id":"Bahasa","category":"","weight_class":"light/medium/heavy","search_queries_id":["q1","q2","q3"],"search_queries_en":["q1"]}\nJSON only:', "claude-sonnet-4-20250514", false, 2, 2048), 6);
       let data; try { data = parseJSON(formatted); } catch { throw new Error("Format failed."); }
       if (!data.product_name) throw new Error("Product not found.");
       if (!data.price_aed) { const pm = rawInfo.match(/AED\s*(\d+(?:\.\d+)?)/i); if (pm) data.price_aed = parseFloat(pm[1]); }
@@ -831,22 +688,19 @@ export default function App() {
       setDryRunData(data);
       setEditableQueries([...(data.search_queries_id || [data.clean_name_id]), ...(data.search_queries_en || [])]);
       setStage("");
-      if (!data.price_aed) setAutoError("Product found but price not detected. Enter it manually.");
     } catch (err) { setAutoError(err.message); setStage(""); if (err.message.includes("429")) setCooldown(30); }
     setLoading(false);
   };
 
-  // ══════════ LOOKUP: Indo Search ══════════
   const runLookupIndoSearch = async () => {
     if (!dryRunData) return;
-    addDiag("info", "lookup_indo", `Starting Indo search for "${dryRunData.product_name}" queries=[${editableQueries.join(", ")}]`);
     setLoading(true); setAutoError(""); setIndoResults(null); setMarginData(null); setWaveStatus([]);
     const queries = editableQueries.filter(q => q.trim());
     if (!queries.length) { setAutoError("Add at least one query."); setLoading(false); return; }
     try {
       const result = await runFullIndoSearch(dryRunData, queries);
       setIndoResults(result.indo); setWaveStatus(result.indo.wave_status || []);
-      const mData = { uaeProduct: dryRunData, normalized: dryRunData, uaeSimilar, indoResults: result.indo, margins: result.margins, confidence: result.indo.confidence, medianPriceIDR: result.medianPriceIDR, lowestPriceIDR: result.lowestPriceIDR, highestPriceIDR: result.highestPriceIDR, weightClass: result.weightClass, timestamp: new Date().toISOString(), source: result.indo.source, status: result.status };
+      const mData = { uaeProduct: dryRunData, normalized: dryRunData, indoResults: result.indo, margins: result.margins, confidence: result.indo.confidence, medianPriceIDR: result.medianPriceIDR, lowestPriceIDR: result.lowestPriceIDR, highestPriceIDR: result.highestPriceIDR, weightClass: result.weightClass, timestamp: new Date().toISOString(), source: result.indo.source, status: result.status };
       setMarginData(mData);
       const nh = [mData, ...historyRef.current].slice(0, MAX_HISTORY);
       setHistory(nh); await saveHistoryNow(nh);
@@ -863,70 +717,15 @@ export default function App() {
   const importBackup = (file) => { const r = new FileReader(); r.onload = async (e) => { try { const b = JSON.parse(e.target.result); if (!b.history?.length) throw new Error("Invalid"); const exp = b.history.map(expandEntry); setHistory(exp); await saveHistory(currentPin, exp); alert("Restored " + exp.length + " lookups"); } catch (err) { alert("Import failed: " + err.message); } }; r.readAsText(file); };
   const backupFileRef = useRef(null);
 
-  // v1 FEATURE: STRUCTURED CSV EXPORT (replaces v2 basic CSV)
-  const exportStructuredCSV = () => {
-    if (!history.length) return;
-    const headers = ["Date","Product Name EN","Product Name ID","Brand","Category","Weight Class","Source","Pack Qty","UAE Price AED","UAE Price USD","UAE Price IDR","Indo Median IDR","Indo Lowest IDR","Indo Highest IDR","Indo Median USD","Freight USD","Customs USD","Last Mile USD","Total Cost USD","Total Cost AED","Total Cost IDR","Margin Best %","Margin Median %","Margin Worst %","Confidence Score","Confidence Level","Status"];
-    const rows = history.map(h => {
-      const m = h.margins?.median || {};
-      return [
-        h.timestamp?.slice(0,10)||"",
-        '"'+(h.uaeProduct?.product_name||"").replace(/"/g,'""')+'"',
-        '"'+(h.normalized?.clean_name_id||h.uaeProduct?.clean_name_id||"").replace(/"/g,'""')+'"',
-        '"'+(h.uaeProduct?.brand||"")+'"',
-        h.normalized?.category||h.uaeProduct?.category||"",
-        h.weightClass||h.normalized?.weight_class||"",
-        h.uaeProduct?.source||"",
-        h.uaeProduct?.pack_quantity||1,
-        h.uaeProduct?.price_aed||0,
-        (m.uaeUSD||0).toFixed(2),
-        (m.uaeIDR||0).toFixed(0),
-        h.medianPriceIDR||0,
-        h.lowestPriceIDR||0,
-        h.highestPriceIDR||0,
-        (m.indoUSD||0).toFixed(2),
-        (m.freightUSD||0).toFixed(2),
-        (m.dutyUSD||0).toFixed(2),
-        (m.lastMileUSD||0).toFixed(2),
-        (m.totalUSD||0).toFixed(2),
-        (m.totalAED||0).toFixed(2),
-        (m.totalIDR||0).toFixed(0),
-        (h.margins?.best?.margin||0).toFixed(1),
-        (h.margins?.median?.margin||0).toFixed(1),
-        (h.margins?.worst?.margin||0).toFixed(1),
-        h.confidence?.score||0,
-        h.confidence?.level||"",
-        h.status||""
-      ].join(",");
-    });
-    const blob = new Blob([[headers.join(","), ...rows].join("\n")], { type: "text/csv" });
-    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "gt-crosstrade-analysis-" + new Date().toISOString().slice(0, 10) + ".csv"; a.click();
-  };
-
-  // Quick CSV (basic — kept for fast exports)
-  const exportQuickCSV = () => { if (!history.length) return; const h = ["Date","Product","AED","Bahasa","Category","Indo Median IDR","Margin %","Status"]; const r = history.map(x => [x.timestamp?.slice(0,10)||"",'"'+(x.uaeProduct?.product_name||"")+'"',x.uaeProduct?.price_aed||0,'"'+(x.normalized?.clean_name_id||"")+'"',x.normalized?.category||"",x.medianPriceIDR||0,(x.margins?.median?.margin||0).toFixed(1),x.status||""].join(",")); const b = new Blob([[h.join(","),...r].join("\n")], { type: "text/csv" }); const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = "gt-history-" + new Date().toISOString().slice(0, 10) + ".csv"; a.click(); };
-
-  // v1 FEATURE: PDF EXPORT
   const exportPDF = () => {
     if (!marginData) return;
-    const m = marginData.margins.median;
-    const q = getQty();
-    const conf = marginData.confidence;
-    const confLine = conf ? '<div style="padding:8px;background:' + (conf.level === "high" ? "#e8f5ec" : conf.level === "medium" ? "#fdf8ed" : "#fef2f2") + ';border-radius:4px;margin-top:12px;text-align:center;font-size:12px"><strong>Data Confidence:</strong> ' + conf.score + '/100 (' + conf.level.toUpperCase() + ')' + (conf.flags?.length ? ' &mdash; ' + conf.flags.join(', ') : '') + '</div>' : '';
-    const html = '<!DOCTYPE html><html><head><title>GT Cross-Trade Analysis</title><style>body{font-family:Arial,sans-serif;padding:40px;max-width:800px;margin:0 auto;color:#1a1a1a}h1{font-size:20px;border-bottom:2px solid #1a7a3a;padding-bottom:8px}h2{font-size:14px;color:#8B6914;margin-top:24px}table{width:100%;border-collapse:collapse;margin:12px 0}td,th{padding:8px 12px;border:1px solid #ddd;text-align:left;font-size:12px}th{background:#f5f2eb;font-weight:700}.green{color:#1a7a3a}.red{color:#dc2626}.gold{color:#8B6914}.big{font-size:28px;font-weight:700;text-align:center;padding:16px}.verdict{padding:12px;text-align:center;border-radius:4px;font-weight:700;margin-top:16px}@media print{body{padding:20px}}</style></head><body>' +
-      '<h1>GT Cross-Trade Analysis</h1>' +
-      '<p><strong>Date:</strong> ' + new Date().toLocaleDateString() + ' | <strong>FX:</strong> 1 AED = ' + Math.round(fx.AED_TO_IDR) + ' IDR</p>' +
-      '<h2>Product</h2><table>' +
-      '<tr><th>Name</th><td>' + escapeHtml(marginData.uaeProduct?.product_name) + '</td></tr>' +
-      '<tr><th>Bahasa</th><td>' + escapeHtml(marginData.normalized?.clean_name_id) + '</td></tr>' +
-      '<tr><th>Category</th><td>' + (marginData.normalized?.category || "") + '</td></tr>' +
-      '<tr><th>Source</th><td>' + (marginData.uaeProduct?.source || "") + ' | AED ' + (marginData.uaeProduct?.price_aed || 0) + (marginData.uaeProduct?.pack_quantity > 1 ? ' (' + marginData.uaeProduct.pack_quantity + '-pack)' : '') + '</td></tr></table>' +
-      '<h2>Indonesia Market (Median of ' + (marginData.indoResults?.price_stats?.num_results || 0) + ' listings)</h2><table>' +
-      '<tr><th></th><th>Lowest</th><th>Median</th><th>Highest</th></tr>' +
-      '<tr><th>IDR</th><td>' + fmtIDR(marginData.lowestPriceIDR) + '</td><td>' + fmtIDR(marginData.medianPriceIDR) + '</td><td>' + fmtIDR(marginData.highestPriceIDR) + '</td></tr></table>' +
-      confLine +
-      '<h2>Margin Analysis (\u00d7' + q + ' units)</h2><table>' +
-      '<tr><th>Item</th><th>USD</th><th>AED</th><th>IDR</th></tr>' +
+    const m = marginData.margins.median; const q = getQty(); const conf = marginData.confidence;
+    const confLine = conf ? '<div style="padding:8px;background:' + (conf.level === "high" ? "#e8f5ec" : conf.level === "medium" ? "#fdf8ed" : "#fef2f2") + ';border-radius:4px;margin-top:12px;text-align:center;font-size:12px"><strong>Confidence:</strong> ' + conf.score + '/100 (' + conf.level.toUpperCase() + ')' + (conf.flags?.length ? ' — ' + conf.flags.join(', ') : '') + '</div>' : '';
+    const html = '<!DOCTYPE html><html><head><title>GT Cross-Trade Analysis</title><style>body{font-family:Arial,sans-serif;padding:40px;max-width:800px;margin:0 auto;color:#1a1a1a}h1{font-size:20px;border-bottom:2px solid #1a7a3a;padding-bottom:8px}h2{font-size:14px;color:#8B6914;margin-top:24px}table{width:100%;border-collapse:collapse;margin:12px 0}td,th{padding:8px 12px;border:1px solid #ddd;text-align:left;font-size:12px}th{background:#f5f2eb;font-weight:700}.green{color:#1a7a3a}.red{color:#dc2626}.big{font-size:28px;font-weight:700;text-align:center;padding:16px}.verdict{padding:12px;text-align:center;border-radius:4px;font-weight:700;margin-top:16px}@media print{body{padding:20px}}</style></head><body>' +
+      '<h1>GT Cross-Trade Analysis</h1><p><strong>Date:</strong> ' + new Date().toLocaleDateString() + ' | <strong>FX:</strong> 1 AED = ' + Math.round(fx.AED_TO_IDR) + ' IDR</p>' +
+      '<h2>Product</h2><table><tr><th>Name</th><td>' + escapeHtml(marginData.uaeProduct?.product_name) + '</td></tr><tr><th>Bahasa</th><td>' + escapeHtml(marginData.normalized?.clean_name_id) + '</td></tr><tr><th>Source</th><td>' + (marginData.uaeProduct?.source || "") + ' | AED ' + (marginData.uaeProduct?.price_aed || 0) + (marginData.uaeProduct?.pack_quantity > 1 ? ' (' + marginData.uaeProduct.pack_quantity + '-pack)' : '') + '</td></tr></table>' +
+      '<h2>Indonesia Market (Median of ' + (marginData.indoResults?.price_stats?.num_results || 0) + ' listings)</h2><table><tr><th></th><th>Lowest</th><th>Median</th><th>Highest</th></tr><tr><th>IDR</th><td>' + fmtIDR(marginData.lowestPriceIDR) + '</td><td>' + fmtIDR(marginData.medianPriceIDR) + '</td><td>' + fmtIDR(marginData.highestPriceIDR) + '</td></tr></table>' + confLine +
+      '<h2>Margin (\u00d7' + q + ')</h2><table><tr><th>Item</th><th>USD</th><th>AED</th><th>IDR</th></tr>' +
       '<tr><th>UAE Sell</th><td>' + fmtUSD(m.uaeUSD*q) + '</td><td>' + fmtAED(m.uaeAED*q) + '</td><td>' + fmtIDR(m.uaeIDR*q) + '</td></tr>' +
       '<tr><th>Indo Source</th><td>' + fmtUSD(m.indoUSD*q) + '</td><td>' + fmtAED(m.indoAED*q) + '</td><td>' + fmtIDR(m.indoIDR*q) + '</td></tr>' +
       '<tr><th>Air Freight</th><td>' + fmtUSD(m.freightUSD*q) + '</td><td>' + fmtAED(m.freightAED*q) + '</td><td>' + fmtIDR(m.freightIDR*q) + '</td></tr>' +
@@ -939,6 +738,9 @@ export default function App() {
       '<script>window.onload=()=>window.print()<\/script></body></html>';
     const w = window.open("", "_blank"); w.document.write(html); w.document.close();
   };
+  const exportQuickCSV = () => { if (!history.length) return; const h = ["Date","Product","AED","Bahasa","Category","Indo Median IDR","Margin %","Status"]; const r = history.map(x => [x.timestamp?.slice(0,10)||"",'"'+(x.uaeProduct?.product_name||"")+'"',x.uaeProduct?.price_aed||0,'"'+(x.normalized?.clean_name_id||"")+'"',x.normalized?.category||"",x.medianPriceIDR||0,(x.margins?.median?.margin||0).toFixed(1),x.status||""].join(",")); const b = new Blob([[h.join(","),...r].join("\n")], { type: "text/csv" }); const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = "gt-quick-" + new Date().toISOString().slice(0, 10) + ".csv"; a.click(); };
+  const exportStructuredCSV = () => { if (!history.length) return; const headers = ["Date","Product EN","Product ID","Brand","Category","Weight","Source","Pack","AED","USD","Indo Med IDR","Indo Low IDR","Indo Hi IDR","Freight USD","Customs USD","Last Mile USD","Total Cost USD","Margin Best%","Margin Med%","Margin Worst%","Conf Score","Status"]; const rows = history.map(h => { const m = h.margins?.median || {}; return [h.timestamp?.slice(0,10)||"",'"'+(h.uaeProduct?.product_name||"").replace(/"/g,'""')+'"','"'+(h.normalized?.clean_name_id||"").replace(/"/g,'""')+'"','"'+(h.uaeProduct?.brand||"")+'"',h.normalized?.category||"",h.weightClass||"",h.uaeProduct?.source||"",h.uaeProduct?.pack_quantity||1,h.uaeProduct?.price_aed||0,(m.uaeUSD||0).toFixed(2),h.medianPriceIDR||0,h.lowestPriceIDR||0,h.highestPriceIDR||0,(m.freightUSD||0).toFixed(2),(m.dutyUSD||0).toFixed(2),(m.lastMileUSD||0).toFixed(2),(m.totalUSD||0).toFixed(2),(h.margins?.best?.margin||0).toFixed(1),(h.margins?.median?.margin||0).toFixed(1),(h.margins?.worst?.margin||0).toFixed(1),h.confidence?.score||0,h.status||""].join(","); }); const blob = new Blob([[headers.join(","), ...rows].join("\n")], { type: "text/csv" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "gt-analysis-" + new Date().toISOString().slice(0, 10) + ".csv"; a.click(); };
+  const exportBrainstormCSV = (products, label) => { if (!products.length) return; const h = ["Name","AED","Rating","Reviews","Brand","Department","Sub-cat","Source","Branded","Indo Signal","Signal Words"]; const rows = products.map(p => ['"'+(p.name||"").replace(/"/g,'""')+'"',p.price_aed||0,p.rating||0,p.reviews||0,'"'+(p.brand||"")+'"','"'+(p.department||"")+'"','"'+(p.subcategory||"")+'"',p.source||"",p.isBranded?"Y":"N",p.indoSignal?.score||0,'"'+(p.indoSignal?.matched||[]).join("; ")+'"'].join(",")); const blob = new Blob([[h.join(","),...rows].join("\n")], { type: "text/csv" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "gt-brainstorm-" + label + "-" + new Date().toISOString().slice(0, 10) + ".csv"; a.click(); };
 
   // ══════════ STYLES ══════════
   const inputStyle = { width: "100%", padding: "10px 12px", background: c.input, border: "1px solid " + c.border2, color: c.text, fontFamily: "monospace", fontSize: "13px", borderRadius: "3px", outline: "none" };
@@ -948,36 +750,65 @@ export default function App() {
   const secStyle = { padding: "24px", background: c.surface, border: "1px solid " + c.border2, borderTop: "none", minHeight: "420px", borderRadius: "0 0 4px 4px" };
   const candidates = history.filter(h => (h.margins?.median?.margin || 0) >= MARGIN_THRESHOLD.candidate);
 
-  // ── Discovery filtered/sorted products ──
-  const filteredDisc = [...discProducts, ...noonResults].filter(p => {
-    const f = discFilter;
-    if (f.source && f.source !== "all" && p.source !== f.source) return false;
-    if (f.dept !== "all" && p.department !== f.dept) return false;
-    if (f.minPrice && p.price_aed < parseFloat(f.minPrice)) return false;
-    if (f.maxPrice && p.price_aed > parseFloat(f.maxPrice)) return false;
-    if (f.minReviews && p.reviews < parseInt(f.minReviews)) return false;
-    if (f.search && !p.name.toLowerCase().includes(f.search.toLowerCase())) return false;
+  // Brainstorm filtered products
+  const bsAllProducts = [...bsAmazonProducts, ...bsNoonProducts];
+  const bsFiltered = bsAllProducts.filter(p => {
+    if (bsHideBranded && p.isBranded) return false;
+    if (bsFilter.search && !p.name.toLowerCase().includes(bsFilter.search.toLowerCase())) return false;
+    if (bsFilter.minPrice && p.price_aed < parseFloat(bsFilter.minPrice)) return false;
+    if (bsFilter.maxPrice && p.price_aed > parseFloat(bsFilter.maxPrice)) return false;
+    if (bsFilter.dept !== "all" && p.department !== bsFilter.dept && p.subcategory !== bsFilter.dept) return false;
     return p.price_aed > 0;
-  }).sort((a, b) => discSort === "reviews" ? b.reviews - a.reviews : discSort === "price_asc" ? a.price_aed - b.price_aed : discSort === "price_desc" ? b.price_aed - a.price_aed : b.rating - a.rating);
+  }).sort((a, b) => {
+    if (bsSort === "signal") return (b.indoSignal?.score || 0) - (a.indoSignal?.score || 0);
+    if (bsSort === "price_asc") return a.price_aed - b.price_aed;
+    if (bsSort === "price_desc") return b.price_aed - a.price_aed;
+    if (bsSort === "reviews") return (b.reviews || 0) - (a.reviews || 0);
+    return 0;
+  });
 
-  const departments = [...new Set(discProducts.map(p => p.department))].sort();
+  const discAllProducts = [...discAmazonResults, ...discNoonResults];
+  const getQty = () => qtyMode === "container" ? Math.floor(24000 / (WEIGHT_KG[dryRunData?.weight_class || "medium"] || 1)) : qtyMode === "custom" ? qty : 1;
   const cookieAgeDays = shopeeCookieUpdatedAt ? Math.floor((Date.now() - shopeeCookieUpdatedAt) / 86400000) : null;
   const cookieColor = cookieAgeDays === null ? c.dimmer : cookieAgeDays <= 10 ? c.green : cookieAgeDays <= 12 ? c.darkGold : c.red;
 
-  const SectionToggle = ({ index, title, icon, children, count }) => (
-    <div style={{ marginBottom: "8px", border: "1px solid " + (activeSection === index ? c.gold + "44" : c.border), borderRadius: "6px", overflow: "hidden" }}>
-      <button onClick={() => setActiveSection(activeSection === index ? -1 : index)} style={{ width: "100%", display: "flex", alignItems: "center", gap: "10px", padding: "14px 16px", background: activeSection === index ? c.surface2 : c.surface, border: "none", cursor: "pointer", textAlign: "left", color: c.text, fontFamily: "'JetBrains Mono',monospace", fontSize: "12px" }}>
-        <span style={{ fontSize: "16px" }}>{icon}</span><span style={{ flex: 1, fontWeight: 600, color: activeSection === index ? c.gold : c.text }}>{title}</span>
-        {count !== undefined && <span style={{ color: c.green, fontSize: "10px" }}>{count}</span>}
-        <span style={{ color: c.dimmer }}>{activeSection === index ? "\u25be" : "\u25b8"}</span>
-      </button>
-      {activeSection === index && <div style={{ padding: "16px", borderTop: "1px solid " + c.border }}>{children}</div>}
-    </div>
-  );
-
+  const SectionToggle = ({ index, title, icon, children, count }) => (<div style={{ marginBottom: "8px", border: "1px solid " + (activeSection === index ? c.gold + "44" : c.border), borderRadius: "6px", overflow: "hidden" }}><button onClick={() => setActiveSection(activeSection === index ? -1 : index)} style={{ width: "100%", display: "flex", alignItems: "center", gap: "10px", padding: "14px 16px", background: activeSection === index ? c.surface2 : c.surface, border: "none", cursor: "pointer", textAlign: "left", color: c.text, fontFamily: "'JetBrains Mono',monospace", fontSize: "12px" }}><span style={{ fontSize: "16px" }}>{icon}</span><span style={{ flex: 1, fontWeight: 600, color: activeSection === index ? c.gold : c.text }}>{title}</span>{count !== undefined && <span style={{ color: c.green, fontSize: "10px" }}>{count}</span>}<span style={{ color: c.dimmer }}>{activeSection === index ? "\u25be" : "\u25b8"}</span></button>{activeSection === index && <div style={{ padding: "16px", borderTop: "1px solid " + c.border }}>{children}</div>}</div>);
   const PriceRow = ({ label, usd, aed, idr }) => <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr", gap: "6px", fontSize: "11px", padding: "4px 0", borderBottom: "1px solid " + c.border }}><div style={{ color: c.dim }}>{label}</div><div style={{ color: c.gold }}>{fmtUSD(usd)}</div><div>{fmtAED(aed)}</div><div>{fmtIDR(idr)}</div></div>;
 
-  const getQty = () => qtyMode === "container" ? Math.floor(24000 / (WEIGHT_KG[dryRunData?.weight_class || "medium"] || 1)) : qtyMode === "custom" ? qty : 1;
+  // ══════════ PRODUCT TABLE (reused in Brainstorm + Discover) ══════════
+  const ProductTable = ({ products, validatingIdx, validationResults, onValidate, showSubcat, showSignal, maxRows = 200 }) => (
+    <div style={{ maxHeight: "500px", overflowY: "auto" }}>
+      <div style={{ display: "grid", gridTemplateColumns: showSubcat ? "2fr 0.6fr 0.4fr 0.5fr" + (showSignal ? " 0.7fr" : "") + " 0.7fr" : "2.2fr 0.6fr 0.4fr 0.5fr 0.7fr", gap: "6px", padding: "6px 0", borderBottom: "1px solid " + c.border2, fontSize: "9px", color: c.dimmer, letterSpacing: "0.5px", textTransform: "uppercase", position: "sticky", top: 0, background: c.surface, zIndex: 1 }}>
+        <div>Product</div><div style={{ textAlign: "right" }}>Price</div><div style={{ textAlign: "center" }}>{"\u2605"}</div><div style={{ textAlign: "right" }}>Reviews</div>{showSignal && <div style={{ textAlign: "center" }}>{"\ud83c\uddee\ud83c\udde9"} Signal</div>}<div style={{ textAlign: "center" }}>Action</div>
+      </div>
+      {products.slice(0, maxRows).map((p, i) => {
+        const pk = p.asin || p.url || `${p.name}_${p.price_aed}`;
+        const vr = validationResults[pk];
+        return (
+          <div key={pk + i} style={{ display: "grid", gridTemplateColumns: showSubcat ? "2fr 0.6fr 0.4fr 0.5fr" + (showSignal ? " 0.7fr" : "") + " 0.7fr" : "2.2fr 0.6fr 0.4fr 0.5fr 0.7fr", gap: "6px", padding: "8px 0", borderBottom: "1px solid " + c.border, fontSize: "11px", alignItems: "center", background: vr?.status === "Candidate" ? (dark ? "#0D2E1A22" : "#E8F5EC44") : vr?.status === "Rejected" ? (dark ? "#3a1a1a22" : "#FEF2F244") : (p.indoSignal?.score >= 4 && showSignal ? (dark ? "#0D2E1A11" : "#E8F5EC22") : "transparent") }}>
+            <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {p.url ? <a href={p.url} target="_blank" rel="noopener" style={{ color: c.text, textDecoration: "none" }}>{p.name}</a> : p.name}
+              {showSubcat && p.subcategory && <span style={{ color: c.dimmest, fontSize: "9px" }}>{" \u00b7 "}{p.subcategory}</span>}
+              {p.source === "Noon.ae" && <span style={{ marginLeft: 4, fontSize: "8px", padding: "1px 4px", background: dark ? "#2A2210" : "#FDF8ED", color: c.darkGold, borderRadius: "2px" }}>Noon</span>}
+            </div>
+            <div style={{ color: c.gold, fontWeight: 700, textAlign: "right" }}>{fmtAED(p.price_aed)}</div>
+            <div style={{ textAlign: "center", color: c.darkGold, fontSize: "10px" }}>{p.rating > 0 ? "\u2605" + p.rating.toFixed(1) : "\u2014"}</div>
+            <div style={{ textAlign: "right", color: c.dim, fontSize: "10px" }}>{p.reviews > 0 ? p.reviews.toLocaleString() : "\u2014"}</div>
+            {showSignal && <div style={{ textAlign: "center" }}>
+              {p.indoSignal?.score > 0 ? <span style={{ fontSize: "9px", color: p.indoSignal.score >= 4 ? c.green : c.darkGold, fontWeight: 700 }}>{"\ud83c\uddee\ud83c\udde9 "}{p.indoSignal.score}</span> : <span style={{ color: c.dimmest, fontSize: "9px" }}>{"\u2014"}</span>}
+            </div>}
+            <div style={{ textAlign: "center" }}>
+              {validatingIdx === pk ? <Spinner /> : vr ? (
+                <span style={{ fontSize: "11px", fontWeight: 700, color: marginColor(vr.margin) }}>{vr.margin != null ? vr.margin.toFixed(0) + "%" : "ERR"}</span>
+              ) : (
+                <button onClick={() => onValidate(p)} style={{ padding: "3px 8px", background: c.green, color: "#fff", border: "none", borderRadius: "3px", fontSize: "9px", fontWeight: 700, fontFamily: "monospace", cursor: "pointer" }}>VALIDATE</button>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
 
   // ══════════ RENDER ══════════
   return (
@@ -1008,16 +839,14 @@ export default function App() {
       <div style={{ marginBottom: "16px", borderBottom: "1px solid " + c.border, paddingBottom: "12px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
           <div>
-            <h1 style={{ fontFamily: "'Instrument Serif',serif", fontSize: "28px", fontWeight: 400, color: c.gold, margin: 0 }}>GT Cross-Trade <span style={{ fontSize: "12px", color: c.dimmer, fontFamily: "monospace" }}>v3.1</span></h1>
-            <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "4px", letterSpacing: "2px", textTransform: "uppercase" }}>UAE {"\u2190"} Indonesia {"\u00b7"} PIN {currentPin.slice(0,2)}** {"\u00b7"} {fxUpdated ? "FX " + fxUpdated.toLocaleDateString() : "FX: defaults"} {"\u00b7"} <span style={{ color: supabaseReady ? c.green : c.darkGold }}>{supabaseReady ? "\u25cf DB" : "\u25cb local"}</span></div>
+            <h1 style={{ fontFamily: "'Instrument Serif',serif", fontSize: "28px", fontWeight: 400, color: c.gold, margin: 0 }}>GT Cross-Trade <span style={{ fontSize: "12px", color: c.dimmer, fontFamily: "monospace" }}>v4.0</span></h1>
+            <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "4px", letterSpacing: "2px", textTransform: "uppercase" }}>UAE {"\u2190"} Indonesia {"\u00b7"} PIN {currentPin.slice(0,2)}** {isBrainstormPin && <span style={{ color: c.red }}>{"\u00b7 ADMIN"}</span>} {"\u00b7"} {fxUpdated ? "FX " + fxUpdated.toLocaleDateString() : "FX: defaults"} {"\u00b7"} <span style={{ color: supabaseReady ? c.green : c.darkGold }}>{supabaseReady ? "\u25cf DB" : "\u25cb local"}</span></div>
           </div>
           <div style={{ display: "flex", gap: "12px", fontSize: "11px", alignItems: "flex-end" }}>
             <div style={{ textAlign: "right" }}><div style={{ color: c.dimmer }}>LOOKUPS</div><div style={{ color: c.gold, fontSize: "16px", fontWeight: 700 }}>{history.length}</div></div>
             <div style={{ textAlign: "right" }}><div style={{ color: c.dimmer }}>CANDIDATES</div><div style={{ color: c.green, fontSize: "16px", fontWeight: 700 }}>{candidates.length}</div></div>
             <button onClick={toggleTheme} style={{ background: c.surface2, border: "1px solid " + c.border2, color: c.dim, fontFamily: "monospace", fontSize: "10px", padding: "6px 10px", borderRadius: "4px", cursor: "pointer" }}>{dark ? "\u2600" : "\ud83c\udf19"}</button>
-            <button onClick={() => setShowDiag(!showDiag)} style={{ background: showDiag ? c.gold : c.surface2, border: "1px solid " + (showDiag ? c.gold : c.border2), color: showDiag ? c.btnText : (diagLogs.some(l => l.level === "error") ? c.red : c.dim), fontFamily: "monospace", fontSize: "10px", padding: "6px 10px", borderRadius: "4px", cursor: "pointer", position: "relative" }}>
-              DIAG{diagLogs.length > 0 && <span style={{ position: "absolute", top: -4, right: -4, width: 14, height: 14, borderRadius: "50%", background: diagLogs.some(l => l.level === "error") ? c.red : c.green, color: "#fff", fontSize: "8px", display: "flex", alignItems: "center", justifyContent: "center" }}>{diagLogs.filter(l => l.level === "error").length || "\u2713"}</span>}
-            </button>
+            <button onClick={() => setShowDiag(!showDiag)} style={{ background: showDiag ? c.gold : c.surface2, border: "1px solid " + (showDiag ? c.gold : c.border2), color: showDiag ? c.btnText : c.dim, fontFamily: "monospace", fontSize: "10px", padding: "6px 10px", borderRadius: "4px", cursor: "pointer" }}>DIAG</button>
           </div>
         </div>
       </div>
@@ -1027,208 +856,227 @@ export default function App() {
         {[
           { label: "CLAUDE", val: apiKey, set: setApiKey, show: showKey, toggle: () => setShowKey(!showKey), status: apiKeyStatus, ph: "sk-ant-..." },
           { label: "APIFY", val: apifyKey, set: setApifyKey, show: showApifyKey, toggle: () => setShowApifyKey(!showApifyKey), status: apifyStatus, ph: "apify_api_..." },
-          { label: "SCRAPINGDOG", val: scrapingDogKey, set: setScrapingDogKey, show: showSDKey, toggle: () => setShowSDKey(!showSDKey), status: sdStatus, ph: "ScrapingDog key..." },
+          { label: "SD", val: scrapingDogKey, set: setScrapingDogKey, show: showSDKey, toggle: () => setShowSDKey(!showSDKey), status: sdStatus, ph: "ScrapingDog key..." },
         ].map(k => (
-          <div key={k.label} style={{ display: "flex", gap: "6px", alignItems: "center", marginBottom: "8px" }}>
-            <span style={{ fontSize: "9px", color: c.dim, letterSpacing: "1px", width: "80px" }}>{k.label}</span>
+          <div key={k.label} style={{ display: "flex", gap: "6px", alignItems: "center", marginBottom: "6px" }}>
+            <span style={{ fontSize: "9px", color: c.dim, letterSpacing: "1px", width: "50px" }}>{k.label}</span>
             <input type={k.show ? "text" : "password"} value={k.val} onChange={e => k.set(e.target.value)} placeholder={k.ph} style={{ ...inputStyle, flex: 1, padding: "4px 8px", fontSize: "11px" }} />
             <button onClick={k.toggle} style={{ ...btnSec, padding: "4px 8px", fontSize: "9px" }}>{k.show ? "HIDE" : "SHOW"}</button>
             {k.status && <span style={{ fontSize: "10px", color: k.status === "missing" ? c.red : c.green }}>{"\u2713"}</span>}
           </div>
         ))}
-        <div style={{ display: "flex", gap: "6px", alignItems: "center", marginBottom: "8px" }}>
-          <span style={{ fontSize: "9px", color: c.dim, letterSpacing: "1px", width: "80px" }}>COOKIE</span>
-          <span style={{ padding: "3px 10px", borderRadius: "12px", fontSize: "10px", fontFamily: "monospace", background: cookieAgeDays === null ? c.surface : cookieAgeDays <= 10 ? (dark ? "#0D2E1A" : "#E8F5EC") : cookieAgeDays <= 12 ? (dark ? "#2A2210" : "#FDF8ED") : (dark ? "#3a1a1a" : "#FEF2F2"), color: cookieColor, border: "1px solid " + cookieColor + "44" }}>{cookieAgeDays === null ? "No cookie" : cookieAgeDays + " days ago"}</span>
-          <button onClick={() => setShowCookieWizard(true)} style={{ ...btnSec, padding: "4px 10px", fontSize: "9px" }}>{"\ud83c\udf6a Update"}</button>
-        </div>
-        <div style={{ display: "flex", gap: "6px", alignItems: "center", marginBottom: "8px" }}>
-          <span style={{ fontSize: "9px", color: c.dim, letterSpacing: "1px", width: "80px" }}>INDO MODE</span>
-          {[{ id: "apify", label: "\ud83d\udd17 Apify Scraper (~$0.02)" }, { id: "claude", label: "\ud83d\udd0d Claude Web Search (~$0.15)" }].map(m => (
-            <button key={m.id} onClick={() => setIndoMode(m.id)} style={{ padding: "4px 10px", fontSize: "10px", fontFamily: "monospace", cursor: "pointer", background: indoMode === m.id ? (m.id === "apify" ? c.green : c.gold) : "transparent", color: indoMode === m.id ? (m.id === "apify" ? "#fff" : c.btnText) : c.dim, border: "1px solid " + (indoMode === m.id ? (m.id === "apify" ? c.green : c.gold) : c.border2), borderRadius: "3px" }}>{m.label}</button>
+        <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "9px", color: c.dim, letterSpacing: "1px", width: "50px" }}>INDO</span>
+          {[{ id: "apify", label: "\ud83d\udd17 Apify" }, { id: "claude", label: "\ud83d\udd0d Claude" }].map(m => (
+            <button key={m.id} onClick={() => setIndoMode(m.id)} style={{ padding: "3px 8px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", background: indoMode === m.id ? (m.id === "apify" ? c.green : c.gold) : "transparent", color: indoMode === m.id ? "#fff" : c.dim, border: "1px solid " + (indoMode === m.id ? (m.id === "apify" ? c.green : c.gold) : c.border2), borderRadius: "3px" }}>{m.label}</button>
           ))}
-          <button onClick={() => setShowActorConfig(!showActorConfig)} style={{ ...btnSec, padding: "3px 8px", fontSize: "8px" }}>{showActorConfig ? "\u25be" : "\u2699"}</button>
+          <span style={{ padding: "2px 8px", borderRadius: "10px", fontSize: "9px", background: cookieAgeDays === null ? c.surface : cookieAgeDays <= 10 ? (dark ? "#0D2E1A" : "#E8F5EC") : (dark ? "#3a1a1a" : "#FEF2F2"), color: cookieColor, border: "1px solid " + cookieColor + "44" }}>{"\ud83c\udf6a "}{cookieAgeDays === null ? "No cookie" : cookieAgeDays + "d"}</span>
+          <button onClick={() => setShowCookieWizard(true)} style={{ ...btnSec, padding: "3px 8px", fontSize: "8px" }}>Update</button>
         </div>
-        {showActorConfig && <div style={{ padding: "8px", background: c.cardBg, border: "1px solid " + c.border, borderRadius: "4px", marginBottom: "4px" }}>
-          <div style={{ fontSize: "9px", color: c.dimmer, letterSpacing: "1px", marginBottom: "6px" }}>APIFY ACTOR IDs (format: username/actor-name)</div>
-          {[{ l: "Tokopedia", v: tokoActorId, s: setTokoActorId, def: "fatihtahta/tokopedia-scraper" }, { l: "Shopee", v: shopeeActorId, s: setShopeeActorId, def: "fatihtahta/shopee-scraper" }, { l: "Noon", v: noonActorId, s: setNoonActorId, def: "buseta/noon-advanced-scraper" }].map(a => (
-            <div key={a.l} style={{ display: "flex", gap: "6px", marginBottom: "4px", alignItems: "center" }}>
-              <span style={{ fontSize: "9px", color: c.dim, width: "60px" }}>{a.l}</span>
-              <input value={a.v} onChange={e => a.s(e.target.value)} style={{ ...inputStyle, flex: 1, padding: "3px 6px", fontSize: "10px", borderColor: a.v === a.def ? c.green + "44" : /voyager|jupri/i.test(a.v) ? c.red : c.border2 }} />
-              {/voyager|jupri/i.test(a.v) && <span style={{ fontSize: "9px", color: c.red, fontWeight: 700 }}>{"\u2717 BAD"}</span>}
-            </div>
-          ))}
-          <button onClick={() => { setTokoActorId("fatihtahta/tokopedia-scraper"); setShopeeActorId("fatihtahta/shopee-scraper"); setNoonActorId("buseta/noon-advanced-scraper"); addDiag("info", "config", "Actor IDs reset to defaults"); }} style={{ padding: "3px 10px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", background: c.gold, color: c.btnText, border: "none", borderRadius: "3px", fontWeight: 700, marginTop: "4px" }}>RESET TO DEFAULTS</button>
-        </div>}
       </div>
 
       {/* ══════════ TAB BAR ══════════ */}
       <div style={{ display: "flex", gap: "2px", borderBottom: "1px solid " + c.border2 }}>
-        {[{ id: "discovery", label: "\ud83d\udd0d DISCOVERY" }, { id: "auto", label: "\u26a1 LOOKUP" }, { id: "history", label: "\ud83d\udccb HISTORY" }].map(m => (
-          <button key={m.id} onClick={() => setMode(m.id)} style={{ padding: "10px 18px", background: mode === m.id ? c.surface : "transparent", color: mode === m.id ? c.gold : c.dimmest, border: mode === m.id ? "1px solid " + c.border2 : "1px solid transparent", borderBottom: mode === m.id ? "1px solid " + c.surface : "1px solid " + c.border2, cursor: "pointer", fontFamily: "monospace", fontSize: "11px", position: "relative", top: "1px", borderRadius: "4px 4px 0 0" }}>
-            {m.label}{m.id === "history" && history.length > 0 && <span style={{ marginLeft: 4, color: c.green, fontSize: 9 }}>[{history.length}]</span>}
-            {m.id === "discovery" && discProducts.length > 0 && <span style={{ marginLeft: 4, color: c.green, fontSize: 9 }}>[{discProducts.length}]</span>}
+        {[
+          ...(isBrainstormPin ? [{ id: "brainstorm", label: "\ud83e\udde0 BRAINSTORM" }] : []),
+          { id: "discover", label: "\ud83d\udd0d DISCOVER" },
+          { id: "auto", label: "\u26a1 LOOKUP" },
+          { id: "history", label: "\ud83d\udccb HISTORY" }
+        ].map(m => (
+          <button key={m.id} onClick={() => setMode(m.id)} style={{ padding: "10px 16px", background: mode === m.id ? c.surface : "transparent", color: mode === m.id ? c.gold : c.dimmest, border: mode === m.id ? "1px solid " + c.border2 : "1px solid transparent", borderBottom: mode === m.id ? "1px solid " + c.surface : "1px solid " + c.border2, cursor: "pointer", fontFamily: "monospace", fontSize: "11px", position: "relative", top: "1px", borderRadius: "4px 4px 0 0" }}>
+            {m.label}
+            {m.id === "history" && history.length > 0 && <span style={{ marginLeft: 4, color: c.green, fontSize: 9 }}>[{history.length}]</span>}
+            {m.id === "brainstorm" && bsAllProducts.length > 0 && <span style={{ marginLeft: 4, color: c.green, fontSize: 9 }}>[{bsAllProducts.length}]</span>}
           </button>
         ))}
       </div>
 
-      {/* ══════════ DISCOVERY TAB ══════════ */}
-      {mode === "discovery" && <div style={secStyle}>
+      {/* ══════════ BRAINSTORM TAB ══════════ */}
+      {mode === "brainstorm" && isBrainstormPin && <div style={secStyle}>
 
-        {/* ── AMAZON.AE BESTSELLERS ── */}
+        {/* Status bar */}
+        {(loading || bsStep === 3 || bsNoonScanning) && stage && <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" }}><Spinner /><span style={{ fontSize: "12px", color: c.gold }}>{stage}</span></div>}
+        {bsError && <div style={{ padding: "10px", background: dark ? "#3a1a1a" : "#FEF2F2", border: "1px solid " + c.red + "44", borderRadius: "4px", marginBottom: "12px", fontSize: "11px", color: c.red }}>{bsError}</div>}
+
+        {/* ── AMAZON BRAINSTORM ── */}
         <div style={{ marginBottom: "16px", padding: "12px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <span style={{ fontSize: "10px", color: c.gold, letterSpacing: "1px", fontWeight: 700 }}>AMAZON.AE BESTSELLERS</span>
-              <span style={{ fontSize: "8px", color: c.dimmer, padding: "1px 5px", border: "1px solid " + c.border, borderRadius: "3px" }}>via ScrapingDog</span>
+              <span style={{ fontSize: "10px", color: c.gold, letterSpacing: "1px", fontWeight: 700 }}>AMAZON.AE SUB-CATEGORY DRILL</span>
+              <span style={{ fontSize: "8px", color: c.dimmer, padding: "1px 5px", border: "1px solid " + c.border, borderRadius: "3px" }}>~$0.89/dept</span>
             </div>
-            {discLastScan && <span style={{ fontSize: "10px", color: c.dimmer }}>Last: {new Date(discLastScan).toLocaleDateString()}</span>}
+            {bsLastScan && <span style={{ fontSize: "10px", color: c.dimmer }}>Last: {new Date(bsLastScan).toLocaleDateString()}</span>}
           </div>
-          <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-            <select value={scanDept} onChange={e => setScanDept(e.target.value)} disabled={discScanning} style={{ ...inputStyle, width: "auto", padding: "8px 12px", fontSize: "11px" }}>
-              <option value="all">All Departments ({AMAZON_AE_DEPTS.length})</option>
+
+          {bsStep === 0 && <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+            <select value={bsDept} onChange={e => setBsDept(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "8px 12px", fontSize: "11px" }}>
               {AMAZON_AE_DEPTS.map(d => <option key={d.slug} value={d.slug}>{d.label}</option>)}
             </select>
-            {!discScanning ? (
-              <button onClick={runBestsellerScan} disabled={!scrapingDogKey || !apiKey} style={{ ...btnGreen, padding: "10px 24px", fontSize: "11px", opacity: !scrapingDogKey || !apiKey ? 0.4 : 1 }}>
-                {discProducts.length > 0 ? "\ud83d\udd04" : "\ud83d\udd0d"} {scanDept === "all" ? "SCAN ALL (~$1.50)" : "SCAN " + (AMAZON_AE_DEPTS.find(d => d.slug === scanDept)?.label || "").toUpperCase() + " (~$0.06)"}
-              </button>
-            ) : (
-              <button onClick={stopScan} style={{ ...btnStyle, background: c.red, color: "#fff", padding: "10px 24px", fontSize: "11px" }}>
-                {"\u25a0"} STOP ({discScanProgress.done}/{discScanProgress.total})
-              </button>
-            )}
-            {!scrapingDogKey && <span style={{ fontSize: "10px", color: c.red }}>Add ScrapingDog key</span>}
-          </div>
-          {discScanning && <div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "8px" }}>
-            <div style={{ flex: 1, height: "3px", background: c.border, borderRadius: "2px" }}><div style={{ width: (discScanProgress.done / Math.max(1, discScanProgress.total) * 100) + "%", height: "100%", background: c.gold, borderRadius: "2px", transition: "width 0.5s" }} /></div>
-            <span style={{ fontSize: "10px", color: c.gold, whiteSpace: "nowrap" }}>{discScanProgress.current}... {discProducts.length} products</span>
+            <button onClick={bsExtractSubcats} disabled={!scrapingDogKey || !apiKey} style={{ ...btnGreen, padding: "10px 20px", fontSize: "11px", opacity: !scrapingDogKey || !apiKey ? 0.4 : 1 }}>
+              {"\ud83e\udde0"} BRAINSTORM {(AMAZON_AE_DEPTS.find(d => d.slug === bsDept)?.label || "").toUpperCase()} (~$0.89)
+            </button>
+          </div>}
+
+          {/* Step 2: Sub-category review */}
+          {bsStep === 2 && <div>
+            <div style={{ fontSize: "10px", color: c.gold, marginBottom: "8px", fontWeight: 700 }}>Review sub-categories — toggle SCRAPE/SKIP before proceeding:</div>
+            <div style={{ maxHeight: "300px", overflowY: "auto", marginBottom: "10px" }}>
+              {bsSubcats.map((sc, i) => (
+                <div key={i} style={{ display: "flex", gap: "8px", alignItems: "center", padding: "6px 0", borderBottom: "1px solid " + c.border }}>
+                  <button onClick={() => { const u = [...bsSubcats]; u[i].enabled = !u[i].enabled; setBsSubcats(u); }} style={{ padding: "3px 10px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", background: sc.enabled ? c.green : "transparent", color: sc.enabled ? "#fff" : c.red, border: "1px solid " + (sc.enabled ? c.green : c.red), borderRadius: "3px", minWidth: "55px" }}>{sc.enabled ? "SCRAPE" : "SKIP"}</button>
+                  <span style={{ flex: 1, fontSize: "11px", color: sc.enabled ? c.text : c.dimmest }}>{sc.name}</span>
+                  <span style={{ fontSize: "9px", color: c.dim, maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sc.reason}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: "10px", color: c.dim }}>{bsSubcats.filter(s => s.enabled).length} SCRAPE {"\u00b7"} {bsSubcats.filter(s => !s.enabled).length} SKIP {"\u00b7"} Est: <span style={{ color: c.darkGold }}>${(bsSubcats.filter(s => s.enabled).length * 0.08).toFixed(2)}</span></span>
+              <div style={{ display: "flex", gap: "6px" }}>
+                <button onClick={() => { setBsStep(0); setBsSubcats([]); }} style={{ ...btnSec, padding: "8px 16px", fontSize: "10px" }}>{"\u2190"} BACK</button>
+                <button onClick={bsScrapeApproved} style={{ ...btnGreen, padding: "8px 20px", fontSize: "10px" }}>{"\u2713"} CONFIRM & SCRAPE ({bsSubcats.filter(s => s.enabled).length} sub-cats)</button>
+              </div>
+            </div>
+          </div>}
+
+          {/* Step 3: Scraping progress */}
+          {bsStep === 3 && <div>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
+              <div style={{ flex: 1, height: "3px", background: c.border, borderRadius: "2px" }}><div style={{ width: (bsProgress.done / Math.max(1, bsProgress.total) * 100) + "%", height: "100%", background: c.gold, borderRadius: "2px", transition: "width 0.5s" }} /></div>
+              <span style={{ fontSize: "10px", color: c.gold, whiteSpace: "nowrap" }}>{bsProgress.current}... {bsProgress.done}/{bsProgress.total}</span>
+              <button onClick={() => { bsAbortRef.current = true; }} style={{ ...btnSec, padding: "4px 10px", fontSize: "9px", color: c.red, borderColor: c.red }}>{"\u25a0"} STOP</button>
+            </div>
+          </div>}
+
+          {/* Step 5: Done */}
+          {bsStep === 5 && <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            <span style={{ fontSize: "10px", color: c.green }}>{"\u2713"} {bsAmazonProducts.length} products extracted</span>
+            <span style={{ fontSize: "10px", color: c.dim }}>{bsAmazonProducts.filter(p => !p.isBranded).length} after brand filter</span>
+            <button onClick={() => { setBsStep(0); setBsSubcats([]); }} style={{ ...btnSec, padding: "4px 12px", fontSize: "9px" }}>NEW SCAN</button>
+            <button onClick={() => exportBrainstormCSV(bsAmazonProducts, "amazon")} style={{ ...btnSec, padding: "4px 12px", fontSize: "9px" }}>{"\ud83d\udcca"} CSV</button>
           </div>}
         </div>
 
-        {/* ── NOON.AE SEARCH ── */}
+        {/* ── NOON BRAINSTORM ── */}
         <div style={{ marginBottom: "16px", padding: "12px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
-            <span style={{ fontSize: "10px", color: c.gold, letterSpacing: "1px", fontWeight: 700 }}>NOON.AE SEARCH</span>
-            <span style={{ fontSize: "8px", color: c.dimmer, padding: "1px 5px", border: "1px solid " + c.border, borderRadius: "3px" }}>via Apify</span>
+            <span style={{ fontSize: "10px", color: c.gold, letterSpacing: "1px", fontWeight: 700 }}>NOON CATEGORY SCAN</span>
+            <span style={{ fontSize: "8px", color: c.dimmer, padding: "1px 5px", border: "1px solid " + c.border, borderRadius: "3px" }}>~$0.10/cat</span>
           </div>
-          <div style={{ display: "flex", gap: "8px" }}>
-            <input value={noonKeyword} onChange={e => setNoonKeyword(e.target.value)} onKeyDown={e => e.key === "Enter" && !noonLoading && apifyKey && noonKeyword.trim() && runNoonDiscovery()} placeholder="Search keyword on Noon.ae..." style={{ ...inputStyle, flex: 1, padding: "10px 12px" }} />
-            <button onClick={runNoonDiscovery} disabled={noonLoading || !noonKeyword.trim() || !apifyKey} style={{ ...btnGreen, padding: "10px 24px", fontSize: "11px", opacity: (noonLoading || !noonKeyword.trim() || !apifyKey) ? 0.4 : 1 }}>{noonLoading ? "SEARCHING..." : "\ud83d\udd0d SEARCH NOON"}</button>
-          </div>
-          {!apifyKey && <div style={{ fontSize: "10px", color: c.red, marginTop: "6px" }}>{"\u26a0"} Enter your Apify API key above to enable Noon search</div>}
-          {noonResults.length > 0 && <div style={{ fontSize: "10px", color: c.green, marginTop: "6px" }}>{noonResults.length} Noon products loaded</div>}
-        </div>
-
-        {discError && <div style={{ padding: "12px", background: dark ? "#3a1a1a" : "#FEF2F2", border: "1px solid " + c.red + "44", borderRadius: "4px", marginBottom: "12px", fontSize: "12px", color: c.red }}>{"\u26a0 "}{discError}</div>}
-        {(loading || noonLoading) && stage && <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" }}><Spinner /><span style={{ fontSize: "12px", color: c.gold }}>{stage}</span></div>}
-
-        {/* Filters */}
-        {(discProducts.length > 0 || noonResults.length > 0) && <div style={{ display: "flex", gap: "6px", marginBottom: "12px", flexWrap: "wrap", alignItems: "center" }}>
-          <select value={discFilter.source || "all"} onChange={e => setDiscFilter({ ...discFilter, source: e.target.value })} style={{ ...inputStyle, width: "auto", padding: "5px 8px", fontSize: "10px" }}>
-            <option value="all">All Sources</option>
-            <option value="Amazon.ae">Amazon.ae{discProducts.length > 0 ? ` (${discProducts.length})` : ""}</option>
-            <option value="Noon.ae">Noon.ae{noonResults.length > 0 ? ` (${noonResults.length})` : ""}</option>
-          </select>
-          <select value={discFilter.dept} onChange={e => setDiscFilter({ ...discFilter, dept: e.target.value })} style={{ ...inputStyle, width: "auto", padding: "5px 8px", fontSize: "10px" }}>
-            <option value="all">All Departments</option>
-            {departments.map(d => <option key={d} value={d}>{d}</option>)}
-          </select>
-          <div style={{ display: "flex", gap: "3px", alignItems: "center" }}>
-            <span style={{ fontSize: "9px", color: c.dimmer }}>AED</span>
-            <input value={discFilter.minPrice} onChange={e => setDiscFilter({ ...discFilter, minPrice: e.target.value })} placeholder="Min" style={{ ...inputStyle, width: "60px", padding: "5px 6px", fontSize: "10px", textAlign: "center" }} />
-            <span style={{ color: c.dimmest }}>{"\u2014"}</span>
-            <input value={discFilter.maxPrice} onChange={e => setDiscFilter({ ...discFilter, maxPrice: e.target.value })} placeholder="Max" style={{ ...inputStyle, width: "60px", padding: "5px 6px", fontSize: "10px", textAlign: "center" }} />
-          </div>
-          <div style={{ display: "flex", gap: "3px", alignItems: "center" }}>
-            <span style={{ fontSize: "9px", color: c.dimmer }}>Reviews{"\u2265"}</span>
-            <input value={discFilter.minReviews} onChange={e => setDiscFilter({ ...discFilter, minReviews: e.target.value })} style={{ ...inputStyle, width: "50px", padding: "5px 6px", fontSize: "10px", textAlign: "center" }} />
-          </div>
-          <input value={discFilter.search} onChange={e => setDiscFilter({ ...discFilter, search: e.target.value })} placeholder="Search names..." style={{ ...inputStyle, width: "150px", padding: "5px 8px", fontSize: "10px" }} />
-          <div style={{ display: "flex", gap: "3px" }}>
-            {[{ id: "reviews", label: "Reviews" }, { id: "price_asc", label: "Price \u2191" }, { id: "price_desc", label: "Price \u2193" }, { id: "rating", label: "Rating" }].map(s => (
-              <button key={s.id} onClick={() => setDiscSort(s.id)} style={{ padding: "3px 8px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", background: discSort === s.id ? c.gold : "transparent", color: discSort === s.id ? c.btnText : c.dim, border: "1px solid " + (discSort === s.id ? c.gold : c.border2), borderRadius: "3px" }}>{s.label}</button>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", marginBottom: "10px" }}>
+            {bsNoonCats.map((cat, i) => (
+              <button key={i} onClick={() => { const u = [...bsNoonCats]; u[i].enabled = !u[i].enabled; setBsNoonCats(u); }} style={{ padding: "3px 8px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", background: cat.enabled ? (dark ? "#0D2E1A" : "#E8F5EC") : "transparent", color: cat.enabled ? c.green : c.dimmest, border: "1px solid " + (cat.enabled ? c.green + "44" : c.border), borderRadius: "3px" }}>{cat.keyword}</button>
             ))}
           </div>
-          <span style={{ fontSize: "10px", color: c.green }}>{filteredDisc.length} products</span>
-        </div>}
-
-        {/* Results table — with v1 FEATURES: confidence display + UAE Similar (SIM) button */}
-        {filteredDisc.length > 0 && <div style={{ maxHeight: "500px", overflowY: "auto" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "2.2fr 0.7fr 0.5fr 0.6fr 0.5fr 1fr", gap: "6px", padding: "6px 0", borderBottom: "1px solid " + c.border2, fontSize: "9px", color: c.dimmer, letterSpacing: "0.5px", textTransform: "uppercase", position: "sticky", top: 0, background: c.surface, zIndex: 1 }}>
-            <div>Product</div><div style={{ textAlign: "right" }}>Price</div><div style={{ textAlign: "center" }}>Rating</div><div style={{ textAlign: "right" }}>Reviews</div><div style={{ textAlign: "center" }}>Dept</div><div style={{ textAlign: "center" }}>Actions</div>
+          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            <button onClick={bsRunNoon} disabled={bsNoonScanning || !apifyKey} style={{ ...btnGreen, padding: "10px 20px", fontSize: "11px", opacity: (bsNoonScanning || !apifyKey) ? 0.4 : 1 }}>
+              {bsNoonScanning ? "\u23f3 SCANNING..." : "\ud83d\udd04 SCAN NOON"} (~${(bsNoonCats.filter(c => c.enabled).length * 0.10).toFixed(2)})
+            </button>
+            {bsNoonProducts.length > 0 && <span style={{ fontSize: "10px", color: c.green }}>{bsNoonProducts.length} products</span>}
+            {bsNoonProducts.length > 0 && <button onClick={() => exportBrainstormCSV(bsNoonProducts, "noon")} style={{ ...btnSec, padding: "4px 12px", fontSize: "9px" }}>{"\ud83d\udcca"} CSV</button>}
           </div>
-          {filteredDisc.slice(0, 200).map((p, i) => {
-            const vr = validationResults[i];
-            const sr = discSimilarResults[i];
-            return (
-              <div key={i}>
-                <div style={{ display: "grid", gridTemplateColumns: "2.2fr 0.7fr 0.5fr 0.6fr 0.5fr 1fr", gap: "6px", padding: "8px 0", borderBottom: "1px solid " + c.border, fontSize: "11px", alignItems: "center", background: vr?.status === "Candidate" ? (dark ? "#0D2E1A22" : "#E8F5EC44") : vr?.status === "Rejected" ? (dark ? "#3a1a1a22" : "#FEF2F244") : "transparent" }}>
-                  <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {p.url ? <a href={p.url} target="_blank" rel="noopener" style={{ color: c.text, textDecoration: "none" }}>{p.name}</a> : p.name}
-                  </div>
-                  <div style={{ color: c.gold, fontWeight: 700, textAlign: "right" }}>{fmtAED(p.price_aed)}</div>
-                  <div style={{ textAlign: "center", color: c.darkGold }}>{p.rating > 0 ? "\u2605" + p.rating.toFixed(1) : "\u2014"}</div>
-                  <div style={{ textAlign: "right", color: c.dim }}>{p.reviews > 0 ? p.reviews.toLocaleString() : "\u2014"}</div>
-                  <div style={{ textAlign: "center" }}><Badge text={p.department?.slice(0, 6) || "?"} color={c.dim} bg={c.surface2} /></div>
-                  <div style={{ textAlign: "center", display: "flex", gap: "4px", justifyContent: "center", alignItems: "center" }}>
-                    {/* VALIDATE button / result */}
-                    {validatingIdx === i ? <Spinner /> : vr ? (
-                      <span style={{ display: "flex", gap: "4px", alignItems: "center" }}>
-                        <span style={{ fontSize: "11px", fontWeight: 700, color: marginColor(vr.margin) }}>{vr.margin != null ? vr.margin.toFixed(0) + "%" : "ERR"}</span>
-                        {/* v1 FEATURE: Show confidence score alongside margin */}
-                        {vr.confidence && <ConfidenceBadge confidence={vr.confidence} c={c} />}
-                      </span>
-                    ) : (
-                      <button onClick={() => validateProduct(p, i)} style={{ padding: "3px 8px", background: c.green, color: "#fff", border: "none", borderRadius: "3px", fontSize: "9px", fontWeight: 700, fontFamily: "monospace", cursor: "pointer" }}>VALIDATE</button>
-                    )}
-                    {/* v1 FEATURE: SIM button for UAE Similar Products */}
-                    {discSimilarIdx === i ? <Spinner /> : (
-                      <button onClick={() => runUaeSimilar(p, i)} disabled={discSimilarIdx >= 0} style={{ padding: "3px 6px", background: "transparent", color: sr ? c.green : c.dim, border: "1px solid " + (sr ? c.green + "44" : c.border2), borderRadius: "3px", fontSize: "8px", fontWeight: 700, fontFamily: "monospace", cursor: "pointer" }} title="Find similar UAE products">{sr ? "\u2713 SIM" : "SIM"}</button>
-                    )}
-                  </div>
-                </div>
-                {/* v1 FEATURE: Expanded UAE Similar results row */}
-                {sr && !sr.error && sr.similar && (
-                  <div style={{ padding: "8px 12px", background: c.surface2, borderBottom: "1px solid " + c.border, fontSize: "10px" }}>
-                    <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", marginBottom: "6px" }}>
-                      {sr.price_stats && <>
-                        <span style={{ color: c.green }}>Lo: {fmtAED(sr.price_stats.lowest_aed)}</span>
-                        <span style={{ color: c.gold }}>Med: {fmtAED(sr.price_stats.median_aed)}</span>
-                        <span style={{ color: c.red }}>Hi: {fmtAED(sr.price_stats.highest_aed)}</span>
-                        <span style={{ color: c.dimmer }}>{sr.price_stats.num_results} similar</span>
-                      </>}
-                    </div>
-                    {sr.similar.slice(0, 5).map((s, j) => (
-                      <div key={j} style={{ display: "flex", justifyContent: "space-between", padding: "2px 0" }}>
-                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{s.name} <span style={{ color: c.dimmest }}>{s.source}</span></span>
-                        <span style={{ color: c.gold, fontWeight: 700, marginLeft: "8px" }}>{fmtAED(s.price_aed)}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {sr?.error && <div style={{ padding: "6px 12px", background: dark ? "#3a1a1a22" : "#FEF2F244", fontSize: "10px", color: c.red, borderBottom: "1px solid " + c.border }}>{sr.error}</div>}
+          {bsNoonScanning && <div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "8px" }}>
+            <div style={{ flex: 1, height: "3px", background: c.border, borderRadius: "2px" }}><div style={{ width: (bsProgress.done / Math.max(1, bsProgress.total) * 100) + "%", height: "100%", background: c.gold, borderRadius: "2px" }} /></div>
+            <span style={{ fontSize: "10px", color: c.gold }}>{bsProgress.current} {bsProgress.done}/{bsProgress.total}</span>
+            <button onClick={() => { bsAbortRef.current = true; }} style={{ ...btnSec, padding: "3px 8px", fontSize: "9px", color: c.red, borderColor: c.red }}>{"\u25a0"}</button>
+          </div>}
+        </div>
+
+        {/* ── BRAND BLOCKLIST ── */}
+        <div style={{ marginBottom: "16px" }}>
+          <button onClick={() => setShowBrandList(!showBrandList)} style={{ width: "100%", padding: "8px 12px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px", cursor: "pointer", display: "flex", justifyContent: "space-between", color: c.dim, fontFamily: "monospace", fontSize: "10px" }}>
+            <span>{"\ud83d\udeab"} Brand Blocklist ({allBrands.length} total, {customBrands.length} custom)</span>
+            <span>{showBrandList ? "\u25be" : "\u25b8"}</span>
+          </button>
+          {showBrandList && <div style={{ padding: "12px", background: c.surface2, border: "1px solid " + c.border, borderTop: "none", borderRadius: "0 0 4px 4px" }}>
+            <div style={{ display: "flex", gap: "4px", marginBottom: "8px" }}>
+              <input value={newBrandInput} onChange={e => setNewBrandInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && newBrandInput.trim()) { setCustomBrands([...customBrands, newBrandInput.trim()]); setNewBrandInput(""); } }} placeholder="Add brand..." style={{ ...inputStyle, flex: 1, padding: "4px 8px", fontSize: "10px" }} />
+              <button onClick={() => { if (newBrandInput.trim()) { setCustomBrands([...customBrands, newBrandInput.trim()]); setNewBrandInput(""); } }} style={{ ...btnSec, padding: "4px 10px", fontSize: "9px" }}>+ ADD</button>
+            </div>
+            {customBrands.length > 0 && <div style={{ marginBottom: "8px" }}>
+              <div style={{ fontSize: "8px", color: c.dimmer, letterSpacing: "1px", marginBottom: "4px" }}>CUSTOM BRANDS</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "3px" }}>
+                {customBrands.map((b, i) => <span key={i} style={{ padding: "2px 6px", background: dark ? "#2A2210" : "#FDF8ED", border: "1px solid " + c.darkGold + "44", borderRadius: "3px", fontSize: "9px", color: c.darkGold, cursor: "pointer" }} onClick={() => setCustomBrands(customBrands.filter((_, idx) => idx !== i))}>{b} {"\u2715"}</span>)}
               </div>
-            );
-          })}
+            </div>}
+            <div style={{ fontSize: "8px", color: c.dimmer, letterSpacing: "1px", marginBottom: "4px" }}>HARDCODED ({BRAND_BLOCKLIST_DEFAULT.length})</div>
+            <div style={{ maxHeight: "100px", overflowY: "auto", display: "flex", flexWrap: "wrap", gap: "2px" }}>
+              {BRAND_BLOCKLIST_DEFAULT.slice(0, 50).map((b, i) => <span key={i} style={{ padding: "1px 5px", background: dark ? "#3a1a1a" : "#FEF2F2", border: "1px solid " + c.red + "22", borderRadius: "2px", fontSize: "8px", color: c.dimmest }}>{b}</span>)}
+              {BRAND_BLOCKLIST_DEFAULT.length > 50 && <span style={{ fontSize: "8px", color: c.dimmest }}>...+{BRAND_BLOCKLIST_DEFAULT.length - 50} more</span>}
+            </div>
+          </div>}
+        </div>
+
+        {/* ── FILTER BAR ── */}
+        {bsAllProducts.length > 0 && <div style={{ display: "flex", gap: "6px", marginBottom: "12px", flexWrap: "wrap", alignItems: "center" }}>
+          <button onClick={() => setBsHideBranded(!bsHideBranded)} style={{ padding: "4px 10px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", background: bsHideBranded ? c.red : "transparent", color: bsHideBranded ? "#fff" : c.dim, border: "1px solid " + (bsHideBranded ? c.red : c.border2), borderRadius: "3px" }}>{"\ud83d\udeab"} {bsHideBranded ? "BRANDED HIDDEN" : "SHOW ALL"}</button>
+          <button onClick={() => setBsBoostIndo(!bsBoostIndo)} style={{ padding: "4px 10px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", background: bsBoostIndo ? c.green : "transparent", color: bsBoostIndo ? "#fff" : c.dim, border: "1px solid " + (bsBoostIndo ? c.green : c.border2), borderRadius: "3px" }}>{"\ud83c\uddee\ud83c\udde9"} BOOST {bsBoostIndo ? "ON" : "OFF"}</button>
+          <input value={bsFilter.search} onChange={e => setBsFilter({ ...bsFilter, search: e.target.value })} placeholder="Search..." style={{ ...inputStyle, width: "140px", padding: "4px 8px", fontSize: "10px" }} />
+          <input value={bsFilter.minPrice} onChange={e => setBsFilter({ ...bsFilter, minPrice: e.target.value })} placeholder="Min AED" style={{ ...inputStyle, width: "60px", padding: "4px 6px", fontSize: "10px", textAlign: "center" }} />
+          <input value={bsFilter.maxPrice} onChange={e => setBsFilter({ ...bsFilter, maxPrice: e.target.value })} placeholder="Max AED" style={{ ...inputStyle, width: "60px", padding: "4px 6px", fontSize: "10px", textAlign: "center" }} />
+          {[{ id: "signal", label: "\ud83c\uddee\ud83c\udde9 Signal" }, { id: "reviews", label: "Reviews" }, { id: "price_asc", label: "Price \u2191" }].map(s => (
+            <button key={s.id} onClick={() => setBsSort(s.id)} style={{ padding: "3px 8px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", background: bsSort === s.id ? c.gold : "transparent", color: bsSort === s.id ? c.btnText : c.dim, border: "1px solid " + (bsSort === s.id ? c.gold : c.border2), borderRadius: "3px" }}>{s.label}</button>
+          ))}
+          <span style={{ fontSize: "10px", color: c.green }}>{bsFiltered.length}/{bsAllProducts.length}</span>
         </div>}
 
-        {/* Filter warning — products exist but all hidden by filter */}
-        {(discProducts.length > 0 || noonResults.length > 0) && filteredDisc.length === 0 && !discScanning && <div style={{ textAlign: "center", padding: "30px 20px", background: dark ? "#2A2210" : "#FDF8ED", border: "1px solid " + c.darkGold + "44", borderRadius: "4px", margin: "8px 0" }}>
-          <div style={{ fontSize: "14px", color: c.darkGold, marginBottom: "6px" }}>{"\u26a0"} All {discProducts.length + noonResults.length} products hidden by filters</div>
-          <div style={{ fontSize: "11px", color: c.dim }}>
-            {discFilter.minReviews && <span>Min reviews: {discFilter.minReviews} {"\u00b7"} </span>}
-            {discFilter.minPrice && <span>Min price: AED {discFilter.minPrice} {"\u00b7"} </span>}
-            {discFilter.maxPrice && <span>Max price: AED {discFilter.maxPrice} {"\u00b7"} </span>}
-            {discFilter.dept !== "all" && <span>Dept: {discFilter.dept} {"\u00b7"} </span>}
-            {discFilter.search && <span>Search: "{discFilter.search}" {"\u00b7"} </span>}
+        {/* ── RESULTS TABLE ── */}
+        {bsFiltered.length > 0 && <ProductTable products={bsFiltered} validatingIdx={bsValidatingIdx} validationResults={bsValidationResults} onValidate={p => validateProduct(p, setBsValidatingIdx, setBsValidationResults)} showSubcat showSignal />}
+
+        {bsAllProducts.length === 0 && bsStep === 0 && !bsNoonScanning && <div style={{ textAlign: "center", padding: "40px 20px" }}>
+          <div style={{ fontSize: "36px", marginBottom: "10px", opacity: 0.15 }}>{"\ud83e\udde0"}</div>
+          <div style={{ fontSize: "12px", color: c.dim }}>Select a department and brainstorm to discover niche products</div>
+          <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "6px" }}>Sub-category drilling surfaces hidden gems that top-level scans miss</div>
+        </div>}
+      </div>}
+
+      {/* ══════════ DISCOVER TAB ══════════ */}
+      {mode === "discover" && <div style={secStyle}>
+
+        {/* ── KEYWORD BANK ── */}
+        <div style={{ marginBottom: "16px", padding: "12px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px" }}>
+          <div style={{ fontSize: "9px", color: c.gold, letterSpacing: "1px", fontWeight: 700, marginBottom: "8px" }}>{"\ud83c\udf1f"} KEYWORD BANK ({keywords.length})</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", marginBottom: "8px" }}>
+            {keywords.map((kw, i) => (
+              <button key={i} onClick={() => setDiscSearchInput(kw)} style={{ padding: "3px 8px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", background: dark ? "#0D2E1A" : "#E8F5EC", color: c.green, border: "1px solid " + c.green + "44", borderRadius: "3px", position: "relative" }}>
+                {kw}
+                <span onClick={e => { e.stopPropagation(); setKeywords(keywords.filter((_, idx) => idx !== i)); }} style={{ marginLeft: "4px", color: c.dimmest, fontSize: "8px" }}>{"\u2715"}</span>
+              </button>
+            ))}
           </div>
-          <button onClick={() => setDiscFilter({ dept: "all", minPrice: "", maxPrice: "", minReviews: "", search: "", source: "all" })} style={{ marginTop: "10px", padding: "6px 16px", fontSize: "10px", fontFamily: "monospace", cursor: "pointer", background: c.gold, color: c.btnText, border: "none", borderRadius: "3px", fontWeight: 700 }}>CLEAR ALL FILTERS</button>
-        </div>}
+          <div style={{ display: "flex", gap: "4px" }}>
+            <input value={newKeywordInput} onChange={e => setNewKeywordInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && newKeywordInput.trim() && !keywords.includes(newKeywordInput.trim())) { setKeywords([...keywords, newKeywordInput.trim()]); setNewKeywordInput(""); } }} placeholder="Add keyword..." style={{ ...inputStyle, flex: 1, padding: "5px 8px", fontSize: "10px" }} />
+            <button onClick={() => { if (newKeywordInput.trim() && !keywords.includes(newKeywordInput.trim())) { setKeywords([...keywords, newKeywordInput.trim()]); setNewKeywordInput(""); } }} style={{ ...btnSec, padding: "5px 12px", fontSize: "9px" }}>+ ADD</button>
+          </div>
+        </div>
 
-        {!discScanning && discProducts.length === 0 && noonResults.length === 0 && <div style={{ textAlign: "center", padding: "50px 20px" }}>
+        {/* ── SEARCH ── */}
+        <div style={{ marginBottom: "16px", padding: "12px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px" }}>
+          <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "10px" }}>
+            <input value={discSearchInput} onChange={e => setDiscSearchInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && discSearchInput.trim()) { searchAmazonSD(discSearchInput); searchNoonApify(discSearchInput); } }} placeholder="Search keyword (e.g. coconut bowl, rattan basket)..." style={{ ...inputStyle, flex: 1, padding: "10px 12px" }} />
+          </div>
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+            <button onClick={() => searchAmazonSD(discSearchInput)} disabled={discSearchingAmazon || !discSearchInput.trim() || !scrapingDogKey} style={{ ...btnGreen, padding: "8px 16px", fontSize: "10px", opacity: (discSearchingAmazon || !discSearchInput.trim() || !scrapingDogKey) ? 0.4 : 1 }}>
+              {discSearchingAmazon ? <><Spinner />{" Searching..."}</> : "SEARCH AMAZON (~$0.06)"}
+            </button>
+            <button onClick={() => searchNoonApify(discSearchInput)} disabled={discSearchingNoon || !discSearchInput.trim() || !apifyKey} style={{ ...btnStyle, background: c.darkGold, padding: "8px 16px", fontSize: "10px", opacity: (discSearchingNoon || !discSearchInput.trim() || !apifyKey) ? 0.4 : 1 }}>
+              {discSearchingNoon ? <><Spinner />{" Searching..."}</> : "SEARCH NOON (~$0.05)"}
+            </button>
+            {discAllProducts.length > 0 && <span style={{ fontSize: "10px", color: c.green, display: "flex", alignItems: "center" }}>{discAmazonResults.length} Amazon + {discNoonResults.length} Noon</span>}
+          </div>
+          {!scrapingDogKey && <div style={{ fontSize: "9px", color: c.red, marginTop: "6px" }}>Add ScrapingDog key for Amazon search</div>}
+          {!apifyKey && <div style={{ fontSize: "9px", color: c.red, marginTop: "4px" }}>Add Apify key for Noon search</div>}
+        </div>
+
+        {discError && <div style={{ padding: "10px", background: dark ? "#3a1a1a" : "#FEF2F2", border: "1px solid " + c.red + "44", borderRadius: "4px", marginBottom: "12px", fontSize: "11px", color: c.red }}>{discError}</div>}
+        {(discSearchingAmazon || discSearchingNoon) && stage && <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" }}><Spinner /><span style={{ fontSize: "12px", color: c.gold }}>{stage}</span></div>}
+
+        {/* Results */}
+        {discAllProducts.length > 0 && <ProductTable products={discAllProducts} validatingIdx={discValidatingIdx} validationResults={discValidationResults} onValidate={p => validateProduct(p, setDiscValidatingIdx, setDiscValidationResults)} showSubcat={false} showSignal={false} />}
+
+        {discAllProducts.length === 0 && !discSearchingAmazon && !discSearchingNoon && <div style={{ textAlign: "center", padding: "40px 20px" }}>
           <div style={{ fontSize: "36px", marginBottom: "10px", opacity: 0.15 }}>{"\ud83d\udd0d"}</div>
-          <div style={{ fontSize: "12px", color: c.dim }}>Scan Amazon.ae bestsellers above, or search Noon.ae to discover products</div>
-          <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "6px" }}>Amazon uses premium proxies (~$1.50 all depts) {"\u00b7"} Noon uses Apify</div>
+          <div style={{ fontSize: "12px", color: c.dim }}>Click a keyword above or type your own to search Amazon.ae and Noon</div>
+          <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "6px" }}>Amazon: ~$0.06/search via ScrapingDog {"\u00b7"} Noon: ~$0.05/search via Apify</div>
         </div>}
       </div>}
 
@@ -1238,24 +1086,15 @@ export default function App() {
           <input type="text" value={url} onChange={e => setUrl(e.target.value)} onKeyDown={e => e.key === "Enter" && !loading && runDryRun()} placeholder="Paste Amazon.ae or Noon URL..." style={{ ...inputStyle, flex: 1, padding: "12px 14px" }} />
           <button onClick={runDryRun} disabled={loading || !url.trim() || cooldown > 0} style={{ ...btnStyle, padding: "12px 20px", fontSize: "11px", opacity: loading || !url.trim() ? 0.4 : 1, whiteSpace: "nowrap" }}>{cooldown > 0 ? "WAIT " + cooldown + "s" : loading && !dryRunData ? "READING..." : "QUICK CHECK ~$0.02"}</button>
         </div>
-        {loading && stage && <div style={{ marginBottom: "12px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}><Spinner /><span style={{ fontSize: "12px", color: c.gold }}>{stage}</span></div>
-          {progress > 0 && <div style={{ width: "100%", height: "3px", background: c.border, borderRadius: "2px" }}><div style={{ width: progress + "%", height: "100%", background: c.gold, borderRadius: "2px", transition: "width 0.3s" }} /></div>}
-          {waveStatus.length > 0 && <WaveStatusBar waves={waveStatus} c={c} />}
-        </div>}
-        {autoError && <div style={{ padding: "12px", background: dark ? "#3a1a1a" : "#FEF2F2", border: "1px solid " + c.red + "44", borderRadius: "4px", marginBottom: "12px", fontSize: "12px", color: c.red }}>{"\u26a0 "}{autoError}</div>}
+        {loading && stage && <div style={{ marginBottom: "12px" }}><div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}><Spinner /><span style={{ fontSize: "12px", color: c.gold }}>{stage}</span></div>{progress > 0 && <div style={{ width: "100%", height: "3px", background: c.border, borderRadius: "2px" }}><div style={{ width: progress + "%", height: "100%", background: c.gold, borderRadius: "2px", transition: "width 0.3s" }} /></div>}</div>}
+        {autoError && <div style={{ padding: "12px", background: dark ? "#3a1a1a" : "#FEF2F2", border: "1px solid " + c.red + "44", borderRadius: "4px", marginBottom: "12px", fontSize: "12px", color: c.red }}>{autoError}</div>}
 
         {!loading && !dryRunData && !autoError && <div style={{ textAlign: "center", padding: "40px 20px" }}>
           <div style={{ fontSize: "36px", marginBottom: "10px", opacity: 0.15 }}>{"\u26a1"}</div>
           <div style={{ fontSize: "12px", color: c.dim }}>Paste a product URL and click Quick Check</div>
-          <div style={{ marginTop: "16px", display: "inline-block", padding: "14px 20px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "6px", textAlign: "left", fontSize: "11px", lineHeight: 2 }}>
-            <span style={{ color: c.green }}>{"\u2460 Quick Check"}</span> <span style={{ color: c.dimmer }}>{"\u2014 read + translate"}</span> <span style={{ color: c.dim }}>~$0.02</span><br />
-            <span style={{ color: c.gold }}>{"\u2461 Indo Search"}</span> <span style={{ color: c.dimmer }}>{"\u2014 Toko + Shopee + margins"}</span> <span style={{ color: c.dim }}>~$0.02-0.15</span>
-          </div>
         </div>}
 
         {dryRunData && <div>
-          {/* Product card — v1 FEATURE: pack quantity UI */}
           <div style={{ padding: "14px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px", marginBottom: "10px" }}>
             <div style={{ fontSize: "9px", color: c.dimmer, letterSpacing: "1.5px", textTransform: "uppercase", marginBottom: "6px" }}>UAE PRODUCT {dryRunData.url && <a href={dryRunData.url} target="_blank" rel="noopener" style={{ color: c.dim, fontSize: "9px", marginLeft: "8px" }}>open {"\u2197"}</a>}</div>
             <div style={{ fontSize: "13px", fontWeight: 500, marginBottom: "6px" }}>{dryRunData.product_name}</div>
@@ -1264,66 +1103,40 @@ export default function App() {
                 <span style={{ color: c.dim, fontSize: "10px" }}>AED</span>
                 <input type="number" value={dryRunData.price_aed || ""} onChange={e => setDryRunData({ ...dryRunData, price_aed: parseFloat(e.target.value) || 0 })} style={{ width: "80px", padding: "3px 6px", background: c.input, border: "1px solid " + (!dryRunData.price_aed ? c.red : c.border2), color: c.gold, fontFamily: "monospace", fontSize: "14px", fontWeight: 700, borderRadius: "3px", outline: "none", textAlign: "right" }} />
               </div>
-              {/* v1 FEATURE: Pack quantity input */}
               <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
                 <span style={{ color: c.dim, fontSize: "10px" }}>PACK:</span>
                 <input type="number" min="1" value={dryRunData.pack_quantity || 1} onChange={e => setDryRunData({ ...dryRunData, pack_quantity: parseInt(e.target.value) || 1 })} style={{ width: "50px", padding: "3px 6px", background: c.input, border: "1px solid " + c.border2, color: c.text, fontFamily: "monospace", fontSize: "12px", borderRadius: "3px", outline: "none", textAlign: "center" }} />
               </div>
-              {dryRunData.price_aed > 0 && <span style={{ color: c.dim, fontSize: "11px" }}>{"\u2248 "}{fmtIDR((dryRunData.price_aed / (dryRunData.pack_quantity || 1)) * fx.AED_TO_IDR)}{" /unit"}</span>}
-              {dryRunData.price_aed > 0 && <span style={{ color: c.dimmer, fontSize: "10px" }}>{"\u2248 "}{fmtUSD((dryRunData.price_aed / (dryRunData.pack_quantity || 1)) * fx.AEDUSD)}{" /unit"}</span>}
               <Badge text={dryRunData.source || "Amazon.ae"} /> <Badge text={dryRunData.category} color={c.green} bg={c.sectionBg} />
-              {dryRunData.rating > 0 && <span style={{ color: c.darkGold, fontSize: "11px" }}>{"\u2605 "}{dryRunData.rating}</span>}
             </div>
-            {(!dryRunData.price_aed || dryRunData.price_aed === 0) && <div style={{ fontSize: "11px", color: c.darkGold, marginTop: "6px" }}>{"\u26a0 Price not detected \u2014 type the AED price above"}</div>}
           </div>
-          {/* Translation + queries */}
           <div style={{ padding: "14px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px", marginBottom: "10px" }}>
             <div style={{ fontSize: "9px", color: c.dimmer, letterSpacing: "1.5px", textTransform: "uppercase", marginBottom: "6px" }}>TRANSLATION</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px", fontSize: "12px", marginBottom: "10px" }}>
-              <div><span style={{ color: c.dim }}>EN:</span> {dryRunData.clean_name_en}</div>
-              <div><span style={{ color: c.dim }}>ID:</span> <span style={{ color: c.gold, fontWeight: 600 }}>{dryRunData.clean_name_id}</span></div>
-            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px", fontSize: "12px", marginBottom: "10px" }}><div><span style={{ color: c.dim }}>EN:</span> {dryRunData.clean_name_en}</div><div><span style={{ color: c.dim }}>ID:</span> <span style={{ color: c.gold, fontWeight: 600 }}>{dryRunData.clean_name_id}</span></div></div>
             {!indoResults && <div>
-              <div style={{ fontSize: "9px", color: c.dimmer, letterSpacing: "1px", marginBottom: "6px" }}>SEARCH QUERIES {"\u2014"} edit or add before searching</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: "4px", marginBottom: "8px" }}>
-                {editableQueries.map((q, i) => <div key={i} style={{ display: "flex", gap: "4px" }}><input value={q} onChange={e => { const u = [...editableQueries]; u[i] = e.target.value; setEditableQueries(u); }} style={{ ...inputStyle, padding: "5px 8px", fontSize: "11px", flex: 1 }} /><button onClick={() => setEditableQueries(editableQueries.filter((_, idx) => idx !== i))} style={{ background: "transparent", border: "1px solid " + c.red + "44", color: c.red, fontSize: "10px", padding: "4px 8px", borderRadius: "3px", cursor: "pointer" }}>{"\u2715"}</button></div>)}
-              </div>
-              <div style={{ display: "flex", gap: "4px" }}>
-                <input value={newQueryInput} onChange={e => setNewQueryInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && newQueryInput.trim()) { setEditableQueries([...editableQueries, newQueryInput.trim()]); setNewQueryInput(""); } }} placeholder="Add keyword..." style={{ ...inputStyle, padding: "5px 8px", fontSize: "11px", flex: 1 }} />
-                <button onClick={() => { if (newQueryInput.trim()) { setEditableQueries([...editableQueries, newQueryInput.trim()]); setNewQueryInput(""); } }} style={{ ...btnSec, padding: "5px 12px", fontSize: "9px" }}>+ ADD</button>
-              </div>
+              <div style={{ fontSize: "9px", color: c.dimmer, letterSpacing: "1px", marginBottom: "6px" }}>SEARCH QUERIES</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "4px", marginBottom: "8px" }}>{editableQueries.map((q, i) => <div key={i} style={{ display: "flex", gap: "4px" }}><input value={q} onChange={e => { const u = [...editableQueries]; u[i] = e.target.value; setEditableQueries(u); }} style={{ ...inputStyle, padding: "5px 8px", fontSize: "11px", flex: 1 }} /><button onClick={() => setEditableQueries(editableQueries.filter((_, idx) => idx !== i))} style={{ background: "transparent", border: "1px solid " + c.red + "44", color: c.red, fontSize: "10px", padding: "4px 8px", borderRadius: "3px", cursor: "pointer" }}>{"\u2715"}</button></div>)}</div>
+              <div style={{ display: "flex", gap: "4px" }}><input value={newQueryInput} onChange={e => setNewQueryInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && newQueryInput.trim()) { setEditableQueries([...editableQueries, newQueryInput.trim()]); setNewQueryInput(""); } }} placeholder="Add keyword..." style={{ ...inputStyle, padding: "5px 8px", fontSize: "11px", flex: 1 }} /><button onClick={() => { if (newQueryInput.trim()) { setEditableQueries([...editableQueries, newQueryInput.trim()]); setNewQueryInput(""); } }} style={{ ...btnSec, padding: "5px 12px", fontSize: "9px" }}>+ ADD</button></div>
             </div>}
           </div>
-          {/* Indo search button */}
           {!indoResults && !loading && <div style={{ padding: "14px", background: c.surface2, border: "1px solid " + c.green + "44", borderRadius: "4px", marginBottom: "10px", textAlign: "center" }}>
-            <button onClick={runLookupIndoSearch} disabled={editableQueries.filter(q => q.trim()).length === 0 || (indoMode === "apify" && !apifyKey)} style={{ ...btnGreen, padding: "12px 36px", fontSize: "12px", opacity: (editableQueries.filter(q => q.trim()).length === 0 || (indoMode === "apify" && !apifyKey)) ? 0.4 : 1 }}>
-              {"\ud83d\udd0d"} {indoMode === "apify" ? "SCRAPE TOKO + SHOPEE via Apify (~$0.02)" : "CLAUDE SEARCH (~$0.15)"}
-            </button>
-            {indoMode === "apify" && !apifyKey && <div style={{ fontSize: "10px", color: c.red, marginTop: "8px" }}>{"\u26a0"} Add your Apify API key above to enable Tokopedia + Shopee scraping</div>}
-            {indoMode === "apify" && apifyKey && <div style={{ fontSize: "9px", color: c.dimmer, marginTop: "6px" }}>Toko: {tokoActorId} {"\u00b7"} Shopee: {shopeeActorId}</div>}
+            <button onClick={runLookupIndoSearch} disabled={editableQueries.filter(q => q.trim()).length === 0 || (indoMode === "apify" && !apifyKey)} style={{ ...btnGreen, padding: "12px 36px", fontSize: "12px", opacity: (editableQueries.filter(q => q.trim()).length === 0 || (indoMode === "apify" && !apifyKey)) ? 0.4 : 1 }}>{"\ud83d\udd0d"} {indoMode === "apify" ? "SCRAPE TOKO + SHOPEE (~$0.02)" : "CLAUDE SEARCH (~$0.15)"}</button>
           </div>}
 
-          {/* Indo Results section */}
           {indoResults && <SectionToggle index={1} title={"Indonesia Market \u2014 " + (indoResults.source === "apify" ? "Apify" : "Claude Search")} icon={"\ud83c\uddee\ud83c\udde9"} count={indoResults.results?.length}>
             {indoResults.wave_status && <WaveStatusBar waves={indoResults.wave_status} c={c} />}
             {indoResults.confidence && (
               <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 12px", marginBottom: "12px", background: indoResults.confidence.level === "high" ? (dark ? "#0D2E1A" : "#E8F5EC") : indoResults.confidence.level === "medium" ? (dark ? "#2A2210" : "#FDF8ED") : (dark ? "#3a1a1a" : "#FEF2F2"), border: "1px solid " + (indoResults.confidence.level === "high" ? c.green : indoResults.confidence.level === "medium" ? c.gold : c.red) + "44", borderRadius: "4px" }}>
                 <div style={{ fontSize: "10px", fontWeight: 700, textTransform: "uppercase", color: indoResults.confidence.level === "high" ? c.green : indoResults.confidence.level === "medium" ? c.gold : c.red }}>{"\u25cf "}{indoResults.confidence.level} CONFIDENCE</div>
-                <div style={{ fontSize: "10px", color: c.dim, flex: 1 }}>{indoResults.confidence.validCount} valid{indoResults.confidence.withSold > 0 && " \u00b7 " + indoResults.confidence.withSold + " sold data"}</div>
+                <div style={{ fontSize: "10px", color: c.dim, flex: 1 }}>{indoResults.confidence.validCount} valid{indoResults.confidence.withSold > 0 && " \u00b7 " + indoResults.confidence.withSold + " sold data"}{indoResults.confidence.flags?.length > 0 && " \u00b7 " + indoResults.confidence.flags.join(", ")}</div>
                 <div style={{ fontSize: "11px", fontWeight: 700, color: c.dim }}>{indoResults.confidence.score}/100</div>
               </div>
             )}
-            {indoResults.price_stats && (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: "8px", marginBottom: "12px" }}>
-                {[{ l: "LOWEST", v: indoResults.price_stats.lowest_idr, cl: c.green },{ l: "MEDIAN", v: indoResults.price_stats.median_idr, cl: c.gold },{ l: "AVERAGE", v: indoResults.price_stats.average_idr, cl: c.dim },{ l: "HIGHEST", v: indoResults.price_stats.highest_idr, cl: c.red }].map(s => (
-                  <div key={s.l} style={{ padding: "8px", background: c.cardBg, border: "1px solid " + c.border, borderRadius: "4px", textAlign: "center" }}>
-                    <div style={{ fontSize: "8px", color: c.dimmer, letterSpacing: "1px", marginBottom: "3px" }}>{s.l}</div>
-                    <div style={{ fontSize: "13px", fontWeight: 700, color: s.cl }}>{fmtIDR(s.v)}</div>
-                    <div style={{ fontSize: "9px", color: c.dimmest }}>{fmtAED(s.v * fx.IDR_TO_AED)}</div>
-                  </div>
-                ))}
-              </div>
-            )}
+            {indoResults.price_stats && <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: "8px", marginBottom: "12px" }}>
+              {[{ l: "LOWEST", v: indoResults.price_stats.lowest_idr, cl: c.green },{ l: "MEDIAN", v: indoResults.price_stats.median_idr, cl: c.gold },{ l: "AVERAGE", v: indoResults.price_stats.average_idr, cl: c.dim },{ l: "HIGHEST", v: indoResults.price_stats.highest_idr, cl: c.red }].map(s => (
+                <div key={s.l} style={{ padding: "8px", background: c.cardBg, border: "1px solid " + c.border, borderRadius: "4px", textAlign: "center" }}><div style={{ fontSize: "8px", color: c.dimmer, letterSpacing: "1px", marginBottom: "3px" }}>{s.l}</div><div style={{ fontSize: "13px", fontWeight: 700, color: s.cl }}>{fmtIDR(s.v)}</div><div style={{ fontSize: "9px", color: c.dimmest }}>{fmtAED(s.v * fx.IDR_TO_AED)}</div></div>
+              ))}
+            </div>}
             <div style={{ maxHeight: "400px", overflowY: "auto" }}>
               <div style={{ display: "grid", gridTemplateColumns: "2.5fr 0.6fr 0.7fr 0.5fr", gap: "4px", padding: "5px 0", borderBottom: "1px solid " + c.border2, fontSize: "9px", color: c.dimmer, textTransform: "uppercase", position: "sticky", top: 0, background: c.surface, zIndex: 1 }}>
                 <div>{"Product \u00b7 Seller"}</div><div>Source</div><div style={{ textAlign: "right" }}>Price</div><div style={{ textAlign: "right" }}>Sold</div>
@@ -1342,9 +1155,7 @@ export default function App() {
             </div>
           </SectionToggle>}
 
-          {/* Margin results */}
           {marginData && <SectionToggle index={2} title="Margin Analysis" icon={"\ud83d\udcca"}>
-            {/* v1 FEATURE: Qty mode selector */}
             <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "14px", flexWrap: "wrap" }}>
               <span style={{ fontSize: "10px", color: c.dim }}>FOR:</span>
               {[{ id: "unit", label: "Per Unit" }, { id: "custom", label: "Custom Qty" }, { id: "container", label: "Container (20ft)" }].map(m => (
@@ -1355,20 +1166,17 @@ export default function App() {
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px", marginBottom: "14px" }}>
               {[{ l: "BEST", m: marginData.margins.best }, { l: "MEDIAN", m: marginData.margins.median }, { l: "WORST", m: marginData.margins.worst }].map(x => (
-                <div key={x.l} style={{ padding: "12px", background: c.cardBg, border: "1px solid " + c.border, borderRadius: "4px", textAlign: "center" }}>
-                  <div style={{ fontSize: "8px", color: c.dimmer, letterSpacing: "1px", marginBottom: "4px" }}>{x.l}</div>
-                  <div style={{ fontSize: "24px", fontWeight: 700, color: marginColor(x.m.margin) }}>{x.m.margin.toFixed(1)}%</div>
-                </div>
+                <div key={x.l} style={{ padding: "12px", background: c.cardBg, border: "1px solid " + c.border, borderRadius: "4px", textAlign: "center" }}><div style={{ fontSize: "8px", color: c.dimmer }}>{x.l}</div><div style={{ fontSize: "24px", fontWeight: 700, color: marginColor(x.m.margin) }}>{x.m.margin.toFixed(1)}%</div></div>
               ))}
             </div>
             <div style={{ background: c.cardBg, border: "1px solid " + c.border, borderRadius: "4px", padding: "12px" }}>
               <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr", gap: "6px", fontSize: "10px", padding: "4px 0", borderBottom: "1px solid " + c.border2, color: c.dimmer, fontWeight: 700 }}><div>COST</div><div>USD</div><div>AED</div><div>IDR</div></div>
               {(() => { const m = marginData.margins.median, q = getQty(); return <>
-                <PriceRow label={"UAE Sell \u00d7" + q} usd={m.uaeUSD*q} aed={m.uaeAED*q} idr={m.uaeIDR*q} />
-                <PriceRow label={"Indo \u00d7" + q} usd={m.indoUSD*q} aed={m.indoAED*q} idr={m.indoIDR*q} />
-                <PriceRow label={"Freight \u00d7" + q} usd={m.freightUSD*q} aed={m.freightAED*q} idr={m.freightIDR*q} />
-                <PriceRow label={"Customs \u00d7" + q} usd={m.dutyUSD*q} aed={m.dutyAED*q} idr={m.dutyIDR*q} />
-                <PriceRow label={"Last Mile \u00d7" + q} usd={m.lastMileUSD*q} aed={m.lastMileAED*q} idr={m.lastMileIDR*q} />
+                <PriceRow label={"UAE Sell"} usd={m.uaeUSD*q} aed={m.uaeAED*q} idr={m.uaeIDR*q} />
+                <PriceRow label={"Indo"} usd={m.indoUSD*q} aed={m.indoAED*q} idr={m.indoIDR*q} />
+                <PriceRow label={"Freight"} usd={m.freightUSD*q} aed={m.freightAED*q} idr={m.freightIDR*q} />
+                <PriceRow label={"Customs"} usd={m.dutyUSD*q} aed={m.dutyAED*q} idr={m.dutyIDR*q} />
+                <PriceRow label={"Last Mile"} usd={m.lastMileUSD*q} aed={m.lastMileAED*q} idr={m.lastMileIDR*q} />
                 <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr", gap: "6px", fontSize: "11px", padding: "6px 0", fontWeight: 700 }}><div style={{ color: c.red }}>TOTAL</div><div style={{ color: c.red }}>{fmtUSD(m.totalUSD*q)}</div><div style={{ color: c.red }}>{fmtAED(m.totalAED*q)}</div><div style={{ color: c.red }}>{fmtIDR(m.totalIDR*q)}</div></div>
                 <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr", gap: "6px", fontSize: "11px", padding: "6px 0", fontWeight: 700 }}><div style={{ color: c.green }}>PROFIT</div><div style={{ color: c.green }}>{fmtUSD((m.uaeUSD-m.totalUSD)*q)}</div><div style={{ color: c.green }}>{fmtAED((m.uaeAED-m.totalAED)*q)}</div><div style={{ color: c.green }}>{fmtIDR((m.uaeIDR-m.totalIDR)*q)}</div></div>
               </>; })()}
@@ -1378,8 +1186,7 @@ export default function App() {
             </div>
           </SectionToggle>}
 
-          {/* Action buttons — v1 FEATURE: PDF + CSV export */}
-          {(indoResults || autoError) && !loading && <div style={{ display: "flex", justifyContent: "center", gap: "8px", marginTop: "12px", flexWrap: "wrap" }}>
+          {(indoResults || autoError) && !loading && <div style={{ display: "flex", justifyContent: "center", gap: "8px", marginTop: "12px" }}>
             <button onClick={resetLookup} style={{ ...btnSec, padding: "8px 20px", fontSize: "10px" }}>{"\u2190 NEW LOOKUP"}</button>
             {marginData && <button onClick={exportPDF} style={{ ...btnSec, padding: "8px 16px", fontSize: "10px" }}>{"\ud83d\udcc4 PDF"}</button>}
           </div>}
@@ -1405,7 +1212,6 @@ export default function App() {
               const m = h.margins?.median?.margin || 0;
               const sc = (dark ? STATUS_COLORS : STATUS_COLORS_LIGHT)[h.status] || (dark ? STATUS_COLORS : STATUS_COLORS_LIGHT).Candidate;
               const isExp = expandedHistoryIdx === i;
-              const indoList = h.indoResults?.results || [];
               return (
                 <div key={i} style={{ background: c.surface2, border: "1px solid " + sc.border, borderRadius: "4px", borderLeft: "3px solid " + sc.text }}>
                   <div style={{ padding: "10px 12px", cursor: "pointer" }} onClick={() => setExpandedHistoryIdx(isExp ? -1 : i)}>
@@ -1428,15 +1234,14 @@ export default function App() {
                       </div>
                     </div>
                   </div>
-                  {isExp && indoList.length > 0 && <div style={{ padding: "0 12px 12px", borderTop: "1px solid " + c.border }}>
-                    <div style={{ fontSize: "9px", color: c.dimmer, letterSpacing: "1px", padding: "8px 0 4px", textTransform: "uppercase" }}>INDO LISTINGS ({indoList.length})</div>
-                    <div style={{ maxHeight: "250px", overflowY: "auto" }}>
-                      {indoList.map((r, j) => <div key={j} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", borderBottom: "1px solid " + c.border, fontSize: "10px" }}>
-                        <div style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name} {r.seller && <span style={{ color: c.dimmest }}>{"\u00b7 "}{r.seller}</span>}</div>
-                        <div style={{ display: "flex", gap: "8px", marginLeft: "8px", whiteSpace: "nowrap" }}>
+                  {isExp && (h.indoResults?.results || []).length > 0 && <div style={{ padding: "0 12px 12px", borderTop: "1px solid " + c.border }}>
+                    <div style={{ fontSize: "9px", color: c.dimmer, padding: "8px 0 4px", textTransform: "uppercase" }}>INDO LISTINGS ({(h.indoResults?.results || []).length})</div>
+                    <div style={{ maxHeight: "200px", overflowY: "auto" }}>
+                      {(h.indoResults?.results || []).map((r, j) => <div key={j} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", borderBottom: "1px solid " + c.border, fontSize: "10px" }}>
+                        <div style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
+                        <div style={{ display: "flex", gap: "8px", marginLeft: "8px" }}>
                           <span style={{ color: r.source === "Shopee" ? "#EE4D2D" : c.green, fontSize: "9px" }}>{r.source === "Shopee" ? "S" : "T"}</span>
                           <span style={{ color: c.gold, fontWeight: 700 }}>{fmtIDR(r.price_idr)}</span>
-                          {r.sold && <span style={{ color: c.darkGold }}>{r.sold}</span>}
                         </div>
                       </div>)}
                     </div>
@@ -1449,39 +1254,23 @@ export default function App() {
       </div>}
 
       {/* ══════════ DIAGNOSTIC PANEL ══════════ */}
-      {showDiag && <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, maxHeight: "45vh", background: dark ? "#0a0a0a" : "#1a1a1a", borderTop: "2px solid " + c.gold, zIndex: 9998, display: "flex", flexDirection: "column", fontFamily: "'JetBrains Mono',monospace" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 14px", borderBottom: "1px solid #333", flexShrink: 0 }}>
+      {showDiag && <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, maxHeight: "40vh", background: dark ? "#0a0a0a" : "#1a1a1a", borderTop: "2px solid " + c.gold, zIndex: 9998, display: "flex", flexDirection: "column", fontFamily: "'JetBrains Mono',monospace" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 14px", borderBottom: "1px solid #333", flexShrink: 0 }}>
           <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-            <span style={{ fontSize: "11px", color: c.gold, fontWeight: 700, letterSpacing: "1px" }}>DIAGNOSTICS</span>
-            <span style={{ fontSize: "10px", color: "#888" }}>{diagLogs.length} entries</span>
-            <span style={{ fontSize: "10px", padding: "1px 6px", borderRadius: "3px", background: diagLogs.filter(l => l.level === "error").length > 0 ? "#3a1a1a" : "#0D2E1A", color: diagLogs.filter(l => l.level === "error").length > 0 ? "#f87171" : "#2EAA5A" }}>
-              {diagLogs.filter(l => l.level === "error").length} errors
-            </span>
+            <span style={{ fontSize: "11px", color: c.gold, fontWeight: 700 }}>DIAG</span>
+            <span style={{ fontSize: "10px", color: "#888" }}>{diagLogs.length}</span>
           </div>
-          <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
-            {["all", "error", "warn", "ok", "info"].map(f => (
-              <button key={f} onClick={() => setDiagFilter(f)} style={{ padding: "2px 8px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", background: diagFilter === f ? c.gold : "transparent", color: diagFilter === f ? "#0a0a0a" : "#888", border: "1px solid " + (diagFilter === f ? c.gold : "#333"), borderRadius: "3px", textTransform: "uppercase" }}>{f}</button>
-            ))}
-            <button onClick={clearDiag} style={{ padding: "2px 8px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", background: "transparent", color: "#f87171", border: "1px solid #5a2d2d", borderRadius: "3px" }}>CLEAR</button>
-            <button onClick={() => { const blob = new Blob([diagLogs.map(l => `${l.ts} [${l.level}] ${l.label}: ${l.message}${l.data ? "\n  DATA: " + l.data : ""}`).join("\n")], { type: "text/plain" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "gt-diag-" + new Date().toISOString().slice(0, 19) + ".txt"; a.click(); }} style={{ padding: "2px 8px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", background: "transparent", color: "#888", border: "1px solid #333", borderRadius: "3px" }}>EXPORT</button>
-            <button onClick={() => setShowDiag(false)} style={{ padding: "2px 8px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", background: "transparent", color: "#888", border: "1px solid #333", borderRadius: "3px" }}>{"\u2715"}</button>
+          <div style={{ display: "flex", gap: "4px" }}>
+            {["all", "error", "warn", "ok"].map(f => <button key={f} onClick={() => setDiagFilter(f)} style={{ padding: "2px 6px", fontSize: "8px", fontFamily: "monospace", cursor: "pointer", background: diagFilter === f ? c.gold : "transparent", color: diagFilter === f ? "#0a0a0a" : "#888", border: "1px solid " + (diagFilter === f ? c.gold : "#333"), borderRadius: "3px", textTransform: "uppercase" }}>{f}</button>)}
+            <button onClick={clearDiag} style={{ padding: "2px 6px", fontSize: "8px", fontFamily: "monospace", cursor: "pointer", background: "transparent", color: "#f87171", border: "1px solid #5a2d2d", borderRadius: "3px" }}>CLR</button>
+            <button onClick={() => setShowDiag(false)} style={{ padding: "2px 6px", fontSize: "8px", fontFamily: "monospace", cursor: "pointer", background: "transparent", color: "#888", border: "1px solid #333", borderRadius: "3px" }}>{"\u2715"}</button>
           </div>
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: "4px 0" }}>
           {diagLogs.filter(l => diagFilter === "all" || l.level === diagFilter).map((l, i) => {
-            const levelColor = l.level === "error" ? "#f87171" : l.level === "warn" ? "#D4A843" : l.level === "ok" ? "#2EAA5A" : "#666";
-            const levelBg = l.level === "error" ? "#3a1a1a" : l.level === "warn" ? "#2A2210" : l.level === "ok" ? "#0D2E1A" : "transparent";
-            return (
-              <div key={i} style={{ padding: "3px 14px", borderBottom: "1px solid #1a1a1a", background: levelBg, fontSize: "10px", lineHeight: 1.5 }}>
-                <span style={{ color: "#555", marginRight: "8px" }}>{l.ts}</span>
-                <span style={{ color: levelColor, fontWeight: 700, marginRight: "6px", textTransform: "uppercase", display: "inline-block", width: "36px" }}>{l.level}</span>
-                <span style={{ color: c.gold, marginRight: "8px" }}>{l.label}</span>
-                <span style={{ color: "#ccc" }}>{l.message}</span>
-                {l.data && <div style={{ color: "#777", marginLeft: "90px", marginTop: "2px", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: "80px", overflowY: "auto", fontSize: "9px", background: "#111", padding: "4px 8px", borderRadius: "3px", border: "1px solid #222" }}>{l.data}</div>}
-              </div>
-            );
+            const lc = l.level === "error" ? "#f87171" : l.level === "warn" ? "#D4A843" : l.level === "ok" ? "#2EAA5A" : "#666";
+            return (<div key={i} style={{ padding: "2px 14px", borderBottom: "1px solid #1a1a1a", fontSize: "10px", lineHeight: 1.4 }}><span style={{ color: "#555", marginRight: "6px" }}>{l.ts}</span><span style={{ color: lc, fontWeight: 700, marginRight: "4px" }}>{l.level}</span><span style={{ color: c.gold, marginRight: "6px" }}>{l.label}</span><span style={{ color: "#ccc" }}>{l.message}</span>{l.data && <div style={{ color: "#777", marginLeft: "60px", fontSize: "9px", maxHeight: "60px", overflowY: "auto", background: "#111", padding: "2px 6px", borderRadius: "2px" }}>{l.data}</div>}</div>);
           })}
-          {diagLogs.length === 0 && <div style={{ padding: "30px", textAlign: "center", color: "#555", fontSize: "11px" }}>No logs yet. Run a scan or lookup to see diagnostics here.</div>}
         </div>
       </div>}
 
