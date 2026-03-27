@@ -207,7 +207,6 @@ export default function App() {
   // Discover history: array of { keyword, timestamp, results: [...], totalRaw: N }
   const [discHistory, setDiscHistory] = useState([]);
   const [discSelectedIdx, setDiscSelectedIdx] = useState(-1);
-  const [discShowHistory, setDiscShowHistory] = useState(false);
   const [discSort, setDiscSort] = useState("reviews");
 
   // Brainstorm state
@@ -1038,34 +1037,24 @@ export default function App() {
             <button onClick={() => searchAmazonSD(discSearchInput)} disabled={discSearchingAmazon || !discSearchInput.trim() || !scrapingDogKey} style={{ ...btnGreen, padding: "8px 16px", fontSize: "10px", opacity: (discSearchingAmazon || !discSearchInput.trim() || !scrapingDogKey) ? 0.4 : 1 }}>
               {discSearchingAmazon ? <><Spinner />{" Searching..."}</> : "SEARCH AMAZON (~$0.18)"}
             </button>
-            {discAllProducts.length > 0 && <span style={{ fontSize: "10px", color: c.green, display: "flex", alignItems: "center" }}>{discAmazonResults.length} products</span>}
             {discAllProducts.length > 0 && <button onClick={() => exportDiscoverCSV(discAllProducts, discHistory[discSelectedIdx]?.keyword || discSearchInput)} style={{ ...btnSec, padding: "6px 12px", fontSize: "9px" }}>{"\ud83d\udcca"} CSV</button>}
-            {discHistory.length > 0 && <button onClick={() => setDiscShowHistory(!discShowHistory)} style={{ ...btnSec, padding: "6px 12px", fontSize: "9px", background: discShowHistory ? c.gold + "22" : "transparent" }}>{"\ud83d\udcdd"} HISTORY ({discHistory.length})</button>}
           </div>
           {!scrapingDogKey && <div style={{ fontSize: "9px", color: c.red, marginTop: "6px" }}>Add ScrapingDog key for Amazon search</div>}
           <div style={{ fontSize: "8px", color: c.dimmest, marginTop: "4px" }}>Fetches 3 pages · Filters zero-review products · Sorted by popularity</div>
         </div>
 
-        {/* ── DISCOVER HISTORY ── */}
-        {discShowHistory && discHistory.length > 0 && <div style={{ marginBottom: "16px", padding: "12px", background: c.surface2, border: "1px solid " + c.gold + "44", borderRadius: "4px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
-            <div style={{ fontSize: "9px", color: c.gold, letterSpacing: "1px", fontWeight: 700 }}>{"\ud83d\udcdd"} SEARCH HISTORY ({discHistory.length})</div>
-            <button onClick={() => setDiscShowHistory(false)} style={{ background: "transparent", border: "none", color: c.dimmest, fontSize: "12px", cursor: "pointer" }}>{"\u2715"}</button>
+        {/* ── PAST SEARCHES — persistent chip bar ── */}
+        {discHistory.length > 0 && <div style={{ marginBottom: "16px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+            <div style={{ fontSize: "9px", color: c.dimmer, letterSpacing: "1px", textTransform: "uppercase" }}>PAST SEARCHES</div>
           </div>
-          <div style={{ maxHeight: "250px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "4px" }}>
+          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
             {discHistory.map((dh, i) => (
-              <div key={i} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 10px", background: discSelectedIdx === i ? (dark ? "#0D2E1A22" : "#E8F5EC44") : "transparent", border: "1px solid " + (discSelectedIdx === i ? c.green + "66" : c.border), borderRadius: "4px", cursor: "pointer", borderLeft: "3px solid " + (discSelectedIdx === i ? c.green : c.border) }} onClick={() => { setDiscAmazonResults(dh.results); setDiscSelectedIdx(i); setDiscValidationResults({}); setDiscShowHistory(false); }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: "11px", fontWeight: 600, color: discSelectedIdx === i ? c.green : c.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>"{dh.keyword}"</div>
-                  <div style={{ display: "flex", gap: "6px", marginTop: "3px", fontSize: "9px", color: c.dim }}>
-                    <span>{dh.timestamp?.slice(0, 10)}</span>
-                    <span style={{ color: c.green }}>{dh.results?.length} products</span>
-                    {dh.filtered > 0 && <span style={{ color: c.dimmer }}>{dh.filtered} no-review filtered</span>}
-                    <span style={{ color: c.dimmest }}>from {dh.totalRaw || "?"} raw</span>
-                  </div>
-                </div>
-                <button onClick={e => { e.stopPropagation(); exportDiscoverCSV(dh.results, dh.keyword); }} style={{ padding: "3px 6px", background: "transparent", border: "1px solid " + c.border, borderRadius: "3px", color: c.dim, fontSize: "8px", fontFamily: "monospace", cursor: "pointer" }}>CSV</button>
-                <button onClick={e => { e.stopPropagation(); deleteDiscHistory(i); }} style={{ padding: "3px 6px", background: "transparent", border: "1px solid " + c.red + "44", borderRadius: "3px", color: c.red, fontSize: "8px", fontFamily: "monospace", cursor: "pointer" }}>{"\u2715"}</button>
+              <div key={i} style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "5px 10px", background: discSelectedIdx === i ? (dark ? "#0D2E1A" : "#E8F5EC") : c.surface2, border: "1px solid " + (discSelectedIdx === i ? c.green : c.border), borderRadius: "4px", cursor: "pointer", transition: "all 0.15s" }} onClick={() => { setDiscAmazonResults(dh.results); setDiscSelectedIdx(i); setDiscValidationResults({}); }}>
+                <span style={{ fontSize: "10px", fontWeight: discSelectedIdx === i ? 700 : 400, color: discSelectedIdx === i ? c.green : c.text, maxWidth: "140px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{dh.keyword}</span>
+                <span style={{ fontSize: "8px", color: c.dimmer, fontFamily: "monospace" }}>{dh.results?.length}</span>
+                <span onClick={e => { e.stopPropagation(); exportDiscoverCSV(dh.results, dh.keyword); }} style={{ fontSize: "8px", color: c.dim, cursor: "pointer", padding: "0 2px" }} title="Export CSV">{"\ud83d\udcca"}</span>
+                <span onClick={e => { e.stopPropagation(); deleteDiscHistory(i); }} style={{ fontSize: "8px", color: c.red + "88", cursor: "pointer", padding: "0 2px" }} title="Delete">{"\u2715"}</span>
               </div>
             ))}
           </div>
@@ -1074,13 +1063,43 @@ export default function App() {
         {discError && <div style={{ padding: "10px", background: dark ? "#3a1a1a" : "#FEF2F2", border: "1px solid " + c.red + "44", borderRadius: "4px", marginBottom: "12px", fontSize: "11px", color: c.red }}>{discError}</div>}
         {discSearchingAmazon && stage && <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" }}><Spinner /><span style={{ fontSize: "12px", color: c.gold }}>{stage}</span></div>}
 
-        {/* ── Sort + Active keyword indicator ── */}
+        {/* ── PRICE SUMMARY ── */}
+        {discAllProducts.length > 0 && (() => {
+          const prices = discAllProducts.map(p => p.price_aed).filter(p => p > 0).sort((a, b) => a - b);
+          const lowest = prices[0] || 0;
+          const highest = prices[prices.length - 1] || 0;
+          const median = prices[Math.floor(prices.length / 2)] || 0;
+          const average = prices.length ? Math.round((prices.reduce((s, x) => s + x, 0) / prices.length) * 100) / 100 : 0;
+          const topReviewed = [...discAllProducts].sort((a, b) => (b.reviews || 0) - (a.reviews || 0))[0];
+          return (
+            <div style={{ marginBottom: "16px", padding: "12px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px" }}>
+              {discSelectedIdx >= 0 && discHistory[discSelectedIdx] && <div style={{ fontSize: "10px", color: c.gold, fontWeight: 700, marginBottom: "10px", letterSpacing: "0.5px" }}>{"\ud83d\udcca"} {discHistory[discSelectedIdx].keyword.toUpperCase()} — {discAllProducts.length} products {discHistory[discSelectedIdx]?.filtered > 0 && <span style={{ color: c.dimmer, fontWeight: 400 }}>({discHistory[discSelectedIdx].filtered} zero-review filtered)</span>}</div>}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "8px", marginBottom: "10px" }}>
+                {[
+                  { l: "LOWEST", v: lowest, cl: c.green },
+                  { l: "MEDIAN", v: median, cl: c.gold },
+                  { l: "AVERAGE", v: average, cl: c.dim },
+                  { l: "HIGHEST", v: highest, cl: c.red }
+                ].map(s => (
+                  <div key={s.l} style={{ padding: "8px", background: c.cardBg, border: "1px solid " + c.border, borderRadius: "4px", textAlign: "center" }}>
+                    <div style={{ fontSize: "8px", color: c.dimmer, letterSpacing: "1px", marginBottom: "3px" }}>{s.l}</div>
+                    <div style={{ fontSize: "14px", fontWeight: 700, color: s.cl }}>{fmtAED(s.v)}</div>
+                  </div>
+                ))}
+              </div>
+              {topReviewed && <div style={{ fontSize: "9px", color: c.dim }}>
+                {"\ud83c\udfc6"} Top seller: <span style={{ color: c.text, fontWeight: 500 }}>{topReviewed.name?.slice(0, 60)}{topReviewed.name?.length > 60 ? "..." : ""}</span> — <span style={{ color: c.gold }}>{fmtAED(topReviewed.price_aed)}</span> · <span style={{ color: c.green }}>{(topReviewed.reviews || 0).toLocaleString()} reviews</span>
+              </div>}
+            </div>
+          );
+        })()}
+
+        {/* ── Sort bar ── */}
         {discAllProducts.length > 0 && <div style={{ display: "flex", gap: "6px", marginBottom: "10px", flexWrap: "wrap", alignItems: "center" }}>
-          {discSelectedIdx >= 0 && discHistory[discSelectedIdx] && <span style={{ fontSize: "10px", color: c.gold, fontWeight: 600, padding: "3px 8px", background: dark ? "#2A2210" : "#FDF8ED", border: "1px solid " + c.gold + "44", borderRadius: "3px" }}>"{discHistory[discSelectedIdx].keyword}"</span>}
           {[{ id: "reviews", label: "Most Reviews" }, { id: "rating", label: "Top Rated" }, { id: "price_asc", label: "Price \u2191" }, { id: "price_desc", label: "Price \u2193" }].map(s => (
             <button key={s.id} onClick={() => setDiscSort(s.id)} style={{ padding: "3px 8px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", background: discSort === s.id ? c.gold : "transparent", color: discSort === s.id ? c.btnText : c.dim, border: "1px solid " + (discSort === s.id ? c.gold : c.border2), borderRadius: "3px" }}>{s.label}</button>
           ))}
-          <span style={{ fontSize: "10px", color: c.green }}>{discAllProducts.length} results</span>
+          <span style={{ fontSize: "10px", color: c.green, marginLeft: "auto" }}>{discAllProducts.length} results</span>
         </div>}
 
         {/* Results */}
@@ -1088,7 +1107,7 @@ export default function App() {
 
         {discAllProducts.length === 0 && !discSearchingAmazon && <div style={{ textAlign: "center", padding: "40px 20px" }}>
           <div style={{ fontSize: "36px", marginBottom: "10px", opacity: 0.15 }}>{"\ud83d\udd0d"}</div>
-          <div style={{ fontSize: "12px", color: c.dim }}>{discHistory.length > 0 ? "Click HISTORY to browse past searches, or search a new keyword" : "Click a keyword above or type your own to search Amazon.ae"}</div>
+          <div style={{ fontSize: "12px", color: c.dim }}>{discHistory.length > 0 ? "Select a past search above, or search a new keyword" : "Click a keyword above or type your own to search Amazon.ae"}</div>
           <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "6px" }}>3 pages per search · ~$0.18 · Zero-review products excluded</div>
         </div>}
       </div>}
