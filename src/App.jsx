@@ -204,6 +204,11 @@ export default function App() {
   const [discError, setDiscError] = useState("");
   const [discValidatingIdx, setDiscValidatingIdx] = useState(null);
   const [discValidationResults, setDiscValidationResults] = useState({});
+  // Discover history: array of { keyword, timestamp, results: [...], totalRaw: N }
+  const [discHistory, setDiscHistory] = useState([]);
+  const [discSelectedIdx, setDiscSelectedIdx] = useState(-1);
+  const [discShowHistory, setDiscShowHistory] = useState(false);
+  const [discSort, setDiscSort] = useState("reviews");
 
   // Brainstorm state
   const [bsAmazonProducts, setBsAmazonProducts] = useState([]);
@@ -271,8 +276,8 @@ export default function App() {
         if (bl?.length) setCustomBrands(bl);
         const bsA = await storeGet(currentPin + ":brainstorm:amazon");
         if (bsA?.products?.length) { setBsAmazonProducts(bsA.products); setBsLastScan(bsA.scannedAt); }
-        const disc = await storeGet(currentPin + ":discover:results");
-        if (disc?.amazon?.length) setDiscAmazonResults(disc.amazon);
+        const disc = await storeGet(currentPin + ":discover:history");
+        if (disc?.length) { setDiscHistory(disc); setDiscAmazonResults(disc[0]?.results || []); setDiscSelectedIdx(0); }
       } catch (e) { console.warn("Load failed:", e); }
       setStorageReady(true);
     })();
@@ -287,6 +292,8 @@ export default function App() {
   useEffect(() => { if (!storageReady || !currentPin) return; const t = setTimeout(() => storeSet(currentPin + ":keywords", keywords), 1500); return () => clearTimeout(t); }, [keywords, storageReady, currentPin]);
   // Auto-save brand list
   useEffect(() => { if (!storageReady || !currentPin) return; const t = setTimeout(() => storeSet(currentPin + ":brandlist", customBrands), 1500); return () => clearTimeout(t); }, [customBrands, storageReady, currentPin]);
+  // Auto-save discover history
+  useEffect(() => { if (!storageReady || !currentPin || !discHistory.length) return; const t = setTimeout(() => storeSet(currentPin + ":discover:history", discHistory), 2000); return () => clearTimeout(t); }, [discHistory, storageReady, currentPin]);
 
   // Key status indicators
   useEffect(() => { if (!apiKey || apiKey.length < 10 || !storageReady) return; if (apiKeyLoaded.current) { apiKeyLoaded.current = false; return; } setApiKeyStatus("saved"); const t = setTimeout(() => setApiKeyStatus(""), 1500); return () => clearTimeout(t); }, [apiKey, storageReady]);
@@ -443,33 +450,80 @@ export default function App() {
   // ══════════ DISCOVER: ScrapingDog Amazon Search ══════════
   const searchAmazonSD = async (keyword) => {
     if (!keyword.trim() || !scrapingDogKey) return;
-    setDiscSearchingAmazon(true); setDiscError("");
-    addDiag("info", "disc_amazon", `Searching Amazon.ae: "${keyword}"`);
+    setDiscSearchingAmazon(true); setDiscError(""); setDiscSelectedIdx(-1);
+    addDiag("info", "disc_amazon", `Searching Amazon.ae: "${keyword}" (3 pages)`);
     try {
-      const sdUrl = "https://api.scrapingdog.com/amazon/search?api_key=" + encodeURIComponent(scrapingDogKey) + "&domain=ae&query=" + encodeURIComponent(keyword.trim()) + "&page=1";
-      const r = await fetch(sdUrl);
-      if (!r.ok) throw new Error("ScrapingDog HTTP " + r.status);
-      const data = await r.json();
-      addDiag("info", "disc_amazon", `Raw response keys: [${Object.keys(data).join(",")}]`);
-      // ScrapingDog Amazon search returns structured data
-      const products = (data.results || data.organic_results || data.search_results || data || []);
-      const items = (Array.isArray(products) ? products : []).map(p => ({
-        name: p.title || p.name || "",
-        price_aed: parseFloat(String(p.price || p.extracted_price || "0").replace(/[^0-9.]/g, "")) || 0,
-        rating: parseFloat(p.rating || p.stars || 0) || 0,
-        reviews: parseInt(String(p.reviews || p.total_reviews || p.ratings_total || "0").replace(/[^0-9]/g, "")) || 0,
-        asin: p.asin || "",
-        url: p.link || p.url || (p.asin ? "https://www.amazon.ae/dp/" + p.asin : ""),
-        source: "Amazon.ae",
-        department: keyword,
-        brand: p.brand || ""
-      })).filter(p => p.name && p.name.length > 3 && p.price_aed > 0);
-      addDiag(items.length > 0 ? "ok" : "warn", "disc_amazon", `${items.length} products extracted`);
-      setDiscAmazonResults(items);
-      await storeSet(currentPin + ":discover:results", { amazon: items });
+      let allItems = [];
+      const seenAsins = new Set();
+      // Fetch up to 3 pages for broader results
+      for (let page = 1; page <= 3; page++) {
+        setStage(`Searching page ${page}/3...`);
+        const sdUrl = "https://api.scrapingdog.com/amazon/search?api_key=" + encodeURIComponent(scrapingDogKey) + "&domain=ae&query=" + encodeURIComponent(keyword.trim()) + "&page=" + page;
+        try {
+          const r = await fetch(sdUrl);
+          if (!r.ok) { addDiag("warn", "disc_amazon", `Page ${page}: HTTP ${r.status}`); break; }
+          const data = await r.json();
+          const products = (data.results || data.organic_results || data.search_results || data || []);
+          const items = (Array.isArray(products) ? products : []).map(p => ({
+            name: p.title || p.name || "",
+            price_aed: parseFloat(String(p.price || p.extracted_price || "0").replace(/[^0-9.]/g, "")) || 0,
+            rating: parseFloat(p.rating || p.stars || 0) || 0,
+            reviews: parseInt(String(p.reviews || p.total_reviews || p.ratings_total || "0").replace(/[^0-9]/g, "")) || 0,
+            asin: p.asin || "",
+            url: p.link || p.url || (p.asin ? "https://www.amazon.ae/dp/" + p.asin : ""),
+            source: "Amazon.ae",
+            department: keyword,
+            brand: p.brand || ""
+          })).filter(p => p.name && p.name.length > 3 && p.price_aed > 0);
+          // Deduplicate by ASIN
+          for (const item of items) {
+            const key = item.asin || (item.name + "_" + item.price_aed);
+            if (!seenAsins.has(key)) { seenAsins.add(key); allItems.push(item); }
+          }
+          addDiag("info", "disc_amazon", `Page ${page}: ${items.length} raw → ${allItems.length} total so far`);
+          if (items.length < 5) break; // No more pages
+          if (page < 3) await wait(800); // Brief pause between pages
+        } catch (e) { addDiag("warn", "disc_amazon", `Page ${page}: ${e.message}`); break; }
+      }
+      const totalRaw = allItems.length;
+      // Filter: MUST have reviews (prioritize proven sellers, not dead listings)
+      const withReviews = allItems.filter(p => p.reviews > 0);
+      addDiag("info", "disc_amazon", `${totalRaw} total → ${withReviews.length} with reviews (filtered ${totalRaw - withReviews.length} zero-review)`);
+      // Sort by reviews descending (most popular/best-selling first)
+      const sorted = withReviews.sort((a, b) => b.reviews - a.reviews);
+      addDiag(sorted.length > 0 ? "ok" : "warn", "disc_amazon", `${sorted.length} products final (sorted by reviews)`);
+
+      // Save to discover history
+      const entry = { keyword: keyword.trim(), timestamp: new Date().toISOString(), results: sorted, totalRaw, filtered: totalRaw - sorted.length };
+      const newHistory = [entry, ...discHistory].slice(0, 100);
+      setDiscHistory(newHistory);
+      setDiscAmazonResults(sorted);
+      setDiscSelectedIdx(0);
     } catch (e) { addDiag("error", "disc_amazon", e.message); setDiscError(e.message); }
-    setDiscSearchingAmazon(false);
+    setDiscSearchingAmazon(false); setStage("");
   };
+
+  // ── Discover CSV export ──
+  const exportDiscoverCSV = (results, keyword) => {
+    if (!results?.length) return;
+    const h = ["Name","AED","Rating","Reviews","ASIN","Brand","Source","URL"];
+    const rows = results.map(p => [
+      '"' + (p.name || "").replace(/"/g, '""') + '"',
+      p.price_aed || 0,
+      p.rating || 0,
+      p.reviews || 0,
+      p.asin || "",
+      '"' + (p.brand || "") + '"',
+      p.source || "",
+      p.url || ""
+    ].join(","));
+    const blob = new Blob([[h.join(","), ...rows].join("\n")], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "gt-discover-" + (keyword || "search").replace(/[^a-z0-9]/gi, "-").slice(0, 40) + "-" + new Date().toISOString().slice(0, 10) + ".csv";
+    a.click();
+  };
+  const deleteDiscHistory = (idx) => { const nh = discHistory.filter((_, i) => i !== idx); setDiscHistory(nh); if (discSelectedIdx === idx) { setDiscAmazonResults([]); setDiscSelectedIdx(-1); } else if (discSelectedIdx > idx) { setDiscSelectedIdx(discSelectedIdx - 1); } };
 
 
   // ══════════ BRAINSTORM: Amazon Pipeline ══════════
@@ -713,7 +767,13 @@ export default function App() {
     return 0;
   });
 
-  const discAllProducts = [...discAmazonResults];
+  const discAllProducts = [...discAmazonResults].sort((a, b) => {
+    if (discSort === "reviews") return (b.reviews || 0) - (a.reviews || 0);
+    if (discSort === "price_asc") return a.price_aed - b.price_aed;
+    if (discSort === "price_desc") return b.price_aed - a.price_aed;
+    if (discSort === "rating") return (b.rating || 0) - (a.rating || 0);
+    return 0;
+  });
   const getQty = () => qtyMode === "container" ? Math.floor(24000 / (WEIGHT_KG[dryRunData?.weight_class || "medium"] || 1)) : qtyMode === "custom" ? qty : 1;
   const cookieAgeDays = shopeeCookieUpdatedAt ? Math.floor((Date.now() - shopeeCookieUpdatedAt) / 86400000) : null;
   const cookieColor = cookieAgeDays === null ? c.dimmer : cookieAgeDays <= 10 ? c.green : cookieAgeDays <= 12 ? c.darkGold : c.red;
@@ -784,7 +844,7 @@ export default function App() {
       <div style={{ marginBottom: "16px", borderBottom: "1px solid " + c.border, paddingBottom: "12px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
           <div>
-            <h1 style={{ fontFamily: "'Instrument Serif',serif", fontSize: "28px", fontWeight: 400, color: c.gold, margin: 0 }}>GT Cross-Trade <span style={{ fontSize: "12px", color: c.dimmer, fontFamily: "monospace" }}>v4.1</span></h1>
+            <h1 style={{ fontFamily: "'Instrument Serif',serif", fontSize: "28px", fontWeight: 400, color: c.gold, margin: 0 }}>GT Cross-Trade <span style={{ fontSize: "12px", color: c.dimmer, fontFamily: "monospace" }}>v4.2</span></h1>
             <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "4px", letterSpacing: "2px", textTransform: "uppercase" }}>UAE {"\u2190"} Indonesia {"\u00b7"} PIN {currentPin.slice(0,2)}** {isBrainstormPin && <span style={{ color: c.red }}>{"\u00b7 ADMIN"}</span>} {"\u00b7"} {fxUpdated ? "FX " + fxUpdated.toLocaleDateString() : "FX: defaults"} {"\u00b7"} <span style={{ color: supabaseReady ? c.green : c.darkGold }}>{supabaseReady ? "\u25cf DB" : "\u25cb local"}</span></div>
           </div>
           <div style={{ display: "flex", gap: "12px", fontSize: "11px", alignItems: "flex-end" }}>
@@ -974,25 +1034,62 @@ export default function App() {
           <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "10px" }}>
             <input value={discSearchInput} onChange={e => setDiscSearchInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && discSearchInput.trim()) { searchAmazonSD(discSearchInput); } }} placeholder="Search keyword (e.g. coconut bowl, rattan basket)..." style={{ ...inputStyle, flex: 1, padding: "10px 12px" }} />
           </div>
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
             <button onClick={() => searchAmazonSD(discSearchInput)} disabled={discSearchingAmazon || !discSearchInput.trim() || !scrapingDogKey} style={{ ...btnGreen, padding: "8px 16px", fontSize: "10px", opacity: (discSearchingAmazon || !discSearchInput.trim() || !scrapingDogKey) ? 0.4 : 1 }}>
-              {discSearchingAmazon ? <><Spinner />{" Searching..."}</> : "SEARCH AMAZON (~$0.06)"}
+              {discSearchingAmazon ? <><Spinner />{" Searching..."}</> : "SEARCH AMAZON (~$0.18)"}
             </button>
             {discAllProducts.length > 0 && <span style={{ fontSize: "10px", color: c.green, display: "flex", alignItems: "center" }}>{discAmazonResults.length} products</span>}
+            {discAllProducts.length > 0 && <button onClick={() => exportDiscoverCSV(discAllProducts, discHistory[discSelectedIdx]?.keyword || discSearchInput)} style={{ ...btnSec, padding: "6px 12px", fontSize: "9px" }}>{"\ud83d\udcca"} CSV</button>}
+            {discHistory.length > 0 && <button onClick={() => setDiscShowHistory(!discShowHistory)} style={{ ...btnSec, padding: "6px 12px", fontSize: "9px", background: discShowHistory ? c.gold + "22" : "transparent" }}>{"\ud83d\udcdd"} HISTORY ({discHistory.length})</button>}
           </div>
           {!scrapingDogKey && <div style={{ fontSize: "9px", color: c.red, marginTop: "6px" }}>Add ScrapingDog key for Amazon search</div>}
+          <div style={{ fontSize: "8px", color: c.dimmest, marginTop: "4px" }}>Fetches 3 pages · Filters zero-review products · Sorted by popularity</div>
         </div>
+
+        {/* ── DISCOVER HISTORY ── */}
+        {discShowHistory && discHistory.length > 0 && <div style={{ marginBottom: "16px", padding: "12px", background: c.surface2, border: "1px solid " + c.gold + "44", borderRadius: "4px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+            <div style={{ fontSize: "9px", color: c.gold, letterSpacing: "1px", fontWeight: 700 }}>{"\ud83d\udcdd"} SEARCH HISTORY ({discHistory.length})</div>
+            <button onClick={() => setDiscShowHistory(false)} style={{ background: "transparent", border: "none", color: c.dimmest, fontSize: "12px", cursor: "pointer" }}>{"\u2715"}</button>
+          </div>
+          <div style={{ maxHeight: "250px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "4px" }}>
+            {discHistory.map((dh, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 10px", background: discSelectedIdx === i ? (dark ? "#0D2E1A22" : "#E8F5EC44") : "transparent", border: "1px solid " + (discSelectedIdx === i ? c.green + "66" : c.border), borderRadius: "4px", cursor: "pointer", borderLeft: "3px solid " + (discSelectedIdx === i ? c.green : c.border) }} onClick={() => { setDiscAmazonResults(dh.results); setDiscSelectedIdx(i); setDiscValidationResults({}); setDiscShowHistory(false); }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: "11px", fontWeight: 600, color: discSelectedIdx === i ? c.green : c.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>"{dh.keyword}"</div>
+                  <div style={{ display: "flex", gap: "6px", marginTop: "3px", fontSize: "9px", color: c.dim }}>
+                    <span>{dh.timestamp?.slice(0, 10)}</span>
+                    <span style={{ color: c.green }}>{dh.results?.length} products</span>
+                    {dh.filtered > 0 && <span style={{ color: c.dimmer }}>{dh.filtered} no-review filtered</span>}
+                    <span style={{ color: c.dimmest }}>from {dh.totalRaw || "?"} raw</span>
+                  </div>
+                </div>
+                <button onClick={e => { e.stopPropagation(); exportDiscoverCSV(dh.results, dh.keyword); }} style={{ padding: "3px 6px", background: "transparent", border: "1px solid " + c.border, borderRadius: "3px", color: c.dim, fontSize: "8px", fontFamily: "monospace", cursor: "pointer" }}>CSV</button>
+                <button onClick={e => { e.stopPropagation(); deleteDiscHistory(i); }} style={{ padding: "3px 6px", background: "transparent", border: "1px solid " + c.red + "44", borderRadius: "3px", color: c.red, fontSize: "8px", fontFamily: "monospace", cursor: "pointer" }}>{"\u2715"}</button>
+              </div>
+            ))}
+          </div>
+        </div>}
 
         {discError && <div style={{ padding: "10px", background: dark ? "#3a1a1a" : "#FEF2F2", border: "1px solid " + c.red + "44", borderRadius: "4px", marginBottom: "12px", fontSize: "11px", color: c.red }}>{discError}</div>}
         {discSearchingAmazon && stage && <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" }}><Spinner /><span style={{ fontSize: "12px", color: c.gold }}>{stage}</span></div>}
+
+        {/* ── Sort + Active keyword indicator ── */}
+        {discAllProducts.length > 0 && <div style={{ display: "flex", gap: "6px", marginBottom: "10px", flexWrap: "wrap", alignItems: "center" }}>
+          {discSelectedIdx >= 0 && discHistory[discSelectedIdx] && <span style={{ fontSize: "10px", color: c.gold, fontWeight: 600, padding: "3px 8px", background: dark ? "#2A2210" : "#FDF8ED", border: "1px solid " + c.gold + "44", borderRadius: "3px" }}>"{discHistory[discSelectedIdx].keyword}"</span>}
+          {[{ id: "reviews", label: "Most Reviews" }, { id: "rating", label: "Top Rated" }, { id: "price_asc", label: "Price \u2191" }, { id: "price_desc", label: "Price \u2193" }].map(s => (
+            <button key={s.id} onClick={() => setDiscSort(s.id)} style={{ padding: "3px 8px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", background: discSort === s.id ? c.gold : "transparent", color: discSort === s.id ? c.btnText : c.dim, border: "1px solid " + (discSort === s.id ? c.gold : c.border2), borderRadius: "3px" }}>{s.label}</button>
+          ))}
+          <span style={{ fontSize: "10px", color: c.green }}>{discAllProducts.length} results</span>
+        </div>}
 
         {/* Results */}
         {discAllProducts.length > 0 && <ProductTable products={discAllProducts} validatingIdx={discValidatingIdx} validationResults={discValidationResults} onValidate={p => validateProduct(p, setDiscValidatingIdx, setDiscValidationResults)} showSubcat={false} showSignal={false} />}
 
         {discAllProducts.length === 0 && !discSearchingAmazon && <div style={{ textAlign: "center", padding: "40px 20px" }}>
           <div style={{ fontSize: "36px", marginBottom: "10px", opacity: 0.15 }}>{"\ud83d\udd0d"}</div>
-          <div style={{ fontSize: "12px", color: c.dim }}>Click a keyword above or type your own to search Amazon.ae</div>
-          <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "6px" }}>~$0.06/search via ScrapingDog</div>
+          <div style={{ fontSize: "12px", color: c.dim }}>{discHistory.length > 0 ? "Click HISTORY to browse past searches, or search a new keyword" : "Click a keyword above or type your own to search Amazon.ae"}</div>
+          <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "6px" }}>3 pages per search · ~$0.18 · Zero-review products excluded</div>
         </div>}
       </div>}
 
