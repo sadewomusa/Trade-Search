@@ -238,7 +238,7 @@ export default function App() {
   const [discScanning, setDiscScanning] = useState(false);
   const [discScanProgress, setDiscScanProgress] = useState({ done: 0, total: 0, current: "" });
   const [discLastScan, setDiscLastScan] = useState(null);
-  const [discFilter, setDiscFilter] = useState({ dept: "all", minPrice: "", maxPrice: "", minReviews: "30", search: "" });
+  const [discFilter, setDiscFilter] = useState({ dept: "all", minPrice: "", maxPrice: "", minReviews: "", search: "" });
   const [discSort, setDiscSort] = useState("reviews");
   const [discError, setDiscError] = useState("");
   const [validatingIdx, setValidatingIdx] = useState(-1);
@@ -250,6 +250,19 @@ export default function App() {
   const [noonKeyword, setNoonKeyword] = useState("");
   const [noonLoading, setNoonLoading] = useState(false);
   const [noonResults, setNoonResults] = useState([]);
+
+  // ── Diagnostic Log ──
+  const [diagLogs, setDiagLogs] = useState([]);
+  const [showDiag, setShowDiag] = useState(false);
+  const [diagFilter, setDiagFilter] = useState("all");
+  const diagRef = useRef([]);
+  const addDiag = (level, label, message, data = null) => {
+    const entry = { ts: new Date().toISOString().slice(11, 23), level, label, message, data: data != null ? (typeof data === "string" ? data.slice(0, 2000) : JSON.stringify(data).slice(0, 2000)) : null };
+    console.log(`[DIAG ${level}] ${label}: ${message}`, data != null ? data : "");
+    diagRef.current = [entry, ...diagRef.current].slice(0, 200);
+    setDiagLogs([...diagRef.current]);
+  };
+  const clearDiag = () => { diagRef.current = []; setDiagLogs([]); };
 
   const [expandedHistoryIdx, setExpandedHistoryIdx] = useState(-1);
   const saveTimerRef = useRef(null);
@@ -331,28 +344,39 @@ export default function App() {
 
   // ── Cooldown & FX ──
   useEffect(() => { if (cooldown <= 0) return; const t = setInterval(() => setCooldown(x => x <= 1 ? 0 : x - 1), 1000); return () => clearInterval(t); }, [cooldown]);
-  useEffect(() => { if (!unlocked) return; (async () => { const cached = await storeGet("global:fx"); if (cached && Date.now() - cached.ts < FX_CACHE_MS) { const b = cached.rates; setFx({ AEDUSD: b.AEDUSD || 0.2723, IDRUSD: b.IDRUSD || 0.0000613, AED_TO_IDR: (b.AEDUSD || 0.2723) / (b.IDRUSD || 0.0000613), IDR_TO_AED: (b.IDRUSD || 0.0000613) / (b.AEDUSD || 0.2723) }); setFxUpdated(new Date(cached.ts)); return; } try { const r = await fetch("https://api.frankfurter.app/latest?from=USD&to=AED,IDR"); const d = await r.json(); const aedusd = 1/d.rates.AED, idrusd = 1/d.rates.IDR; const rates = { AEDUSD: aedusd, IDRUSD: idrusd, AED_TO_IDR: aedusd/idrusd, IDR_TO_AED: idrusd/aedusd }; setFx(rates); setFxUpdated(new Date()); await storeSet("global:fx", { rates, ts: Date.now() }); } catch {} })(); }, [unlocked]);
+  useEffect(() => { if (!unlocked) return; (async () => { const cached = await storeGet("global:fx"); if (cached && Date.now() - cached.ts < FX_CACHE_MS) { const b = cached.rates; setFx({ AEDUSD: b.AEDUSD || 0.2723, IDRUSD: b.IDRUSD || 0.0000613, AED_TO_IDR: (b.AEDUSD || 0.2723) / (b.IDRUSD || 0.0000613), IDR_TO_AED: (b.IDRUSD || 0.0000613) / (b.AEDUSD || 0.2723) }); setFxUpdated(new Date(cached.ts)); return; } try { const r = await fetch("https://api.frankfurter.app/latest?from=USD&to=AED,IDR"); const d = await r.json(); const aedusd = 1/d.rates.AED, idrusd = 1/d.rates.IDR; const rates = { AEDUSD: aedusd, IDRUSD: idrusd, AED_TO_IDR: aedusd/idrusd, IDR_TO_AED: idrusd/aedusd }; setFx(rates); setFxUpdated(new Date()); await storeSet("global:fx", { rates, ts: Date.now() }); } catch (fxErr) { console.warn("FX fetch failed:", fxErr); } })(); }, [unlocked]);
 
   // ══════════ CORE: callClaude ══════════
   const callClaude = async (prompt, model, useSearch = false, retries = 2, maxTokens = 2048) => {
+    const shortPrompt = prompt.slice(0, 120).replace(/\n/g, " ");
+    addDiag("info", "callClaude", `model=${model} search=${useSearch} maxTok=${maxTokens}`, shortPrompt);
     const body = { action: "claude", data: { model, max_tokens: maxTokens, messages: [{ role: "user", content: prompt }], tools: useSearch ? [{ type: "web_search_20250305", name: "web_search" }] : undefined } };
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
         const r = await fetch("https://trades-proxy.sadewoahmadm.workers.dev", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-        if (r.status === 429) { if (attempt < retries) { setStage(s => s.replace(/ \(retry.*/, "") + " (retry " + Math.round((attempt + 1) * (useSearch ? 15 : 8)) + "s...)"); await wait((attempt + 1) * (useSearch ? 15000 : 8000)); continue; } throw new Error("Rate limited. Wait 30s."); }
-        if (!r.ok) { let d = ""; try { d = (await r.json()).error?.message || ""; } catch {} throw new Error("API " + r.status + ": " + (d || "error")); }
+        addDiag(r.ok ? "info" : "error", "proxy_response", `status=${r.status} attempt=${attempt}/${retries}`);
+        if (r.status === 429) { addDiag("warn", "rate_limit", `429 on attempt ${attempt}, waiting...`); if (attempt < retries) { setStage(s => s.replace(/ \(retry.*/, "") + " (retry " + Math.round((attempt + 1) * (useSearch ? 15 : 8)) + "s...)"); await wait((attempt + 1) * (useSearch ? 15000 : 8000)); continue; } throw new Error("Rate limited. Wait 30s."); }
+        if (!r.ok) { let d = ""; try { d = (await r.json()).error?.message || ""; } catch {} addDiag("error", "api_error", `${r.status}: ${d}`); throw new Error("API " + r.status + ": " + (d || "error")); }
         const data = await r.json();
-        return data.content?.map(b => b.text || "").filter(Boolean).join("\n") || "";
-      } catch (err) { if (attempt === retries) throw err; await wait((attempt + 1) * 10000); }
+        const blockTypes = (data.content || []).map(b => b.type + ":" + (b.text?.length || 0));
+        addDiag("info", "api_blocks", `${data.content?.length || 0} blocks: [${blockTypes.join(", ")}]`);
+        const textResult = data.content?.map(b => b.text || "").filter(Boolean).join("\n") || "";
+        addDiag(textResult ? "ok" : "warn", "api_text", `${textResult.length} chars extracted`, textResult.slice(0, 500));
+        return textResult;
+      } catch (err) { addDiag("error", "callClaude_err", `attempt ${attempt}: ${err.message}`); if (attempt === retries) throw err; await wait((attempt + 1) * 10000); }
     }
   };
 
   const parseJSON = (text) => {
+    addDiag("info", "parseJSON", `input ${text.length} chars`, text.slice(0, 300));
     let s = text.replace(/```json/g, "").replace(/```/g, "").trim();
     const matches = []; let depth = 0, start = -1;
     for (let i = 0; i < s.length; i++) { if (s[i] === "{") { if (depth === 0) start = i; depth++; } if (s[i] === "}") { depth--; if (depth === 0 && start >= 0) { matches.push(s.substring(start, i + 1)); start = -1; } } }
-    for (const m of matches.sort((a, b) => b.length - a.length)) { try { const p = JSON.parse(m); if (p.product_name || p.results || p.clean_name_en || p.similar || p.products) return p; } catch {} }
-    try { return JSON.parse(s); } catch {} throw new Error("No valid JSON");
+    addDiag("info", "parseJSON", `found ${matches.length} JSON candidates (sizes: ${matches.map(m => m.length).join(",")})`);
+    for (const m of matches.sort((a, b) => b.length - a.length)) { try { const p = JSON.parse(m); if (p.product_name || p.results || p.clean_name_en || p.similar || p.products) { addDiag("ok", "parseJSON", `matched! keys: [${Object.keys(p).join(",")}] results=${(p.results||p.products||[]).length}`); return p; } } catch (e) { addDiag("warn", "parseJSON", `candidate failed: ${e.message}`, m.slice(0, 200)); } }
+    try { const p = JSON.parse(s); addDiag("ok", "parseJSON", `fallback parse ok, keys: [${Object.keys(p).join(",")}]`); return p; } catch {} 
+    addDiag("error", "parseJSON", "NO VALID JSON FOUND", s.slice(0, 500));
+    throw new Error("No valid JSON");
   };
 
   // ══════════ MARGIN CALCULATOR (shared) ══════════
@@ -371,38 +395,77 @@ export default function App() {
 
   // ══════════ INDO SEARCH — APIFY MODE ══════════
   const runApifyActor = async (actorId, input, label) => {
+    addDiag("info", "apify_start", `${label} actor=${actorId}`, input);
     setStage("Starting " + label + "...");
     const sr = await fetch("https://api.apify.com/v2/acts/" + encodeURIComponent(actorId) + "/runs?token=" + apifyKey, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) });
-    if (!sr.ok) throw new Error(label + " failed: " + sr.status);
-    const rd = await sr.json(); const runId = rd.data?.id; if (!runId) throw new Error(label + " no run ID");
+    addDiag(sr.ok ? "info" : "error", "apify_run", `${label} POST status=${sr.status}`);
+    if (!sr.ok) { const errBody = await sr.text().catch(() => ""); addDiag("error", "apify_run", `${label} response body`, errBody); throw new Error(label + " failed: " + sr.status); }
+    const rd = await sr.json(); const runId = rd.data?.id; if (!runId) { addDiag("error", "apify_run", `${label} no run ID`, rd); throw new Error(label + " no run ID"); }
+    addDiag("info", "apify_run", `${label} runId=${runId} datasetId=${rd.data?.defaultDatasetId}`);
     let status = "RUNNING", pc = 0;
     while (status === "RUNNING" || status === "READY") {
       if (pc > 60) throw new Error(label + " timeout"); await wait(5000); pc++;
       setStage(label + " (" + (pc * 5) + "s)"); setProgress(Math.min(90, pc * 3));
-      try { const pr = await fetch("https://api.apify.com/v2/actor-runs/" + runId + "?token=" + apifyKey); if (pr.ok) { status = (await pr.json()).data?.status || "RUNNING"; } } catch {}
+      try { const pr = await fetch("https://api.apify.com/v2/actor-runs/" + runId + "?token=" + apifyKey); if (pr.ok) { const prd = await pr.json(); status = prd.data?.status || "RUNNING"; addDiag("info", "apify_poll", `${label} status=${status} (${pc * 5}s)`); } } catch {}
     }
-    if (status !== "SUCCEEDED") throw new Error(label + " status: " + status);
+    if (status !== "SUCCEEDED") { addDiag("error", "apify_run", `${label} final status: ${status}`); throw new Error(label + " status: " + status); }
     const dsId = rd.data?.defaultDatasetId; if (!dsId) throw new Error(label + " no dataset");
     const ir = await fetch("https://api.apify.com/v2/datasets/" + dsId + "/items?token=" + apifyKey + "&limit=50");
-    return ir.ok ? await ir.json() : [];
+    const items = ir.ok ? await ir.json() : [];
+    addDiag(items.length > 0 ? "ok" : "warn", "apify_results", `${label} returned ${items.length} raw items`);
+    if (items.length > 0) {
+      addDiag("info", "apify_sample", `${label} first item keys: [${Object.keys(items[0]).join(",")}]`, items[0]);
+    }
+    return items;
   };
 
   const normalizeApifyResults = (items, platform) => {
-    if (!Array.isArray(items)) return [];
-    return items.filter(i => i && (i.price || i.currentPrice || i.salePrice || i.price_idr)).map(i => {
-      let price = i.price || i.currentPrice || i.salePrice || i.price_idr || 0;
+    if (!Array.isArray(items)) { addDiag("warn", "normalize", `${platform}: items is not array (${typeof items})`); return []; }
+    addDiag("info", "normalize", `${platform}: normalizing ${items.length} raw items`);
+    if (items.length > 0) {
+      addDiag("info", "normalize", `${platform}: sample item keys: [${Object.keys(items[0]).join(", ")}]`, items[0]);
+    }
+
+    const results = items.filter(i => i).map(i => {
+      // Broad price extraction — try many known field names
+      let price = i.price || i.currentPrice || i.salePrice || i.price_idr || i.discountedPrice || i.promo_price || i.finalPrice || i.sale_price || i.normal_price || i.current_price || i.item_basic?.price || i.price_min || i.price_max || 0;
+      if (typeof price === "object" && price !== null) price = price.min || price.max || price.value || 0;
       if (typeof price === "string") price = sanitizeIDR(price);
-      if (typeof price === "number" && price < 500) price = Math.round(price * 1000);
-      return { name: i.title || i.name || i.productName || i.item_name || "", price_idr: Math.round(price), source: platform, seller: i.shopName || i.sellerName || i.seller || i.shop?.name || i.shop_name || "", sold: String(i.sold || i.totalSold || i.historicalSold || i.itemSold || i.historical_sold || ""), url: i.url || i.link || i.productUrl || i.item_url || "" };
+      if (typeof price === "number" && price > 0 && price < 500) price = Math.round(price * 1000);
+      // Some actors return price in cents/units (price / 100000 for Shopee)
+      if (typeof price === "number" && price > 1000000000) price = Math.round(price / 100000);
+
+      const name = i.title || i.name || i.productName || i.item_name || i.product_name || i.item_basic?.name || "";
+      const seller = i.shopName || i.sellerName || i.seller || i.shop?.name || i.shop_name || i.store_name || i.merchant || i.shop?.shopName || "";
+      const sold = String(i.sold || i.totalSold || i.historicalSold || i.itemSold || i.historical_sold || i.total_sold || i.orders || i.item_basic?.sold || i.item_basic?.historical_sold || "");
+      const url = i.url || i.link || i.productUrl || i.item_url || i.product_url || i.itemUrl || "";
+
+      return { name, price_idr: Math.round(price), source: platform, seller, sold, url };
     }).filter(r => r.price_idr >= 1000 && r.name);
+
+    const withPrice = items.filter(i => {
+      const p = i.price || i.currentPrice || i.salePrice || i.price_idr || i.discountedPrice || i.promo_price || i.finalPrice || i.sale_price || i.normal_price || i.current_price || i.item_basic?.price || i.price_min || 0;
+      return p && p !== 0;
+    });
+    addDiag("info", "normalize", `${platform}: ${withPrice.length}/${items.length} have a recognizable price field`);
+    if (items.length > 0 && withPrice.length === 0) {
+      const sampleKeys = Object.keys(items[0]).join(", ");
+      addDiag("error", "normalize", `${platform}: NO items matched any price field. Actual keys: [${sampleKeys}]`, items[0]);
+    }
+    addDiag(results.length > 0 ? "ok" : "warn", "normalize", `${platform}: ${results.length} valid after normalize (price>=1000 & name)`);
+    if (results.length > 0) addDiag("info", "normalize", `${platform} sample: "${results[0].name}" IDR${results[0].price_idr} seller="${results[0].seller}"`);
+    return results;
   };
 
   const runIndoApify = async (bahasaQuery, allQueries) => {
+    addDiag("info", "indo_apify", `query="${bahasaQuery}" mode=apify`);
     const waves = [];
     const tokoInput = { querystring: bahasaQuery, filters: { price_min: 10000, price_max: 800000, sort: "reviews" }, limit: 30 };
     const shopeeUrl = "https://shopee.co.id/search?keyword=" + encodeURIComponent(bahasaQuery) + "&price_min=10000&price_max=800000&sort=7";
     const shopeeInput = { searchUrls: [shopeeUrl], country: "ID", maxProducts: 30, scrapeMode: "fast" };
     if (shopeeCookie) shopeeInput.cookies = shopeeCookie;
+    addDiag("info", "indo_apify", `Toko input:`, tokoInput);
+    addDiag("info", "indo_apify", `Shopee input:`, shopeeInput);
 
     setStage("Scraping Toko + Shopee parallel..."); setProgress(10);
     const [tokoR, shopeeR] = await Promise.all([
@@ -427,12 +490,14 @@ export default function App() {
 
   // ══════════ INDO SEARCH — CLAUDE SEARCH MODE (with v1 blocked detection) ══════════
   const runIndoClaude = async (productData, queries) => {
+    addDiag("info", "indo_claude", `Starting Claude search. queries=[${queries.join(", ")}]`);
     const waves = [];
     const mainQ = queries[0];
     const brandQ = productData.brand ? productData.brand + " " + (productData.clean_name_id || queries[0]) : null;
 
     const doSearch = async (platform, label) => {
       const site = platform === "Tokopedia" ? "tokopedia.com" : "shopee.co.id";
+      addDiag("info", "indo_wave", `${label} ${platform}: searching ${site}`);
       setStage(label + " " + platform + "...");
       const searchLines = [
         '- Search: "' + mainQ + ' ' + site + '"',
@@ -465,8 +530,9 @@ export default function App() {
           url: r.url || "",
         }));
         const validResults = results.filter(r => r.price_idr >= 1000);
+        addDiag(validResults.length > 0 ? "ok" : "warn", "indo_wave", `${platform}: ${results.length} parsed, ${validResults.length} valid (price>=1000)`);
         return { results, blockReason: validResults.length === 0 ? blockReason : null };
-      } catch { return { results: [], blockReason: blockReason || (platform + ": JSON parse failed") }; }
+      } catch (e) { addDiag("error", "indo_wave", `${platform}: format parse failed: ${e.message}`); return { results: [], blockReason: blockReason || (platform + ": JSON parse failed") }; }
     };
 
     let allResults = [];
@@ -509,7 +575,7 @@ export default function App() {
           const r = (p.results || []).map(r => ({ name: r.name || "", price_idr: sanitizeIDR(r.price_idr || 0), source: r.source || "Tokopedia", seller: r.seller || "", sold: r.sold || "", url: r.url || "" }));
           allResults.push(...r);
           waves.push({ name: "Broad" + (focusPlatform ? " (" + focusPlatform + " focus)" : ""), status: r.length > 0 ? "ok" : "empty", count: r.filter(x => x.price_idr >= 1000).length });
-        } catch {}
+        } catch (bErr) { addDiag("warn", "indo_wave", `Broad search parse failed: ${bErr.message}`); }
       } catch (e) { waves.push({ name: "Broad", status: "fail", count: 0, reason: e.message }); }
     }
     return { allResults, waves, source: "claude" };
@@ -517,14 +583,18 @@ export default function App() {
 
   // ══════════ SHARED: run Indo + build margin ══════════
   const runFullIndoSearch = async (productData, bahasaQueries) => {
+    addDiag("info", "full_indo", `Starting. mode=${indoMode} queries=[${bahasaQueries.join(", ")}] product=${productData.clean_name_id || productData.product_name}`);
     const { allResults: raw, waves, source } = indoMode === "apify"
       ? await runIndoApify(bahasaQueries[0], bahasaQueries)
       : await runIndoClaude(productData, bahasaQueries);
 
+    addDiag("info", "full_indo", `Raw results: ${raw.length} from ${source}`);
+
     // Dedup
     const seen = new Map();
     let allResults = raw.filter(r => { if (!r.name || r.price_idr < 1000) return false; const k = r.name.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 40) + "|" + r.price_idr; if (seen.has(k)) return false; seen.set(k, true); return true; });
-    if (allResults.length === 0) throw new Error("No Indonesian listings found.");
+    addDiag("info", "full_indo", `After dedup: ${allResults.length} (removed ${raw.length - allResults.length})`);
+    if (allResults.length === 0) { addDiag("error", "full_indo", "ZERO results after dedup — throwing error"); throw new Error("No Indonesian listings found."); }
 
     // Outlier trim
     if (allResults.length >= 5) { const sorted = [...allResults].sort((a, b) => a.price_idr - b.price_idr); if (sorted[sorted.length - 1].price_idr / sorted[0].price_idr > 10) { const tc = Math.max(1, Math.floor(allResults.length * 0.1)); const trimmed = sorted.slice(tc, sorted.length - tc); if (trimmed.length >= 3) allResults = trimmed; } }
@@ -544,47 +614,83 @@ export default function App() {
   const runBestsellerScan = async () => {
     if (!scrapingDogKey || !apiKey) { setDiscError("Add ScrapingDog + Claude keys first."); return; }
     setDiscScanning(true); setDiscError(""); setDiscScanProgress({ done: 0, total: AMAZON_AE_DEPTS.length, current: "" });
+    addDiag("info", "disc_scan", `Starting bestseller scan across ${AMAZON_AE_DEPTS.length} departments`);
     let allProducts = [];
+    let deptStats = [];
     for (let i = 0; i < AMAZON_AE_DEPTS.length; i++) {
       const dept = AMAZON_AE_DEPTS[i];
       setDiscScanProgress({ done: i, total: AMAZON_AE_DEPTS.length, current: dept.label });
       try {
         const pageUrl = "https://www.amazon.ae/gp/bestsellers/" + dept.slug;
+        addDiag("info", "disc_dept", `[${i+1}/${AMAZON_AE_DEPTS.length}] ${dept.label}: fetching ${pageUrl}`);
         const sdRes = await fetch("https://api.scrapingdog.com/scrape?api_key=" + encodeURIComponent(scrapingDogKey) + "&url=" + encodeURIComponent(pageUrl) + "&dynamic=true");
-        if (!sdRes.ok) continue;
+        if (!sdRes.ok) { addDiag("error", "disc_dept", `${dept.label}: ScrapingDog HTTP ${sdRes.status}`); deptStats.push({ dept: dept.label, status: "SD_ERROR", detail: `HTTP ${sdRes.status}` }); continue; }
         const html = await sdRes.text();
-        if (html.length < 500) continue;
-        const parsed = await callClaude('Extract ALL products from this Amazon.ae Best Sellers HTML. Return ONLY JSON:\n{"products":[{"name":"product name","price_aed":NUMBER,"rating":NUMBER,"reviews":NUMBER,"asin":"ASIN if visible","url":"product URL if visible"}]}\nRULES:\n- price_aed must be NUMBER. "AED 49.00" = 49.\n- reviews must be INTEGER. "1,234" = 1234.\n- Extract ALL, aim 30-100.\nJSON only:\n' + html.slice(0, 60000), "claude-haiku-4-5-20251001", false, 1, 4096);
+        addDiag("info", "disc_dept", `${dept.label}: got ${html.length} chars HTML`);
+        if (html.length < 500) { 
+          addDiag("warn", "disc_dept", `${dept.label}: HTML too short (${html.length} chars) — likely CAPTCHA/block`, html.slice(0, 300)); 
+          deptStats.push({ dept: dept.label, status: "BLOCKED", detail: `Only ${html.length} chars` }); 
+          continue; 
+        }
+        // Check for bot detection signals
+        if (/captcha|robot|verify|blocked|denied/i.test(html.slice(0, 2000))) {
+          addDiag("warn", "disc_dept", `${dept.label}: bot detection keywords found in HTML`);
+        }
+        const parsed = await callClaude('Extract ALL products from this Amazon.ae Best Sellers HTML. Return ONLY JSON:\n{"products":[{"name":"product name","price_aed":NUMBER,"rating":NUMBER,"reviews":NUMBER,"asin":"ASIN if visible","url":"product URL if visible"}]}\nRULES:\n- price_aed must be NUMBER. "AED 49.00" = 49.\n- reviews must be INTEGER. "1,234" = 1234.\n- Extract ALL, aim 30-100.\nJSON only:\n' + html.slice(0, 60000), "claude-sonnet-4-20250514", false, 1, 4096);
         try {
           const data = parseJSON(parsed);
-          allProducts.push(...(data.products || data.results || []).map(p => ({ name: p.name || p.title || "", price_aed: parseFloat(p.price_aed || p.price || 0) || 0, rating: parseFloat(p.rating || 0) || 0, reviews: parseInt(p.reviews || 0) || 0, asin: p.asin || "", url: p.url || "", department: dept.label, source: "Amazon.ae" })).filter(p => p.name && p.name.length > 5));
-        } catch {}
-      } catch {}
+          const products = (data.products || data.results || []).map(p => ({ name: p.name || p.title || "", price_aed: parseFloat(p.price_aed || p.price || 0) || 0, rating: parseFloat(p.rating || 0) || 0, reviews: parseInt(p.reviews || 0) || 0, asin: p.asin || "", url: p.url || "", department: dept.label, source: "Amazon.ae" })).filter(p => p.name && p.name.length > 5);
+          addDiag(products.length > 0 ? "ok" : "warn", "disc_dept", `${dept.label}: extracted ${products.length} products`);
+          if (products.length > 0) addDiag("info", "disc_sample", `${dept.label} sample: ${products[0].name} AED${products[0].price_aed} reviews=${products[0].reviews}`);
+          deptStats.push({ dept: dept.label, status: products.length > 0 ? "OK" : "EMPTY", detail: `${products.length} products` });
+          allProducts.push(...products);
+        } catch (e) { 
+          addDiag("error", "disc_dept", `${dept.label}: parseJSON failed: ${e.message}`); 
+          deptStats.push({ dept: dept.label, status: "PARSE_FAIL", detail: e.message }); 
+        }
+      } catch (e) { 
+        addDiag("error", "disc_dept", `${dept.label}: exception: ${e.message}`); 
+        deptStats.push({ dept: dept.label, status: "EXCEPTION", detail: e.message }); 
+      }
       await wait(1500);
     }
+    addDiag("info", "disc_scan", `Scan complete: ${allProducts.length} total products from ${AMAZON_AE_DEPTS.length} depts`);
+    addDiag("info", "disc_summary", `Dept results: ${deptStats.map(d => d.dept + "=" + d.status).join(", ")}`);
     setDiscScanProgress({ done: AMAZON_AE_DEPTS.length, total: AMAZON_AE_DEPTS.length, current: "Done" });
     const ts = new Date().toISOString();
     setDiscProducts(allProducts); setDiscLastScan(ts);
     await storeSet(currentPin + ":discovery", { products: allProducts, scannedAt: ts });
     setDiscScanning(false);
+    if (allProducts.length === 0) {
+      const failures = deptStats.filter(d => d.status !== "OK").map(d => d.dept + ": " + d.detail).join("; ");
+      setDiscError("0 products extracted. Check DIAG panel. Failures: " + (failures || "unknown"));
+    }
   };
 
   // ══════════ DISCOVERY: Noon Search ══════════
   const runNoonDiscovery = async () => {
     if (!apifyKey || !noonKeyword.trim()) return;
     setNoonLoading(true); setDiscError("");
+    addDiag("info", "noon_disc", `Searching Noon for "${noonKeyword.trim()}" actor=${noonActorId}`);
     try {
       setStage("Noon scraper...");
       const sr = await fetch("https://api.apify.com/v2/acts/" + encodeURIComponent(noonActorId) + "/runs?token=" + apifyKey + "&timeout=60", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scrape_type: "search", search_query: noonKeyword.trim() }) });
+      addDiag(sr.ok ? "info" : "error", "noon_disc", `Noon actor POST status=${sr.status}`);
       if (!sr.ok) throw new Error("Noon actor failed: " + sr.status);
       const rd = await sr.json(); const runId = rd.data?.id, dsId = rd.data?.defaultDatasetId;
+      addDiag("info", "noon_disc", `runId=${runId} dsId=${dsId}`);
       let status = "RUNNING", pc = 0;
       while (status === "RUNNING" || status === "READY") { if (pc > 25) break; await wait(3000); pc++; setStage("Noon (" + (pc * 3) + "s)..."); try { const pr = await fetch("https://api.apify.com/v2/actor-runs/" + runId + "?token=" + apifyKey); if (pr.ok) status = (await pr.json()).data?.status || "RUNNING"; } catch {} }
+      addDiag("info", "noon_disc", `Final status=${status}`);
       let items = [];
       if (dsId) { try { const ir = await fetch("https://api.apify.com/v2/datasets/" + dsId + "/items?token=" + apifyKey + "&limit=30"); if (ir.ok) items = await ir.json(); } catch {} }
+      addDiag(items.length > 0 ? "ok" : "warn", "noon_disc", `Raw items: ${items.length}`);
+      if (items.length > 0) addDiag("info", "noon_disc", `Sample keys: [${Object.keys(items[0]).join(",")}]`, items[0]);
       try { await fetch("https://api.apify.com/v2/actor-runs/" + runId + "/abort?token=" + apifyKey, { method: "POST" }); } catch {}
-      setNoonResults(items.map(i => ({ name: i.title || i.name || "", price_aed: parseFloat(i.price || i.sale_price || i.now || 0) || 0, rating: parseFloat(i.rating || 0) || 0, reviews: parseInt(i.reviews || i.ratings_count || 0) || 0, source: "Noon.ae", url: i.url || i.link || "", department: "Noon" })).filter(p => p.name && p.price_aed > 0));
-    } catch (e) { setDiscError(e.message); }
+      const mapped = items.map(i => ({ name: i.title || i.name || "", price_aed: parseFloat(i.price || i.sale_price || i.now || 0) || 0, rating: parseFloat(i.rating || 0) || 0, reviews: parseInt(i.reviews || i.ratings_count || 0) || 0, source: "Noon.ae", url: i.url || i.link || "", department: "Noon" })).filter(p => p.name && p.price_aed > 0);
+      addDiag(mapped.length > 0 ? "ok" : "warn", "noon_disc", `After mapping: ${mapped.length} valid products`);
+      setNoonResults(mapped);
+    } catch (e) { addDiag("error", "noon_disc", e.message); setDiscError(e.message); }
     setNoonLoading(false); setStage("");
   };
 
@@ -592,9 +698,10 @@ export default function App() {
   const validateProduct = async (product, idx) => {
     if (!apiKey) return;
     setValidatingIdx(idx);
+    addDiag("info", "validate", `Validating "${product.name}" AED${product.price_aed}`);
     try {
       setStage("Translating...");
-      const fmt = await callClaude('Translate for Indonesian marketplace. JSON only:\n{"clean_name_id":"Bahasa Indonesia","category":"electronics/kitchen/beauty/fashion/home/toys/sports/baby/office/other","weight_class":"light/medium/heavy","search_queries_id":["q1","q2","q3"]}\nProduct: "' + product.name + '" AED ' + product.price_aed + '\nJSON only:', "claude-haiku-4-5-20251001", false, 1, 1024);
+      const fmt = await callClaude('Translate for Indonesian marketplace. JSON only:\n{"clean_name_id":"Bahasa Indonesia","category":"electronics/kitchen/beauty/fashion/home/toys/sports/baby/office/other","weight_class":"light/medium/heavy","search_queries_id":["q1","q2","q3"]}\nProduct: "' + product.name + '" AED ' + product.price_aed + '\nJSON only:', "claude-sonnet-4-20250514", false, 1, 1024);
       const parsed = parseJSON(fmt);
       const productData = { ...product, clean_name_id: parsed.clean_name_id || product.name, clean_name_en: product.name, category: parsed.category || guessCategory(product.name), weight_class: parsed.weight_class || "medium", pack_quantity: 1 };
       const queries = parsed.search_queries_id || [parsed.clean_name_id || product.name];
@@ -641,15 +748,55 @@ export default function App() {
     if (!input || !input.startsWith("http")) { setAutoError("Invalid URL"); return; }
     if (!['amazon.ae','noon.com','noon.ae'].some(d => input.includes(d))) { setAutoError("Only Amazon.ae and Noon"); return; }
     if (!apiKey) { setApiKeyStatus("missing"); return; }
+    addDiag("info", "lookup", `Starting dry run: ${input}`);
     setLoading(true); setAutoError(""); setDryRunData(null); setUaeSimilar(null); setIndoResults(null); setMarginData(null); setEditableQueries([]); setActiveSection(0); setWaveStatus([]);
     const isNoon = input.includes("noon.com"); const marketplace = isNoon ? "Noon UAE" : "Amazon.ae";
     const asinMatch = input.match(/\/dp\/([A-Z0-9]{10})/i) || input.match(/\/([A-Z0-9]{10})(?:[/?]|$)/i);
     const asin = asinMatch ? asinMatch[1] : "";
     try {
-      setStage("Reading product... (~10s)");
-      const rawInfo = await runWithProgress(() => callClaude("Find EXACT product details for this " + marketplace + " listing.\nURL: " + input + "\n" + (asin ? "ASIN: " + asin + "\n" : "") + "Search the URL and product ID. I need: exact name, price AED, brand, rating, reviews, key specs, pack size/quantity.", "claude-haiku-4-5-20251001", true, 2, 4096), 12);
+      let rawInfo = "";
+      let sdProductData = null;
+
+      // ── FIX #1: Use ScrapingDog Amazon Product API when ASIN available ──
+      if (!isNoon && asin && scrapingDogKey) {
+        setStage("ScrapingDog Product API...");
+        addDiag("info", "lookup", `Using ScrapingDog Product API for ASIN=${asin} domain=ae`);
+        try {
+          const sdUrl = "https://api.scrapingdog.com/amazon/product?api_key=" + encodeURIComponent(scrapingDogKey) + "&domain=ae&asin=" + asin;
+          const sdRes = await fetch(sdUrl);
+          addDiag(sdRes.ok ? "ok" : "error", "sd_product", `HTTP ${sdRes.status}`);
+          if (sdRes.ok) {
+            sdProductData = await sdRes.json();
+            addDiag("ok", "sd_product", `Got structured data: "${(sdProductData.title || "").slice(0, 80)}" keys=[${Object.keys(sdProductData).join(",")}]`);
+            // Extract price from ScrapingDog response
+            let priceAed = 0;
+            if (sdProductData.price) {
+              const pm = String(sdProductData.price).match(/[\d,.]+/);
+              if (pm) priceAed = parseFloat(pm[0].replace(/,/g, ""));
+            }
+            if (!priceAed && sdProductData.sale_price) {
+              const pm = String(sdProductData.sale_price).match(/[\d,.]+/);
+              if (pm) priceAed = parseFloat(pm[0].replace(/,/g, ""));
+            }
+            if (!priceAed && sdProductData.mrp) {
+              const pm = String(sdProductData.mrp).match(/[\d,.]+/);
+              if (pm) priceAed = parseFloat(pm[0].replace(/,/g, ""));
+            }
+            rawInfo = "ScrapingDog structured data:\nTitle: " + (sdProductData.title || "") + "\nPrice: AED " + priceAed + "\nBrand: " + (sdProductData.product_information?.Brand || sdProductData.product_information?.Manufacturer || "") + "\nRating: " + (sdProductData.average_rating || "") + "\nReviews: " + (sdProductData.total_ratings || sdProductData.total_reviews || "") + "\nASIN: " + asin;
+            addDiag("ok", "sd_product", `Extracted: price=${priceAed} rating=${sdProductData.average_rating} reviews=${sdProductData.total_ratings}`);
+          }
+        } catch (sdErr) {
+          addDiag("warn", "sd_product", `ScrapingDog failed: ${sdErr.message}, falling back to Claude search`);
+        }
+      }
+
+      // Fallback to Claude web search if no ScrapingDog data
+      if (!rawInfo) {
+        setStage("Reading product... (~10s)");
+        rawInfo = await runWithProgress(() => callClaude("Find EXACT product details for this " + marketplace + " listing.\nURL: " + input + "\n" + (asin ? "ASIN: " + asin + "\n" : "") + "Search the URL and product ID. I need: exact name, price AED, brand, rating, reviews, key specs, pack size/quantity.", "claude-sonnet-4-20250514", true, 2, 4096), 12);
+      }
       setStage("Formatting... (~5s)"); await wait(2000);
-      const formatted = await runWithProgress(() => callClaude("Convert to JSON:\n" + rawInfo + "\nURL: " + input + "\nMarketplace: " + marketplace + "\n\n{\"product_name\":\"\",\"price_aed\":NUMBER,\"pack_quantity\":NUMBER,\"brand\":\"\",\"rating\":NUMBER,\"reviews\":NUMBER,\"source\":\"" + marketplace + "\",\"clean_name_en\":\"\",\"clean_name_id\":\"Bahasa translation\",\"category\":\"\",\"weight_class\":\"light/medium/heavy\",\"search_queries_id\":[\"q1\",\"q2\",\"q3\"],\"search_queries_en\":[\"q1\",\"q2\"]}\n\nCRITICAL: price_aed=NUMBER. pack_quantity=INTEGER (how many items in bundle/multipack, default 1). search_queries_id=Bahasa. JSON only:", "claude-haiku-4-5-20251001", false, 2, 2048), 6);
+      const formatted = await runWithProgress(() => callClaude("Convert to JSON:\n" + rawInfo + "\nURL: " + input + "\nMarketplace: " + marketplace + "\n\n{\"product_name\":\"\",\"price_aed\":NUMBER,\"pack_quantity\":NUMBER,\"brand\":\"\",\"rating\":NUMBER,\"reviews\":NUMBER,\"source\":\"" + marketplace + "\",\"clean_name_en\":\"\",\"clean_name_id\":\"Bahasa translation\",\"category\":\"\",\"weight_class\":\"light/medium/heavy\",\"search_queries_id\":[\"q1\",\"q2\",\"q3\"],\"search_queries_en\":[\"q1\",\"q2\"]}\n\nCRITICAL: price_aed=NUMBER. pack_quantity=INTEGER (how many items in bundle/multipack, default 1). search_queries_id=Bahasa. JSON only:", "claude-sonnet-4-20250514", false, 2, 2048), 6);
       let data; try { data = parseJSON(formatted); } catch { throw new Error("Format failed."); }
       if (!data.product_name) throw new Error("Product not found.");
       if (!data.price_aed) { const pm = rawInfo.match(/AED\s*(\d+(?:\.\d+)?)/i); if (pm) data.price_aed = parseFloat(pm[1]); }
@@ -665,6 +812,7 @@ export default function App() {
   // ══════════ LOOKUP: Indo Search ══════════
   const runLookupIndoSearch = async () => {
     if (!dryRunData) return;
+    addDiag("info", "lookup_indo", `Starting Indo search for "${dryRunData.product_name}" queries=[${editableQueries.join(", ")}]`);
     setLoading(true); setAutoError(""); setIndoResults(null); setMarginData(null); setWaveStatus([]);
     const queries = editableQueries.filter(q => q.trim());
     if (!queries.length) { setAutoError("Add at least one query."); setLoading(false); return; }
@@ -832,13 +980,16 @@ export default function App() {
       <div style={{ marginBottom: "16px", borderBottom: "1px solid " + c.border, paddingBottom: "12px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
           <div>
-            <h1 style={{ fontFamily: "'Instrument Serif',serif", fontSize: "28px", fontWeight: 400, color: c.gold, margin: 0 }}>GT Cross-Trade <span style={{ fontSize: "12px", color: c.dimmer, fontFamily: "monospace" }}>v3.0</span></h1>
+            <h1 style={{ fontFamily: "'Instrument Serif',serif", fontSize: "28px", fontWeight: 400, color: c.gold, margin: 0 }}>GT Cross-Trade <span style={{ fontSize: "12px", color: c.dimmer, fontFamily: "monospace" }}>v3.1</span></h1>
             <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "4px", letterSpacing: "2px", textTransform: "uppercase" }}>UAE {"\u2190"} Indonesia {"\u00b7"} PIN {currentPin.slice(0,2)}** {"\u00b7"} {fxUpdated ? "FX " + fxUpdated.toLocaleDateString() : "FX: defaults"} {"\u00b7"} <span style={{ color: supabaseReady ? c.green : c.darkGold }}>{supabaseReady ? "\u25cf DB" : "\u25cb local"}</span></div>
           </div>
           <div style={{ display: "flex", gap: "12px", fontSize: "11px", alignItems: "flex-end" }}>
             <div style={{ textAlign: "right" }}><div style={{ color: c.dimmer }}>LOOKUPS</div><div style={{ color: c.gold, fontSize: "16px", fontWeight: 700 }}>{history.length}</div></div>
             <div style={{ textAlign: "right" }}><div style={{ color: c.dimmer }}>CANDIDATES</div><div style={{ color: c.green, fontSize: "16px", fontWeight: 700 }}>{candidates.length}</div></div>
             <button onClick={toggleTheme} style={{ background: c.surface2, border: "1px solid " + c.border2, color: c.dim, fontFamily: "monospace", fontSize: "10px", padding: "6px 10px", borderRadius: "4px", cursor: "pointer" }}>{dark ? "\u2600" : "\ud83c\udf19"}</button>
+            <button onClick={() => setShowDiag(!showDiag)} style={{ background: showDiag ? c.gold : c.surface2, border: "1px solid " + (showDiag ? c.gold : c.border2), color: showDiag ? c.btnText : (diagLogs.some(l => l.level === "error") ? c.red : c.dim), fontFamily: "monospace", fontSize: "10px", padding: "6px 10px", borderRadius: "4px", cursor: "pointer", position: "relative" }}>
+              DIAG{diagLogs.length > 0 && <span style={{ position: "absolute", top: -4, right: -4, width: 14, height: 14, borderRadius: "50%", background: diagLogs.some(l => l.level === "error") ? c.red : c.green, color: "#fff", fontSize: "8px", display: "flex", alignItems: "center", justifyContent: "center" }}>{diagLogs.filter(l => l.level === "error").length || "\u2713"}</span>}
+            </button>
           </div>
         </div>
       </div>
@@ -994,6 +1145,19 @@ export default function App() {
               </div>
             );
           })}
+        </div>}
+
+        {/* Filter warning — products exist but all hidden by filter */}
+        {(discProducts.length > 0 || noonResults.length > 0) && filteredDisc.length === 0 && !discScanning && <div style={{ textAlign: "center", padding: "30px 20px", background: dark ? "#2A2210" : "#FDF8ED", border: "1px solid " + c.darkGold + "44", borderRadius: "4px", margin: "8px 0" }}>
+          <div style={{ fontSize: "14px", color: c.darkGold, marginBottom: "6px" }}>{"\u26a0"} All {discSource === "noon" ? noonResults.length : discProducts.length} products hidden by filters</div>
+          <div style={{ fontSize: "11px", color: c.dim }}>
+            {discFilter.minReviews && <span>Min reviews: {discFilter.minReviews} {"\u00b7"} </span>}
+            {discFilter.minPrice && <span>Min price: AED {discFilter.minPrice} {"\u00b7"} </span>}
+            {discFilter.maxPrice && <span>Max price: AED {discFilter.maxPrice} {"\u00b7"} </span>}
+            {discFilter.dept !== "all" && <span>Dept: {discFilter.dept} {"\u00b7"} </span>}
+            {discFilter.search && <span>Search: "{discFilter.search}" {"\u00b7"} </span>}
+          </div>
+          <button onClick={() => setDiscFilter({ dept: "all", minPrice: "", maxPrice: "", minReviews: "", search: "" })} style={{ marginTop: "10px", padding: "6px 16px", fontSize: "10px", fontFamily: "monospace", cursor: "pointer", background: c.gold, color: c.btnText, border: "none", borderRadius: "3px", fontWeight: 700 }}>CLEAR ALL FILTERS</button>
         </div>}
 
         {discSource === "amazon" && !discScanning && discProducts.length === 0 && <div style={{ textAlign: "center", padding: "50px 20px" }}>
@@ -1215,6 +1379,43 @@ export default function App() {
             })}
           </div>
         )}
+      </div>}
+
+      {/* ══════════ DIAGNOSTIC PANEL ══════════ */}
+      {showDiag && <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, maxHeight: "45vh", background: dark ? "#0a0a0a" : "#1a1a1a", borderTop: "2px solid " + c.gold, zIndex: 9998, display: "flex", flexDirection: "column", fontFamily: "'JetBrains Mono',monospace" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 14px", borderBottom: "1px solid #333", flexShrink: 0 }}>
+          <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+            <span style={{ fontSize: "11px", color: c.gold, fontWeight: 700, letterSpacing: "1px" }}>DIAGNOSTICS</span>
+            <span style={{ fontSize: "10px", color: "#888" }}>{diagLogs.length} entries</span>
+            <span style={{ fontSize: "10px", padding: "1px 6px", borderRadius: "3px", background: diagLogs.filter(l => l.level === "error").length > 0 ? "#3a1a1a" : "#0D2E1A", color: diagLogs.filter(l => l.level === "error").length > 0 ? "#f87171" : "#2EAA5A" }}>
+              {diagLogs.filter(l => l.level === "error").length} errors
+            </span>
+          </div>
+          <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+            {["all", "error", "warn", "ok", "info"].map(f => (
+              <button key={f} onClick={() => setDiagFilter(f)} style={{ padding: "2px 8px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", background: diagFilter === f ? c.gold : "transparent", color: diagFilter === f ? "#0a0a0a" : "#888", border: "1px solid " + (diagFilter === f ? c.gold : "#333"), borderRadius: "3px", textTransform: "uppercase" }}>{f}</button>
+            ))}
+            <button onClick={clearDiag} style={{ padding: "2px 8px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", background: "transparent", color: "#f87171", border: "1px solid #5a2d2d", borderRadius: "3px" }}>CLEAR</button>
+            <button onClick={() => { const blob = new Blob([diagLogs.map(l => `${l.ts} [${l.level}] ${l.label}: ${l.message}${l.data ? "\n  DATA: " + l.data : ""}`).join("\n")], { type: "text/plain" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "gt-diag-" + new Date().toISOString().slice(0, 19) + ".txt"; a.click(); }} style={{ padding: "2px 8px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", background: "transparent", color: "#888", border: "1px solid #333", borderRadius: "3px" }}>EXPORT</button>
+            <button onClick={() => setShowDiag(false)} style={{ padding: "2px 8px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", background: "transparent", color: "#888", border: "1px solid #333", borderRadius: "3px" }}>{"\u2715"}</button>
+          </div>
+        </div>
+        <div style={{ flex: 1, overflowY: "auto", padding: "4px 0" }}>
+          {diagLogs.filter(l => diagFilter === "all" || l.level === diagFilter).map((l, i) => {
+            const levelColor = l.level === "error" ? "#f87171" : l.level === "warn" ? "#D4A843" : l.level === "ok" ? "#2EAA5A" : "#666";
+            const levelBg = l.level === "error" ? "#3a1a1a" : l.level === "warn" ? "#2A2210" : l.level === "ok" ? "#0D2E1A" : "transparent";
+            return (
+              <div key={i} style={{ padding: "3px 14px", borderBottom: "1px solid #1a1a1a", background: levelBg, fontSize: "10px", lineHeight: 1.5 }}>
+                <span style={{ color: "#555", marginRight: "8px" }}>{l.ts}</span>
+                <span style={{ color: levelColor, fontWeight: 700, marginRight: "6px", textTransform: "uppercase", display: "inline-block", width: "36px" }}>{l.level}</span>
+                <span style={{ color: c.gold, marginRight: "8px" }}>{l.label}</span>
+                <span style={{ color: "#ccc" }}>{l.message}</span>
+                {l.data && <div style={{ color: "#777", marginLeft: "90px", marginTop: "2px", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: "80px", overflowY: "auto", fontSize: "9px", background: "#111", padding: "4px 8px", borderRadius: "3px", border: "1px solid #222" }}>{l.data}</div>}
+              </div>
+            );
+          })}
+          {diagLogs.length === 0 && <div style={{ padding: "30px", textAlign: "center", color: "#555", fontSize: "11px" }}>No logs yet. Run a scan or lookup to see diagnostics here.</div>}
+        </div>
       </div>}
 
       </>)}
