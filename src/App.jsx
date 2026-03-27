@@ -307,7 +307,9 @@ export default function App() {
         if (r.status === 429) { if (attempt < retries) { setStage(s => s.replace(/ \(retry.*/, "") + " (retry...)"); await wait((attempt + 1) * (useSearch ? 15000 : 8000)); continue; } throw new Error("Rate limited. Wait 30s."); }
         if (!r.ok) { let d = ""; try { d = (await r.json()).error?.message || ""; } catch {} throw new Error("API " + r.status + ": " + (d || "error")); }
         const data = await r.json();
-        return data.content?.map(b => b.text || "").filter(Boolean).join("\n") || "";
+        const text = data.content?.map(b => b.text || "").filter(Boolean).join("\n") || "";
+        if (!text && data.content?.length) addDiag("warn", "callClaude", `Empty text but ${data.content.length} blocks: ${data.content.map(b => b.type).join(",")}`);
+        return text;
       } catch (err) { if (attempt === retries) throw err; await wait((attempt + 1) * 10000); }
     }
   };
@@ -596,7 +598,8 @@ export default function App() {
             const sdData = await sdRes.json();
             addDiag("ok", "lookup", `SD product OK, title: ${(sdData.title || "").slice(0, 60)}`);
             let priceAed = 0;
-            for (const f of [sdData.price, sdData.sale_price, sdData.mrp]) { if (f) { const pm = String(f).match(/[\d,.]+/); if (pm) { priceAed = parseFloat(pm[0].replace(/,/g, "")); if (priceAed) break; } } }
+            for (const f of [sdData.price, sdData.sale_price, sdData.mrp, sdData.buybox_price, sdData.pricing, sdData.current_price]) { if (f) { const pm = String(f).match(/[\d,.]+/); if (pm) { priceAed = parseFloat(pm[0].replace(/,/g, "")); if (priceAed) break; } } }
+            if (!priceAed) addDiag("warn", "lookup", `SD price=0, keys: ${Object.keys(sdData).filter(k => /price|cost|mrp/i.test(k)).join(",") || "none"}`);
             rawInfo = "Title: " + (sdData.title || "") + "\nPrice: AED " + priceAed + "\nBrand: " + (sdData.product_information?.Brand || sdData.product_information?.Manufacturer || "") + "\nRating: " + (sdData.average_rating || "") + "\nReviews: " + (sdData.total_ratings || "") + "\nASIN: " + asin;
           } else {
             let errBody = ""; try { errBody = await sdRes.text(); } catch {}
@@ -610,7 +613,7 @@ export default function App() {
       const fmtPrompt = "Convert:\n" + rawInfo + "\nURL: " + input + "\nMarketplace: " + marketplace + '\n\nReturn ONLY valid JSON (no text before/after):\n{"product_name":"","price_aed":NUMBER,"pack_quantity":NUMBER,"brand":"","rating":NUMBER,"reviews":NUMBER,"source":"' + marketplace + '","clean_name_en":"","clean_name_id":"Bahasa Indonesia translation","category":"electronics/kitchen/beauty/fashion/home/toys/sports/baby/office/other","weight_class":"light/medium/heavy","search_queries_id":["q1","q2","q3"],"search_queries_en":["q1"]}\nJSON only:';
       let data = null;
       for (let attempt = 0; attempt < 2 && !data; attempt++) {
-        const formatted = await runWithProgress(() => callClaude(fmtPrompt, "claude-sonnet-4-20250514", false, 1, 2048), 6);
+        const formatted = await runWithProgress(() => callClaude(fmtPrompt, "claude-haiku-4-5-20251001", false, 1, 2048), 6);
         addDiag("info", "lookup", `Format attempt ${attempt + 1}, len=${formatted.length}`, formatted.slice(0, 400));
         try { data = parseJSON(formatted); } catch (e) {
           addDiag("warn", "lookup", `Parse attempt ${attempt + 1} failed: ${e.message}`);
