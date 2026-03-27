@@ -209,9 +209,9 @@ export default function App() {
   const [shopeeCookieUpdatedAt, setShopeeCookieUpdatedAt] = useState(null);
   const [showCookieWizard, setShowCookieWizard] = useState(false);
   const [indoMode, setIndoMode] = useState("apify");
-  const [tokoActorId, setTokoActorId] = useState("jupri~tokopedia-scraper");
-  const [shopeeActorId, setShopeeActorId] = useState("fatihtahta~shopee-scraper");
-  const [noonActorId, setNoonActorId] = useState("buseta~noon-advanced-scraper");
+  const [tokoActorId, setTokoActorId] = useState("fatihtahta/tokopedia-scraper");
+  const [shopeeActorId, setShopeeActorId] = useState("fatihtahta/shopee-scraper");
+  const [noonActorId, setNoonActorId] = useState("buseta/noon-advanced-scraper");
   const [showActorConfig, setShowActorConfig] = useState(false);
 
   // Lookup state
@@ -250,6 +250,9 @@ export default function App() {
   const [noonKeyword, setNoonKeyword] = useState("");
   const [noonLoading, setNoonLoading] = useState(false);
   const [noonResults, setNoonResults] = useState([]);
+  // Scan controls
+  const [scanDept, setScanDept] = useState("all");
+  const scanAbortRef = useRef(false);
 
   // ── Diagnostic Log ──
   const [diagLogs, setDiagLogs] = useState([]);
@@ -310,9 +313,9 @@ export default function App() {
           if (cfg.apiKey) { apiKeyLoaded.current = true; setApiKey(cfg.apiKey); setApiKeyStatus("loaded"); }
           if (cfg.apifyKey) { apifyKeyLoaded.current = true; setApifyKey(cfg.apifyKey); setApifyStatus("loaded"); }
           if (cfg.scrapingDogKey) { sdKeyLoaded.current = true; setScrapingDogKey(cfg.scrapingDogKey); setSdStatus("loaded"); }
-          if (cfg.tokoActorId) setTokoActorId(cfg.tokoActorId);
-          if (cfg.shopeeActorId) setShopeeActorId(cfg.shopeeActorId);
-          if (cfg.noonActorId) setNoonActorId(cfg.noonActorId);
+          if (cfg.tokoActorId) { let id = cfg.tokoActorId.replace(/~/g, "/"); if (id.startsWith("jupri/")) id = "fatihtahta/tokopedia-scraper"; setTokoActorId(id); }
+          if (cfg.shopeeActorId) setShopeeActorId(cfg.shopeeActorId.replace(/~/g, "/"));
+          if (cfg.noonActorId) setNoonActorId(cfg.noonActorId.replace(/~/g, "/"));
           if (cfg.indoMode) setIndoMode(cfg.indoMode);
           if (cfg.freight) setFreight(cfg.freight);
           if (cfg.shopeeCookie) setShopeeCookie(cfg.shopeeCookie);
@@ -611,19 +614,26 @@ export default function App() {
   };
 
   // ══════════ DISCOVERY: Amazon.ae Bestseller Scan ══════════
+  const stopScan = () => { scanAbortRef.current = true; addDiag("warn", "disc_scan", "User requested STOP"); };
+
   const runBestsellerScan = async () => {
     if (!scrapingDogKey || !apiKey) { setDiscError("Add ScrapingDog + Claude keys first."); return; }
-    setDiscScanning(true); setDiscError(""); setDiscScanProgress({ done: 0, total: AMAZON_AE_DEPTS.length, current: "" });
-    addDiag("info", "disc_scan", `Starting bestseller scan across ${AMAZON_AE_DEPTS.length} departments`);
-    let allProducts = [];
+    scanAbortRef.current = false;
+    const depts = scanDept === "all" ? AMAZON_AE_DEPTS : AMAZON_AE_DEPTS.filter(d => d.slug === scanDept);
+    if (!depts.length) { setDiscError("No department selected."); return; }
+    setDiscScanning(true); setDiscError(""); setDiscScanProgress({ done: 0, total: depts.length, current: "" });
+    addDiag("info", "disc_scan", `Starting scan: ${depts.length} dept(s) [${depts.map(d => d.label).join(", ")}]`);
+    // Keep existing products from other departments when scanning a single dept
+    let allProducts = scanDept === "all" ? [] : discProducts.filter(p => !depts.some(d => d.label === p.department));
     let deptStats = [];
-    for (let i = 0; i < AMAZON_AE_DEPTS.length; i++) {
-      const dept = AMAZON_AE_DEPTS[i];
-      setDiscScanProgress({ done: i, total: AMAZON_AE_DEPTS.length, current: dept.label });
+    for (let i = 0; i < depts.length; i++) {
+      if (scanAbortRef.current) { addDiag("warn", "disc_scan", `Stopped after ${i}/${depts.length} depts (${allProducts.length} products)`); deptStats.push({ dept: "STOPPED", status: "ABORTED", detail: `${depts.length - i} skipped` }); break; }
+      const dept = depts[i];
+      setDiscScanProgress({ done: i, total: depts.length, current: dept.label });
       try {
         const pageUrl = "https://www.amazon.ae/gp/bestsellers/" + dept.slug;
         addDiag("info", "disc_dept", `[${i+1}/${AMAZON_AE_DEPTS.length}] ${dept.label}: fetching ${pageUrl}`);
-        const sdRes = await fetch("https://api.scrapingdog.com/scrape?api_key=" + encodeURIComponent(scrapingDogKey) + "&url=" + encodeURIComponent(pageUrl) + "&dynamic=true");
+        const sdRes = await fetch("https://api.scrapingdog.com/scrape?api_key=" + encodeURIComponent(scrapingDogKey) + "&url=" + encodeURIComponent(pageUrl) + "&dynamic=true&premium=true");
         if (!sdRes.ok) { addDiag("error", "disc_dept", `${dept.label}: ScrapingDog HTTP ${sdRes.status}`); deptStats.push({ dept: dept.label, status: "SD_ERROR", detail: `HTTP ${sdRes.status}` }); continue; }
         const html = await sdRes.text();
         addDiag("info", "disc_dept", `${dept.label}: got ${html.length} chars HTML`);
@@ -636,6 +646,7 @@ export default function App() {
         if (/captcha|robot|verify|blocked|denied/i.test(html.slice(0, 2000))) {
           addDiag("warn", "disc_dept", `${dept.label}: bot detection keywords found in HTML`);
         }
+        if (scanAbortRef.current) { addDiag("warn", "disc_scan", "Stopped before extraction"); break; }
         const parsed = await callClaude('Extract ALL products from this Amazon.ae Best Sellers HTML. Return ONLY JSON:\n{"products":[{"name":"product name","price_aed":NUMBER,"rating":NUMBER,"reviews":NUMBER,"asin":"ASIN if visible","url":"product URL if visible"}]}\nRULES:\n- price_aed must be NUMBER. "AED 49.00" = 49.\n- reviews must be INTEGER. "1,234" = 1234.\n- Extract ALL, aim 30-100.\nJSON only:\n' + html.slice(0, 60000), "claude-sonnet-4-20250514", false, 1, 4096);
         try {
           const data = parseJSON(parsed);
@@ -644,6 +655,7 @@ export default function App() {
           if (products.length > 0) addDiag("info", "disc_sample", `${dept.label} sample: ${products[0].name} AED${products[0].price_aed} reviews=${products[0].reviews}`);
           deptStats.push({ dept: dept.label, status: products.length > 0 ? "OK" : "EMPTY", detail: `${products.length} products` });
           allProducts.push(...products);
+          setDiscProducts([...allProducts]); // ── INCREMENTAL: show as each dept finishes ──
         } catch (e) { 
           addDiag("error", "disc_dept", `${dept.label}: parseJSON failed: ${e.message}`); 
           deptStats.push({ dept: dept.label, status: "PARSE_FAIL", detail: e.message }); 
@@ -654,13 +666,13 @@ export default function App() {
       }
       await wait(1500);
     }
-    addDiag("info", "disc_scan", `Scan complete: ${allProducts.length} total products from ${AMAZON_AE_DEPTS.length} depts`);
-    addDiag("info", "disc_summary", `Dept results: ${deptStats.map(d => d.dept + "=" + d.status).join(", ")}`);
-    setDiscScanProgress({ done: AMAZON_AE_DEPTS.length, total: AMAZON_AE_DEPTS.length, current: "Done" });
+    addDiag("info", "disc_scan", `Done: ${allProducts.length} products from ${depts.length} depts`);
+    addDiag("info", "disc_summary", deptStats.map(d => d.dept + "=" + d.status).join(", "));
+    setDiscScanProgress({ done: depts.length, total: depts.length, current: scanAbortRef.current ? "Stopped" : "Done" });
     const ts = new Date().toISOString();
     setDiscProducts(allProducts); setDiscLastScan(ts);
     await storeSet(currentPin + ":discovery", { products: allProducts, scannedAt: ts });
-    setDiscScanning(false);
+    setDiscScanning(false); scanAbortRef.current = false;
     if (allProducts.length === 0) {
       const failures = deptStats.filter(d => d.status !== "OK").map(d => d.dept + ": " + d.detail).join("; ");
       setDiscError("0 products extracted. Check DIAG panel. Failures: " + (failures || "unknown"));
@@ -1047,16 +1059,34 @@ export default function App() {
         </div>
 
         {discSource === "amazon" && <div style={{ marginBottom: "16px" }}>
-          <button onClick={runBestsellerScan} disabled={discScanning || !scrapingDogKey || !apiKey} style={{ ...btnGreen, padding: "12px 28px", fontSize: "12px", opacity: discScanning || !scrapingDogKey || !apiKey ? 0.4 : 1 }}>
-            {discScanning ? "SCANNING " + discScanProgress.done + "/" + discScanProgress.total + " \u2014 " + discScanProgress.current + "..." : discProducts.length > 0 ? "\ud83d\udd04 RESCAN (~$0.30)" : "\ud83d\udd0d SCAN BESTSELLERS (~$0.30)"}
-          </button>
-          {!scrapingDogKey && <span style={{ fontSize: "10px", color: c.red, marginLeft: "8px" }}>Add ScrapingDog key</span>}
-          {discScanning && <div style={{ marginTop: "8px", width: "100%", height: "3px", background: c.border, borderRadius: "2px" }}><div style={{ width: (discScanProgress.done / Math.max(1, discScanProgress.total) * 100) + "%", height: "100%", background: c.gold, borderRadius: "2px", transition: "width 0.5s" }} /></div>}
+          <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "8px", flexWrap: "wrap" }}>
+            <select value={scanDept} onChange={e => setScanDept(e.target.value)} disabled={discScanning} style={{ ...inputStyle, width: "auto", padding: "8px 12px", fontSize: "11px" }}>
+              <option value="all">All Departments ({AMAZON_AE_DEPTS.length})</option>
+              {AMAZON_AE_DEPTS.map(d => <option key={d.slug} value={d.slug}>{d.label}</option>)}
+            </select>
+            {!discScanning ? (
+              <button onClick={runBestsellerScan} disabled={!scrapingDogKey || !apiKey} style={{ ...btnGreen, padding: "10px 24px", fontSize: "11px", opacity: !scrapingDogKey || !apiKey ? 0.4 : 1 }}>
+                {discProducts.length > 0 ? "\ud83d\udd04" : "\ud83d\udd0d"} {scanDept === "all" ? "SCAN ALL (~$1.50)" : "SCAN " + (AMAZON_AE_DEPTS.find(d => d.slug === scanDept)?.label || "").toUpperCase() + " (~$0.06)"}
+              </button>
+            ) : (
+              <button onClick={stopScan} style={{ ...btnStyle, background: c.red, color: "#fff", padding: "10px 24px", fontSize: "11px" }}>
+                {"\u25a0"} STOP ({discScanProgress.done}/{discScanProgress.total})
+              </button>
+            )}
+            {!scrapingDogKey && <span style={{ fontSize: "10px", color: c.red }}>Add ScrapingDog key</span>}
+          </div>
+          {discScanning && <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <div style={{ flex: 1, height: "3px", background: c.border, borderRadius: "2px" }}><div style={{ width: (discScanProgress.done / Math.max(1, discScanProgress.total) * 100) + "%", height: "100%", background: c.gold, borderRadius: "2px", transition: "width 0.5s" }} /></div>
+            <span style={{ fontSize: "10px", color: c.gold, whiteSpace: "nowrap" }}>{discScanProgress.current}... {discProducts.length} products</span>
+          </div>}
         </div>}
 
-        {discSource === "noon" && <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
-          <input value={noonKeyword} onChange={e => setNoonKeyword(e.target.value)} onKeyDown={e => e.key === "Enter" && !noonLoading && runNoonDiscovery()} placeholder="Search Noon..." style={{ ...inputStyle, flex: 1, padding: "10px 12px" }} />
-          <button onClick={runNoonDiscovery} disabled={noonLoading || !noonKeyword.trim() || !apifyKey} style={{ ...btnStyle, opacity: noonLoading ? 0.4 : 1 }}>{noonLoading ? "SEARCHING..." : "\ud83d\udd0d SEARCH NOON"}</button>
+        {discSource === "noon" && <div style={{ marginBottom: "16px" }}>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <input value={noonKeyword} onChange={e => setNoonKeyword(e.target.value)} onKeyDown={e => e.key === "Enter" && !noonLoading && apifyKey && noonKeyword.trim() && runNoonDiscovery()} placeholder="Search Noon..." style={{ ...inputStyle, flex: 1, padding: "10px 12px" }} />
+            <button onClick={runNoonDiscovery} disabled={noonLoading || !noonKeyword.trim() || !apifyKey} style={{ ...btnStyle, opacity: (noonLoading || !noonKeyword.trim() || !apifyKey) ? 0.4 : 1 }}>{noonLoading ? "SEARCHING..." : "\ud83d\udd0d SEARCH NOON"}</button>
+          </div>
+          {!apifyKey && <div style={{ fontSize: "10px", color: c.red, marginTop: "6px" }}>{"\u26a0"} Enter your Apify API key above to enable Noon search</div>}
         </div>}
 
         {discError && <div style={{ padding: "12px", background: dark ? "#3a1a1a" : "#FEF2F2", border: "1px solid " + c.red + "44", borderRadius: "4px", marginBottom: "12px", fontSize: "12px", color: c.red }}>{"\u26a0 "}{discError}</div>}
@@ -1163,7 +1193,7 @@ export default function App() {
         {discSource === "amazon" && !discScanning && discProducts.length === 0 && <div style={{ textAlign: "center", padding: "50px 20px" }}>
           <div style={{ fontSize: "36px", marginBottom: "10px", opacity: 0.15 }}>{"\ud83d\udd0d"}</div>
           <div style={{ fontSize: "12px", color: c.dim }}>Click "Scan Bestsellers" to load ~3,000 products from Amazon.ae</div>
-          <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "6px" }}>One-time scan ~$0.30 {"\u00b7"} Free to browse after</div>
+          <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "6px" }}>Scan uses premium proxies (~$1.50 all depts) {"\u00b7"} Free to browse after</div>
         </div>}
       </div>}
 
