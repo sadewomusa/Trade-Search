@@ -319,6 +319,10 @@ export default function App() {
           const thinkText = data.content.filter(b => b.type === "thinking").map(b => b.thinking || "").filter(Boolean).join("\n");
           if (thinkText) addDiag("info", "callClaude", `Thinking block present (${thinkText.length} chars), but no text output`);
         }
+        if (!text) {
+          addDiag("error", "callClaude", "Empty response (no text blocks)", data.content ? JSON.stringify(data.content.map(b => b.type)) : "no content");
+          throw new Error("Claude returned empty response");
+        }
         return text;
       } catch (err) { if (attempt === retries) throw err; await wait((attempt + 1) * 10000); }
     }
@@ -644,7 +648,10 @@ export default function App() {
     const asinMatch = input.match(/\/dp\/([A-Z0-9]{10})/i) || input.match(/\/([A-Z0-9]{10})(?:[/?]|$)/i);
     const asin = asinMatch ? asinMatch[1] : "";
     try {
+      let sdParsed = null;
       let rawInfo = "";
+
+      // ── Part A: Try ScrapingDog → direct structured mapping ──
       if (asin && scrapingDogKey) {
         setStage("ScrapingDog Product API...");
         try {
@@ -657,30 +664,76 @@ export default function App() {
             let priceAed = 0;
             for (const f of [sdData.price, sdData.sale_price, sdData.mrp, sdData.buybox_price, sdData.pricing, sdData.current_price]) { if (f) { const pm = String(f).match(/[\d,.]+/); if (pm) { priceAed = parseFloat(pm[0].replace(/,/g, "")); if (priceAed) break; } } }
             if (!priceAed) addDiag("warn", "lookup", `SD price=0, keys: ${Object.keys(sdData).filter(k => /price|cost|mrp/i.test(k)).join(",") || "none"}`);
-            rawInfo = "Title: " + (sdData.title || "") + "\nPrice: AED " + priceAed + "\nBrand: " + (sdData.product_information?.Brand || sdData.product_information?.Manufacturer || "") + "\nRating: " + (sdData.average_rating || "") + "\nReviews: " + (sdData.total_ratings || "") + "\nASIN: " + asin;
+            if (sdData.title && priceAed > 0) {
+              sdParsed = {
+                product_name: sdData.title,
+                price_aed: priceAed,
+                brand: sdData.product_information?.Brand || sdData.product_information?.Manufacturer || "",
+                rating: parseFloat(sdData.average_rating) || 0,
+                reviews: parseInt(sdData.total_ratings) || 0,
+                pack_quantity: 1,
+                source: marketplace,
+                asin: asin
+              };
+              addDiag("ok", "lookup", `SD direct parse: "${sdParsed.product_name.slice(0, 50)}" AED ${sdParsed.price_aed}`);
+            } else {
+              // SD returned but missing critical fields, fall back to text path
+              rawInfo = "Title: " + (sdData.title || "") + "\nPrice: AED " + priceAed + "\nBrand: " + (sdData.product_information?.Brand || sdData.product_information?.Manufacturer || "") + "\nRating: " + (sdData.average_rating || "") + "\nReviews: " + (sdData.total_ratings || "") + "\nASIN: " + asin;
+              addDiag("warn", "lookup", "SD data incomplete, using text fallback");
+            }
           } else {
             let errBody = ""; try { errBody = await sdRes.text(); } catch {}
             addDiag("warn", "lookup", `SD product HTTP ${sdRes.status}, falling back to Claude`, errBody.slice(0, 300));
           }
         } catch (e) { addDiag("warn", "lookup", `SD product error: ${e.message}`); }
       }
-      if (!rawInfo) { setStage("Reading product..."); rawInfo = await runWithProgress(() => callClaude("Find product details for " + marketplace + " listing.\nURL: " + input + (asin ? "\nASIN: " + asin : "") + "\nI need: name, price AED, brand, rating, reviews, pack size.", "claude-sonnet-4-20250514", true, 2, 4096), 12); }
-      addDiag("info", "lookup", `rawInfo length: ${rawInfo.length}`, rawInfo.slice(0, 200));
-      setStage("Formatting..."); await wait(2000);
-      const fmtPrompt = "Convert:\n" + rawInfo + "\nURL: " + input + "\nMarketplace: " + marketplace + '\n\nReturn ONLY valid JSON (no text before/after):\n{"product_name":"","price_aed":NUMBER,"pack_quantity":NUMBER,"brand":"","rating":NUMBER,"reviews":NUMBER,"source":"' + marketplace + '","clean_name_en":"","clean_name_id":"Bahasa Indonesia translation","category":"electronics/kitchen/beauty/fashion/home/toys/sports/baby/office/other","weight_class":"light/medium/heavy","search_queries_id":["q1","q2","q3"],"search_queries_en":["q1"]}\nJSON only:';
+
       let data = null;
-      const fmtModels = ["claude-sonnet-4-20250514", "claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"];
-      for (let attempt = 0; attempt < fmtModels.length && !data; attempt++) {
-        const mdl = fmtModels[attempt];
-        if (attempt === 2) { setStage("Fallback format (Haiku)..."); addDiag("info", "lookup", "Sonnet failed twice, falling back to Haiku"); }
-        const formatted = await runWithProgress(() => callClaude(fmtPrompt, mdl, false, 1, 2048), 6);
-        addDiag("info", "lookup", `Format attempt ${attempt + 1} (${mdl.includes("haiku") ? "Haiku" : "Sonnet"}), len=${formatted.length}`, formatted.slice(0, 400));
-        try { data = parseJSON(formatted); } catch (e) {
-          addDiag("warn", "lookup", `Parse attempt ${attempt + 1} failed: ${e.message}`);
-          if (attempt < fmtModels.length - 1) { await wait(2000); setStage(attempt === 0 ? "Retrying format..." : "Retrying format (last)..."); }
+
+      if (sdParsed) {
+        // ── Part B: SD succeeded → only call Haiku for translation + classification ──
+        setStage("Translating...");
+        addDiag("info", "lookup", "SD path: Haiku translate only");
+        const transPrompt = 'Translate this product name to Bahasa Indonesia for marketplace search. Also classify it.\nProduct: "' + sdParsed.product_name + '"\nBrand: "' + sdParsed.brand + '"\nReturn ONLY valid JSON (no text before/after):\n{"clean_name_en":"short English name","clean_name_id":"Bahasa Indonesia translation","category":"electronics/kitchen/beauty/fashion/home/toys/sports/baby/office/other","weight_class":"light/medium/heavy","search_queries_id":["q1","q2","q3"],"search_queries_en":["q1"]}\nJSON only:';
+        const transModels = ["claude-haiku-4-5-20251001", "claude-sonnet-4-20250514"];
+        for (let attempt = 0; attempt < transModels.length && !data; attempt++) {
+          const mdl = transModels[attempt];
+          if (attempt > 0) { addDiag("info", "lookup", "Haiku translate failed, trying Sonnet"); setStage("Retrying translate..."); }
+          try {
+            const translated = await runWithProgress(() => callClaude(transPrompt, mdl, false, 1, 1024), 3);
+            addDiag("info", "lookup", `Translate attempt ${attempt + 1} (${mdl.includes("haiku") ? "Haiku" : "Sonnet"}), len=${translated.length}`, translated.slice(0, 400));
+            const trans = parseJSON(translated);
+            data = { ...sdParsed, ...trans, product_name: sdParsed.product_name, price_aed: sdParsed.price_aed, brand: sdParsed.brand, rating: sdParsed.rating, reviews: sdParsed.reviews, pack_quantity: sdParsed.pack_quantity };
+          } catch (e) {
+            addDiag("warn", "lookup", `Translate attempt ${attempt + 1} failed: ${e.message}`);
+            if (attempt < transModels.length - 1) await wait(1500);
+          }
         }
+        // If translation completely fails, still use SD data with basic defaults
+        if (!data) {
+          addDiag("warn", "lookup", "All translate attempts failed, using SD data with defaults");
+          const fallbackId = sdParsed.product_name;
+          data = { ...sdParsed, clean_name_en: sdParsed.product_name, clean_name_id: fallbackId, category: guessCategory(sdParsed.product_name), weight_class: "medium", search_queries_id: [fallbackId], search_queries_en: [sdParsed.product_name] };
+        }
+      } else {
+        // ── Legacy path: No SD data → full Claude format (existing flow) ──
+        if (!rawInfo) { setStage("Reading product..."); rawInfo = await runWithProgress(() => callClaude("Find product details for " + marketplace + " listing.\nURL: " + input + (asin ? "\nASIN: " + asin : "") + "\nI need: name, price AED, brand, rating, reviews, pack size.", "claude-sonnet-4-20250514", true, 2, 4096), 12); }
+        addDiag("info", "lookup", `rawInfo length: ${rawInfo.length}`, rawInfo.slice(0, 200));
+        setStage("Formatting...");
+        const fmtPrompt = "Convert:\n" + rawInfo + "\nURL: " + input + "\nMarketplace: " + marketplace + '\n\nReturn ONLY valid JSON (no text before/after):\n{"product_name":"","price_aed":NUMBER,"pack_quantity":NUMBER,"brand":"","rating":NUMBER,"reviews":NUMBER,"source":"' + marketplace + '","clean_name_en":"","clean_name_id":"Bahasa Indonesia translation","category":"electronics/kitchen/beauty/fashion/home/toys/sports/baby/office/other","weight_class":"light/medium/heavy","search_queries_id":["q1","q2","q3"],"search_queries_en":["q1"]}\nJSON only:';
+        const fmtModels = ["claude-sonnet-4-20250514", "claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"];
+        for (let attempt = 0; attempt < fmtModels.length && !data; attempt++) {
+          const mdl = fmtModels[attempt];
+          if (attempt === 2) { setStage("Fallback format (Haiku)..."); addDiag("info", "lookup", "Sonnet failed twice, falling back to Haiku"); }
+          const formatted = await runWithProgress(() => callClaude(fmtPrompt, mdl, false, 1, 2048), 6);
+          addDiag("info", "lookup", `Format attempt ${attempt + 1} (${mdl.includes("haiku") ? "Haiku" : "Sonnet"}), len=${formatted.length}`, formatted.slice(0, 400));
+          try { data = parseJSON(formatted); } catch (e) {
+            addDiag("warn", "lookup", `Parse attempt ${attempt + 1} failed: ${e.message}`);
+            if (attempt < fmtModels.length - 1) { await wait(2000); setStage(attempt === 0 ? "Retrying format..." : "Retrying format (last)..."); }
+          }
+        }
+        if (!data) throw new Error("Format failed — check DIAG log for details.");
       }
-      if (!data) throw new Error("Format failed — check DIAG log for details.");
       if (!data.product_name) throw new Error("Product not found.");
       if (!data.price_aed) { const pm = rawInfo.match(/AED\s*(\d+(?:[.,]\d+)?)/i); if (pm) data.price_aed = parseFloat(pm[1].replace(/,/g, "")); }
       data.source = data.source || marketplace; data.url = input;
