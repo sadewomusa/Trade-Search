@@ -313,9 +313,20 @@ export default function App() {
           if (cfg.apiKey) { apiKeyLoaded.current = true; setApiKey(cfg.apiKey); setApiKeyStatus("loaded"); }
           if (cfg.apifyKey) { apifyKeyLoaded.current = true; setApifyKey(cfg.apifyKey); setApifyStatus("loaded"); }
           if (cfg.scrapingDogKey) { sdKeyLoaded.current = true; setScrapingDogKey(cfg.scrapingDogKey); setSdStatus("loaded"); }
-          if (cfg.tokoActorId) { let id = cfg.tokoActorId.replace(/~/g, "/"); if (id.startsWith("jupri/")) id = "fatihtahta/tokopedia-scraper"; setTokoActorId(id); }
-          if (cfg.shopeeActorId) setShopeeActorId(cfg.shopeeActorId.replace(/~/g, "/"));
-          if (cfg.noonActorId) setNoonActorId(cfg.noonActorId.replace(/~/g, "/"));
+          // ── ACTOR ID VALIDATION: force-reset any broken/stale actor IDs ──
+          const VALID_TOKO = ["fatihtahta/tokopedia-scraper"];
+          const VALID_SHOPEE = ["fatihtahta/shopee-scraper"];
+          const VALID_NOON = ["buseta/noon-advanced-scraper", "shahidirfan/noon-com-scraper"];
+          const fixActor = (stored, valids, fallback) => {
+            if (!stored) return fallback;
+            const normalized = stored.replace(/~/g, "/");
+            if (valids.includes(normalized)) return normalized;
+            addDiag("warn", "config", `Resetting bad actor ID "${stored}" → "${fallback}"`);
+            return fallback;
+          };
+          setTokoActorId(fixActor(cfg.tokoActorId, VALID_TOKO, "fatihtahta/tokopedia-scraper"));
+          setShopeeActorId(fixActor(cfg.shopeeActorId, VALID_SHOPEE, "fatihtahta/shopee-scraper"));
+          setNoonActorId(fixActor(cfg.noonActorId, VALID_NOON, "buseta/noon-advanced-scraper"));
           if (cfg.indoMode) setIndoMode(cfg.indoMode);
           if (cfg.freight) setFreight(cfg.freight);
           if (cfg.shopeeCookie) setShopeeCookie(cfg.shopeeCookie);
@@ -400,7 +411,8 @@ export default function App() {
   const runApifyActor = async (actorId, input, label) => {
     addDiag("info", "apify_start", `${label} actor=${actorId}`, input);
     setStage("Starting " + label + "...");
-    const sr = await fetch("https://api.apify.com/v2/acts/" + encodeURIComponent(actorId) + "/runs?token=" + apifyKey, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) });
+    const apiActorId = actorId.replace(/\//g, "~"); // Apify API uses ~ not / in URLs
+    const sr = await fetch("https://api.apify.com/v2/acts/" + apiActorId + "/runs?token=" + apifyKey, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) });
     addDiag(sr.ok ? "info" : "error", "apify_run", `${label} POST status=${sr.status}`);
     if (!sr.ok) { const errBody = await sr.text().catch(() => ""); addDiag("error", "apify_run", `${label} response body`, errBody); throw new Error(label + " failed: " + sr.status); }
     const rd = await sr.json(); const runId = rd.data?.id; if (!runId) { addDiag("error", "apify_run", `${label} no run ID`, rd); throw new Error(label + " no run ID"); }
@@ -650,7 +662,9 @@ export default function App() {
         const parsed = await callClaude('Extract ALL products from this Amazon.ae Best Sellers HTML. Return ONLY JSON:\n{"products":[{"name":"product name","price_aed":NUMBER,"rating":NUMBER,"reviews":NUMBER,"asin":"ASIN if visible","url":"product URL if visible"}]}\nRULES:\n- price_aed must be NUMBER. "AED 49.00" = 49.\n- reviews must be INTEGER. "1,234" = 1234.\n- Extract ALL, aim 30-100.\nJSON only:\n' + html.slice(0, 60000), "claude-sonnet-4-20250514", false, 1, 4096);
         try {
           const data = parseJSON(parsed);
-          const products = (data.products || data.results || []).map(p => ({ name: p.name || p.title || "", price_aed: parseFloat(p.price_aed || p.price || 0) || 0, rating: parseFloat(p.rating || 0) || 0, reviews: parseInt(p.reviews || 0) || 0, asin: p.asin || "", url: p.url || "", department: dept.label, source: "Amazon.ae" })).filter(p => p.name && p.name.length > 5);
+          const products = (data.products || data.results || []).map(p => ({ name: p.name || p.title || "", price_aed: parseFloat(p.price_aed || p.price || 0) || 0, rating: parseFloat(p.rating || 0) || 0, reviews: parseInt(p.reviews || 0) || 0, asin: p.asin || "", url: p.url || "", department: dept.label, source: "Amazon.ae" })).filter(p => p.name && p.name.length > 5 && p.price_aed > 0 && !/please wait|loading|extract all|best sellers? |no products?|sign.?in|robot|captcha|access denied|error occurred|try again|javascript|DOCTYPE|<html|<div/i.test(p.name));
+          const junkCount = (data.products || data.results || []).length - products.length;
+          if (junkCount > 0) addDiag("warn", "disc_dept", `${dept.label}: filtered out ${junkCount} junk entries`);
           addDiag(products.length > 0 ? "ok" : "warn", "disc_dept", `${dept.label}: extracted ${products.length} products`);
           if (products.length > 0) addDiag("info", "disc_sample", `${dept.label} sample: ${products[0].name} AED${products[0].price_aed} reviews=${products[0].reviews}`);
           deptStats.push({ dept: dept.label, status: products.length > 0 ? "OK" : "EMPTY", detail: `${products.length} products` });
@@ -686,7 +700,9 @@ export default function App() {
     addDiag("info", "noon_disc", `Searching Noon for "${noonKeyword.trim()}" actor=${noonActorId}`);
     try {
       setStage("Noon scraper...");
-      const sr = await fetch("https://api.apify.com/v2/acts/" + encodeURIComponent(noonActorId) + "/runs?token=" + apifyKey + "&timeout=60", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scrape_type: "search", search_query: noonKeyword.trim() }) });
+      const noonApiActorId = noonActorId.replace(/\//g, "~");
+      addDiag("info", "noon_disc", `Calling actor=${noonActorId} (API: ${noonApiActorId})`);
+      const sr = await fetch("https://api.apify.com/v2/acts/" + noonApiActorId + "/runs?token=" + apifyKey + "&timeout=60", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scrape_type: "search", search_query: noonKeyword.trim() }) });
       addDiag(sr.ok ? "info" : "error", "noon_disc", `Noon actor POST status=${sr.status}`);
       if (!sr.ok) throw new Error("Noon actor failed: " + sr.status);
       const rd = await sr.json(); const runId = rd.data?.id, dsId = rd.data?.defaultDatasetId;
@@ -1033,9 +1049,14 @@ export default function App() {
           <button onClick={() => setShowActorConfig(!showActorConfig)} style={{ ...btnSec, padding: "3px 8px", fontSize: "8px" }}>{showActorConfig ? "\u25be" : "\u2699"}</button>
         </div>
         {showActorConfig && <div style={{ padding: "8px", background: c.cardBg, border: "1px solid " + c.border, borderRadius: "4px", marginBottom: "4px" }}>
-          {[{ l: "Tokopedia", v: tokoActorId, s: setTokoActorId }, { l: "Shopee", v: shopeeActorId, s: setShopeeActorId }, { l: "Noon", v: noonActorId, s: setNoonActorId }].map(a => (
-            <div key={a.l} style={{ display: "flex", gap: "6px", marginBottom: "4px", alignItems: "center" }}><span style={{ fontSize: "9px", color: c.dim, width: "60px" }}>{a.l}</span><input value={a.v} onChange={e => a.s(e.target.value)} style={{ ...inputStyle, flex: 1, padding: "3px 6px", fontSize: "10px" }} /></div>
+          {[{ l: "Tokopedia", v: tokoActorId, s: setTokoActorId, def: "fatihtahta/tokopedia-scraper" }, { l: "Shopee", v: shopeeActorId, s: setShopeeActorId, def: "fatihtahta/shopee-scraper" }, { l: "Noon", v: noonActorId, s: setNoonActorId, def: "buseta/noon-advanced-scraper" }].map(a => (
+            <div key={a.l} style={{ display: "flex", gap: "6px", marginBottom: "4px", alignItems: "center" }}>
+              <span style={{ fontSize: "9px", color: c.dim, width: "60px" }}>{a.l}</span>
+              <input value={a.v} onChange={e => a.s(e.target.value)} style={{ ...inputStyle, flex: 1, padding: "3px 6px", fontSize: "10px", borderColor: a.v === a.def ? c.green + "44" : /voyager|jupri/i.test(a.v) ? c.red : c.border2 }} />
+              {/voyager|jupri/i.test(a.v) && <span style={{ fontSize: "9px", color: c.red, fontWeight: 700 }}>{"\u2717 BAD"}</span>}
+            </div>
           ))}
+          <button onClick={() => { setTokoActorId("fatihtahta/tokopedia-scraper"); setShopeeActorId("fatihtahta/shopee-scraper"); setNoonActorId("buseta/noon-advanced-scraper"); addDiag("info", "config", "Actor IDs reset to defaults"); }} style={{ padding: "3px 10px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", background: c.gold, color: c.btnText, border: "none", borderRadius: "3px", fontWeight: 700, marginTop: "4px" }}>RESET TO DEFAULTS</button>
         </div>}
       </div>
 
