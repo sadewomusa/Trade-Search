@@ -70,13 +70,6 @@ const DEFAULT_KEYWORDS = [
   "teak serving bowl","banana leaf plate","tempeh starter","luwak coffee"
 ];
 
-// ══════════ NOON BRAINSTORM CATEGORIES ══════════
-const NOON_BRAINSTORM_CATS = [
-  "kitchen wooden","home decor natural","bamboo organizer","coconut products","essential oil","handmade craft",
-  "rattan storage","coffee accessories","spice grinder","herbal supplement","organic beauty","natural soap",
-  "ceramic tableware","wooden toys","incense burner","woven basket","teak wood","eco friendly kitchen",
-  "natural candle","aromatherapy","stone mortar"
-];
 
 // ══════════ BLOCKED-SIGNAL DETECTION ══════════
 const BLOCKED_SIGNALS = [
@@ -175,7 +168,6 @@ export default function App() {
   const [indoMode, setIndoMode] = useState("apify");
   const tokoActorId = "jupri/tokopedia-scraper";
   const shopeeActorId = "fatihtahta/shopee-scraper";
-  const noonActorId = "buseta/noon-advanced-scraper";
 
   // Brand blocklist
   const [customBrands, setCustomBrands] = useState([]);
@@ -208,16 +200,13 @@ export default function App() {
   // Discover state
   const [discSearchInput, setDiscSearchInput] = useState("");
   const [discAmazonResults, setDiscAmazonResults] = useState([]);
-  const [discNoonResults, setDiscNoonResults] = useState([]);
   const [discSearchingAmazon, setDiscSearchingAmazon] = useState(false);
-  const [discSearchingNoon, setDiscSearchingNoon] = useState(false);
   const [discError, setDiscError] = useState("");
   const [discValidatingIdx, setDiscValidatingIdx] = useState(null);
   const [discValidationResults, setDiscValidationResults] = useState({});
 
   // Brainstorm state
   const [bsAmazonProducts, setBsAmazonProducts] = useState([]);
-  const [bsNoonProducts, setBsNoonProducts] = useState([]);
   const [bsLastScan, setBsLastScan] = useState(null);
   const [bsDept, setBsDept] = useState("kitchen");
   const [bsStep, setBsStep] = useState(0); // 0=idle, 1=extracting subcats, 2=reviewing subcats, 3=scraping, 4=filtering, 5=done
@@ -230,8 +219,6 @@ export default function App() {
   const [bsSort, setBsSort] = useState("signal");
   const [bsValidatingIdx, setBsValidatingIdx] = useState(null);
   const [bsValidationResults, setBsValidationResults] = useState({});
-  const [bsNoonCats, setBsNoonCats] = useState(NOON_BRAINSTORM_CATS.map(c => ({ keyword: c, enabled: true })));
-  const [bsNoonScanning, setBsNoonScanning] = useState(false);
   const bsAbortRef = useRef(false);
 
   // Diagnostic Log
@@ -284,11 +271,8 @@ export default function App() {
         if (bl?.length) setCustomBrands(bl);
         const bsA = await storeGet(currentPin + ":brainstorm:amazon");
         if (bsA?.products?.length) { setBsAmazonProducts(bsA.products); setBsLastScan(bsA.scannedAt); }
-        const bsN = await storeGet(currentPin + ":brainstorm:noon");
-        if (bsN?.products?.length) setBsNoonProducts(bsN.products);
         const disc = await storeGet(currentPin + ":discover:results");
         if (disc?.amazon?.length) setDiscAmazonResults(disc.amazon);
-        if (disc?.noon?.length) setDiscNoonResults(disc.noon);
       } catch (e) { console.warn("Load failed:", e); }
       setStorageReady(true);
     })();
@@ -476,33 +460,11 @@ export default function App() {
       })).filter(p => p.name && p.name.length > 3 && p.price_aed > 0);
       addDiag(items.length > 0 ? "ok" : "warn", "disc_amazon", `${items.length} products extracted`);
       setDiscAmazonResults(items);
-      await storeSet(currentPin + ":discover:results", { amazon: items, noon: discNoonResults });
+      await storeSet(currentPin + ":discover:results", { amazon: items });
     } catch (e) { addDiag("error", "disc_amazon", e.message); setDiscError(e.message); }
     setDiscSearchingAmazon(false);
   };
 
-  // ══════════ DISCOVER: Noon Search (Apify) ══════════
-  const searchNoonApify = async (keyword) => {
-    if (!keyword.trim() || !apifyKey) return;
-    setDiscSearchingNoon(true); setDiscError("");
-    addDiag("info", "disc_noon", `Searching Noon: "${keyword}"`);
-    try {
-      const noonApiActorId = noonActorId.replace(/\//g, "~");
-      const sr = await fetch("https://api.apify.com/v2/acts/" + noonApiActorId + "/runs?token=" + apifyKey + "&timeout=60", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scrape_type: "search", search: keyword.trim(), country: "uae", sort_by: "popularity", max_reviews_per_product: 0 }) });
-      if (!sr.ok) throw new Error("Noon actor HTTP " + sr.status);
-      const rd = await sr.json(); const runId = rd.data?.id, dsId = rd.data?.defaultDatasetId;
-      let status = "RUNNING", pc = 0;
-      while (status === "RUNNING" || status === "READY") { if (pc > 25) break; await wait(3000); pc++; setStage("Noon (" + (pc * 3) + "s)..."); try { const pr = await fetch("https://api.apify.com/v2/actor-runs/" + runId + "?token=" + apifyKey); if (pr.ok) status = (await pr.json()).data?.status || "RUNNING"; } catch {} }
-      let items = [];
-      if (dsId) { try { const ir = await fetch("https://api.apify.com/v2/datasets/" + dsId + "/items?token=" + apifyKey + "&limit=30"); if (ir.ok) items = await ir.json(); } catch {} }
-      try { await fetch("https://api.apify.com/v2/actor-runs/" + runId + "/abort?token=" + apifyKey, { method: "POST" }); } catch {}
-      const mapped = items.map(i => ({ name: i.title || i.name || "", price_aed: parseFloat(i.price || i.sale_price || i.now || 0) || 0, rating: parseFloat(i.rating || 0) || 0, reviews: parseInt(i.reviews || i.ratings_count || 0) || 0, source: "Noon.ae", url: i.url || i.link || "", department: keyword, brand: i.brand || "" })).filter(p => p.name && p.price_aed > 0);
-      addDiag(mapped.length > 0 ? "ok" : "warn", "disc_noon", `${mapped.length} products`);
-      setDiscNoonResults(mapped);
-      await storeSet(currentPin + ":discover:results", { amazon: discAmazonResults, noon: mapped });
-    } catch (e) { addDiag("error", "disc_noon", e.message); setDiscError(e.message); }
-    setDiscSearchingNoon(false); setStage("");
-  };
 
   // ══════════ BRAINSTORM: Amazon Pipeline ══════════
   const bsExtractSubcats = async () => {
@@ -611,61 +573,20 @@ export default function App() {
     await storeSet(currentPin + ":brainstorm:amazon", { products: allProducts, scannedAt: ts });
   };
 
-  // ══════════ BRAINSTORM: Noon Pipeline ══════════
-  const bsRunNoon = async () => {
-    if (!apifyKey) { setBsError("Add Apify key."); return; }
-    const enabled = bsNoonCats.filter(c => c.enabled);
-    if (!enabled.length) { setBsError("Enable at least one category."); return; }
-    bsAbortRef.current = false;
-    setBsNoonScanning(true); setBsError("");
-    setBsProgress({ done: 0, total: enabled.length, current: "" });
-    let allProducts = [];
-    for (let i = 0; i < enabled.length; i++) {
-      if (bsAbortRef.current) break;
-      const cat = enabled[i];
-      setBsProgress({ done: i, total: enabled.length, current: cat.keyword });
-      try {
-        setStage("Noon: " + cat.keyword + "...");
-        const noonApiActorId = noonActorId.replace(/\//g, "~");
-        const sr = await fetch("https://api.apify.com/v2/acts/" + noonApiActorId + "/runs?token=" + apifyKey + "&timeout=60", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scrape_type: "search", search: cat.keyword, country: "uae", sort_by: "popularity", max_reviews_per_product: 0 }) });
-        if (!sr.ok) { addDiag("error", "bs_noon", `${cat.keyword}: HTTP ${sr.status}`); continue; }
-        const rd = await sr.json(); const runId = rd.data?.id, dsId = rd.data?.defaultDatasetId;
-        let status = "RUNNING", pc = 0;
-        while (status === "RUNNING" || status === "READY") { if (pc > 20) break; await wait(3000); pc++; try { const pr = await fetch("https://api.apify.com/v2/actor-runs/" + runId + "?token=" + apifyKey); if (pr.ok) status = (await pr.json()).data?.status || "RUNNING"; } catch {} }
-        let items = [];
-        if (dsId) { try { const ir = await fetch("https://api.apify.com/v2/datasets/" + dsId + "/items?token=" + apifyKey + "&limit=30"); if (ir.ok) items = await ir.json(); } catch {} }
-        try { await fetch("https://api.apify.com/v2/actor-runs/" + runId + "/abort?token=" + apifyKey, { method: "POST" }); } catch {}
-        const mapped = items.map(it => ({
-          name: it.title || it.name || "", price_aed: parseFloat(it.price || it.sale_price || 0) || 0, rating: parseFloat(it.rating || 0) || 0, reviews: parseInt(it.reviews || it.ratings_count || 0) || 0,
-          source: "Noon.ae", url: it.url || it.link || "", department: cat.keyword, brand: it.brand || "",
-          isBranded: isBrandBlocked(it.title || it.name || "", it.brand || "", allBrands),
-          indoSignal: getIndoSignalScore(it.title || it.name || "")
-        })).filter(p => p.name && p.price_aed > 0);
-        addDiag(mapped.length > 0 ? "ok" : "warn", "bs_noon", `${cat.keyword}: ${mapped.length} products`);
-        allProducts.push(...mapped);
-        setBsNoonProducts([...allProducts]);
-      } catch (e) { addDiag("error", "bs_noon", `${cat.keyword}: ${e.message}`); }
-      await wait(1000);
-    }
-    setBsNoonProducts(allProducts);
-    setBsProgress({ done: enabled.length, total: enabled.length, current: "Done" });
-    setBsNoonScanning(false); setStage("");
-    await storeSet(currentPin + ":brainstorm:noon", { products: allProducts, scannedAt: new Date().toISOString() });
-  };
 
   // ══════════ LOOKUP ══════════
   const runDryRun = async () => {
     const input = url.trim();
     if (!input || !input.startsWith("http")) { setAutoError("Invalid URL"); return; }
-    if (!['amazon.ae','noon.com','noon.ae'].some(d => input.includes(d))) { setAutoError("Only Amazon.ae and Noon"); return; }
+    if (!input.includes('amazon.ae')) { setAutoError("Only Amazon.ae URLs supported"); return; }
     if (!apiKey) { setApiKeyStatus("missing"); return; }
     setLoading(true); setAutoError(""); setDryRunData(null); setUaeSimilar(null); setIndoResults(null); setMarginData(null); setEditableQueries([]); setActiveSection(0); setWaveStatus([]);
-    const isNoon = input.includes("noon.com"); const marketplace = isNoon ? "Noon UAE" : "Amazon.ae";
+    const marketplace = "Amazon.ae";
     const asinMatch = input.match(/\/dp\/([A-Z0-9]{10})/i) || input.match(/\/([A-Z0-9]{10})(?:[/?]|$)/i);
     const asin = asinMatch ? asinMatch[1] : "";
     try {
       let rawInfo = "";
-      if (!isNoon && asin && scrapingDogKey) {
+      if (asin && scrapingDogKey) {
         setStage("ScrapingDog Product API...");
         try {
           const sdUrl = "https://api.scrapingdog.com/amazon/product?api_key=" + encodeURIComponent(scrapingDogKey) + "&domain=ae&asin=" + asin;
@@ -766,7 +687,7 @@ export default function App() {
   const candidates = history.filter(h => (h.margins?.median?.margin || 0) >= MARGIN_THRESHOLD.candidate);
 
   // Brainstorm filtered products
-  const bsAllProducts = [...bsAmazonProducts, ...bsNoonProducts];
+  const bsAllProducts = [...bsAmazonProducts];
   const bsFiltered = bsAllProducts.filter(p => {
     if (bsHideBranded && p.isBranded) return false;
     if (bsFilter.search && !p.name.toLowerCase().includes(bsFilter.search.toLowerCase())) return false;
@@ -782,7 +703,7 @@ export default function App() {
     return 0;
   });
 
-  const discAllProducts = [...discAmazonResults, ...discNoonResults];
+  const discAllProducts = [...discAmazonResults];
   const getQty = () => qtyMode === "container" ? Math.floor(24000 / (WEIGHT_KG[dryRunData?.weight_class || "medium"] || 1)) : qtyMode === "custom" ? qty : 1;
   const cookieAgeDays = shopeeCookieUpdatedAt ? Math.floor((Date.now() - shopeeCookieUpdatedAt) / 86400000) : null;
   const cookieColor = cookieAgeDays === null ? c.dimmer : cookieAgeDays <= 10 ? c.green : cookieAgeDays <= 12 ? c.darkGold : c.red;
@@ -804,7 +725,6 @@ export default function App() {
             <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {p.url ? <a href={p.url} target="_blank" rel="noopener" style={{ color: c.text, textDecoration: "none" }}>{p.name}</a> : p.name}
               {showSubcat && p.subcategory && <span style={{ color: c.dimmest, fontSize: "9px" }}>{" \u00b7 "}{p.subcategory}</span>}
-              {p.source === "Noon.ae" && <span style={{ marginLeft: 4, fontSize: "8px", padding: "1px 4px", background: dark ? "#2A2210" : "#FDF8ED", color: c.darkGold, borderRadius: "2px" }}>Noon</span>}
             </div>
             <div style={{ color: c.gold, fontWeight: 700, textAlign: "right" }}>{fmtAED(p.price_aed)}</div>
             <div style={{ textAlign: "center", color: c.darkGold, fontSize: "10px" }}>{p.rating > 0 ? "\u2605" + p.rating.toFixed(1) : "\u2014"}</div>
@@ -910,7 +830,7 @@ export default function App() {
       {mode === "brainstorm" && isBrainstormPin && <div style={secStyle}>
 
         {/* Status bar */}
-        {(loading || bsStep === 3 || bsNoonScanning) && stage && <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" }}><Spinner /><span style={{ fontSize: "12px", color: c.gold }}>{stage}</span></div>}
+        {(loading || bsStep === 3) && stage && <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" }}><Spinner /><span style={{ fontSize: "12px", color: c.gold }}>{stage}</span></div>}
         {bsError && <div style={{ padding: "10px", background: dark ? "#3a1a1a" : "#FEF2F2", border: "1px solid " + c.red + "44", borderRadius: "4px", marginBottom: "12px", fontSize: "11px", color: c.red }}>{bsError}</div>}
 
         {/* ── AMAZON BRAINSTORM ── */}
@@ -971,31 +891,6 @@ export default function App() {
           </div>}
         </div>
 
-        {/* ── NOON BRAINSTORM ── */}
-        <div style={{ marginBottom: "16px", padding: "12px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
-            <span style={{ fontSize: "10px", color: c.gold, letterSpacing: "1px", fontWeight: 700 }}>NOON CATEGORY SCAN</span>
-            <span style={{ fontSize: "8px", color: c.dimmer, padding: "1px 5px", border: "1px solid " + c.border, borderRadius: "3px" }}>~$0.10/cat</span>
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", marginBottom: "10px" }}>
-            {bsNoonCats.map((cat, i) => (
-              <button key={i} onClick={() => { const u = [...bsNoonCats]; u[i].enabled = !u[i].enabled; setBsNoonCats(u); }} style={{ padding: "3px 8px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", background: cat.enabled ? (dark ? "#0D2E1A" : "#E8F5EC") : "transparent", color: cat.enabled ? c.green : c.dimmest, border: "1px solid " + (cat.enabled ? c.green + "44" : c.border), borderRadius: "3px" }}>{cat.keyword}</button>
-            ))}
-          </div>
-          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-            <button onClick={bsRunNoon} disabled={bsNoonScanning || !apifyKey} style={{ ...btnGreen, padding: "10px 20px", fontSize: "11px", opacity: (bsNoonScanning || !apifyKey) ? 0.4 : 1 }}>
-              {bsNoonScanning ? "\u23f3 SCANNING..." : "\ud83d\udd04 SCAN NOON"} (~${(bsNoonCats.filter(c => c.enabled).length * 0.10).toFixed(2)})
-            </button>
-            {bsNoonProducts.length > 0 && <span style={{ fontSize: "10px", color: c.green }}>{bsNoonProducts.length} products</span>}
-            {bsNoonProducts.length > 0 && <button onClick={() => exportBrainstormCSV(bsNoonProducts, "noon")} style={{ ...btnSec, padding: "4px 12px", fontSize: "9px" }}>{"\ud83d\udcca"} CSV</button>}
-          </div>
-          {bsNoonScanning && <div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "8px" }}>
-            <div style={{ flex: 1, height: "3px", background: c.border, borderRadius: "2px" }}><div style={{ width: (bsProgress.done / Math.max(1, bsProgress.total) * 100) + "%", height: "100%", background: c.gold, borderRadius: "2px" }} /></div>
-            <span style={{ fontSize: "10px", color: c.gold }}>{bsProgress.current} {bsProgress.done}/{bsProgress.total}</span>
-            <button onClick={() => { bsAbortRef.current = true; }} style={{ ...btnSec, padding: "3px 8px", fontSize: "9px", color: c.red, borderColor: c.red }}>{"\u25a0"}</button>
-          </div>}
-        </div>
-
         {/* ── BRAND BLOCKLIST ── */}
         <div style={{ marginBottom: "16px" }}>
           <button onClick={() => setShowBrandList(!showBrandList)} style={{ width: "100%", padding: "8px 12px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px", cursor: "pointer", display: "flex", justifyContent: "space-between", color: c.dim, fontFamily: "monospace", fontSize: "10px" }}>
@@ -1037,7 +932,7 @@ export default function App() {
         {/* ── RESULTS TABLE ── */}
         {bsFiltered.length > 0 && <ProductTable products={bsFiltered} validatingIdx={bsValidatingIdx} validationResults={bsValidationResults} onValidate={p => validateProduct(p, setBsValidatingIdx, setBsValidationResults)} showSubcat showSignal />}
 
-        {bsAllProducts.length === 0 && bsStep === 0 && !bsNoonScanning && <div style={{ textAlign: "center", padding: "40px 20px" }}>
+        {bsAllProducts.length === 0 && bsStep === 0 && <div style={{ textAlign: "center", padding: "40px 20px" }}>
           <div style={{ fontSize: "36px", marginBottom: "10px", opacity: 0.15 }}>{"\ud83e\udde0"}</div>
           <div style={{ fontSize: "12px", color: c.dim }}>Select a department and brainstorm to discover niche products</div>
           <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "6px" }}>Sub-category drilling surfaces hidden gems that top-level scans miss</div>
@@ -1067,38 +962,34 @@ export default function App() {
         {/* ── SEARCH ── */}
         <div style={{ marginBottom: "16px", padding: "12px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px" }}>
           <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "10px" }}>
-            <input value={discSearchInput} onChange={e => setDiscSearchInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && discSearchInput.trim()) { searchAmazonSD(discSearchInput); searchNoonApify(discSearchInput); } }} placeholder="Search keyword (e.g. coconut bowl, rattan basket)..." style={{ ...inputStyle, flex: 1, padding: "10px 12px" }} />
+            <input value={discSearchInput} onChange={e => setDiscSearchInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && discSearchInput.trim()) { searchAmazonSD(discSearchInput); } }} placeholder="Search keyword (e.g. coconut bowl, rattan basket)..." style={{ ...inputStyle, flex: 1, padding: "10px 12px" }} />
           </div>
           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
             <button onClick={() => searchAmazonSD(discSearchInput)} disabled={discSearchingAmazon || !discSearchInput.trim() || !scrapingDogKey} style={{ ...btnGreen, padding: "8px 16px", fontSize: "10px", opacity: (discSearchingAmazon || !discSearchInput.trim() || !scrapingDogKey) ? 0.4 : 1 }}>
               {discSearchingAmazon ? <><Spinner />{" Searching..."}</> : "SEARCH AMAZON (~$0.06)"}
             </button>
-            <button onClick={() => searchNoonApify(discSearchInput)} disabled={discSearchingNoon || !discSearchInput.trim() || !apifyKey} style={{ ...btnStyle, background: c.darkGold, padding: "8px 16px", fontSize: "10px", opacity: (discSearchingNoon || !discSearchInput.trim() || !apifyKey) ? 0.4 : 1 }}>
-              {discSearchingNoon ? <><Spinner />{" Searching..."}</> : "SEARCH NOON (~$0.05)"}
-            </button>
-            {discAllProducts.length > 0 && <span style={{ fontSize: "10px", color: c.green, display: "flex", alignItems: "center" }}>{discAmazonResults.length} Amazon + {discNoonResults.length} Noon</span>}
+            {discAllProducts.length > 0 && <span style={{ fontSize: "10px", color: c.green, display: "flex", alignItems: "center" }}>{discAmazonResults.length} products</span>}
           </div>
           {!scrapingDogKey && <div style={{ fontSize: "9px", color: c.red, marginTop: "6px" }}>Add ScrapingDog key for Amazon search</div>}
-          {!apifyKey && <div style={{ fontSize: "9px", color: c.red, marginTop: "4px" }}>Add Apify key for Noon search</div>}
         </div>
 
         {discError && <div style={{ padding: "10px", background: dark ? "#3a1a1a" : "#FEF2F2", border: "1px solid " + c.red + "44", borderRadius: "4px", marginBottom: "12px", fontSize: "11px", color: c.red }}>{discError}</div>}
-        {(discSearchingAmazon || discSearchingNoon) && stage && <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" }}><Spinner /><span style={{ fontSize: "12px", color: c.gold }}>{stage}</span></div>}
+        {discSearchingAmazon && stage && <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" }}><Spinner /><span style={{ fontSize: "12px", color: c.gold }}>{stage}</span></div>}
 
         {/* Results */}
         {discAllProducts.length > 0 && <ProductTable products={discAllProducts} validatingIdx={discValidatingIdx} validationResults={discValidationResults} onValidate={p => validateProduct(p, setDiscValidatingIdx, setDiscValidationResults)} showSubcat={false} showSignal={false} />}
 
-        {discAllProducts.length === 0 && !discSearchingAmazon && !discSearchingNoon && <div style={{ textAlign: "center", padding: "40px 20px" }}>
+        {discAllProducts.length === 0 && !discSearchingAmazon && <div style={{ textAlign: "center", padding: "40px 20px" }}>
           <div style={{ fontSize: "36px", marginBottom: "10px", opacity: 0.15 }}>{"\ud83d\udd0d"}</div>
-          <div style={{ fontSize: "12px", color: c.dim }}>Click a keyword above or type your own to search Amazon.ae and Noon</div>
-          <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "6px" }}>Amazon: ~$0.06/search via ScrapingDog {"\u00b7"} Noon: ~$0.05/search via Apify</div>
+          <div style={{ fontSize: "12px", color: c.dim }}>Click a keyword above or type your own to search Amazon.ae</div>
+          <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "6px" }}>~$0.06/search via ScrapingDog</div>
         </div>}
       </div>}
 
       {/* ══════════ LOOKUP TAB ══════════ */}
       {mode === "auto" && <div style={secStyle}>
         <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
-          <input type="text" value={url} onChange={e => setUrl(e.target.value)} onKeyDown={e => e.key === "Enter" && !loading && runDryRun()} placeholder="Paste Amazon.ae or Noon URL..." style={{ ...inputStyle, flex: 1, padding: "12px 14px" }} />
+          <input type="text" value={url} onChange={e => setUrl(e.target.value)} onKeyDown={e => e.key === "Enter" && !loading && runDryRun()} placeholder="Paste Amazon.ae product URL..." style={{ ...inputStyle, flex: 1, padding: "12px 14px" }} />
           <button onClick={runDryRun} disabled={loading || !url.trim() || cooldown > 0} style={{ ...btnStyle, padding: "12px 20px", fontSize: "11px", opacity: loading || !url.trim() ? 0.4 : 1, whiteSpace: "nowrap" }}>{cooldown > 0 ? "WAIT " + cooldown + "s" : loading && !dryRunData ? "READING..." : "QUICK CHECK ~$0.02"}</button>
         </div>
         {loading && stage && <div style={{ marginBottom: "12px" }}><div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}><Spinner /><span style={{ fontSize: "12px", color: c.gold }}>{stage}</span></div>{progress > 0 && <div style={{ width: "100%", height: "3px", background: c.border, borderRadius: "2px" }}><div style={{ width: progress + "%", height: "100%", background: c.gold, borderRadius: "2px", transition: "width 0.3s" }} /></div>}</div>}
