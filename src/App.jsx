@@ -307,8 +307,12 @@ export default function App() {
         if (r.status === 429) { if (attempt < retries) { setStage(s => s.replace(/ \(retry.*/, "") + " (retry...)"); await wait((attempt + 1) * (useSearch ? 15000 : 8000)); continue; } throw new Error("Rate limited. Wait 30s."); }
         if (!r.ok) { let d = ""; try { d = (await r.json()).error?.message || ""; } catch {} throw new Error("API " + r.status + ": " + (d || "error")); }
         const data = await r.json();
-        const text = data.content?.map(b => b.text || "").filter(Boolean).join("\n") || "";
-        if (!text && data.content?.length) addDiag("warn", "callClaude", `Empty text but ${data.content.length} blocks: ${data.content.map(b => b.type).join(",")}`);
+        let text = data.content?.filter(b => b.type === "text").map(b => b.text || "").filter(Boolean).join("\n") || "";
+        if (!text && data.content?.length) {
+          addDiag("warn", "callClaude", `No text blocks among ${data.content.length} blocks: ${data.content.map(b => b.type).join(",")}`);
+          const thinkText = data.content.filter(b => b.type === "thinking").map(b => b.thinking || "").filter(Boolean).join("\n");
+          if (thinkText) addDiag("info", "callClaude", `Thinking block present (${thinkText.length} chars), but no text output`);
+        }
         return text;
       } catch (err) { if (attempt === retries) throw err; await wait((attempt + 1) * 10000); }
     }
@@ -612,12 +616,15 @@ export default function App() {
       setStage("Formatting..."); await wait(2000);
       const fmtPrompt = "Convert:\n" + rawInfo + "\nURL: " + input + "\nMarketplace: " + marketplace + '\n\nReturn ONLY valid JSON (no text before/after):\n{"product_name":"","price_aed":NUMBER,"pack_quantity":NUMBER,"brand":"","rating":NUMBER,"reviews":NUMBER,"source":"' + marketplace + '","clean_name_en":"","clean_name_id":"Bahasa Indonesia translation","category":"electronics/kitchen/beauty/fashion/home/toys/sports/baby/office/other","weight_class":"light/medium/heavy","search_queries_id":["q1","q2","q3"],"search_queries_en":["q1"]}\nJSON only:';
       let data = null;
-      for (let attempt = 0; attempt < 2 && !data; attempt++) {
-        const formatted = await runWithProgress(() => callClaude(fmtPrompt, "claude-haiku-4-5-20251001", false, 1, 2048), 6);
-        addDiag("info", "lookup", `Format attempt ${attempt + 1}, len=${formatted.length}`, formatted.slice(0, 400));
+      const fmtModels = ["claude-sonnet-4-20250514", "claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"];
+      for (let attempt = 0; attempt < fmtModels.length && !data; attempt++) {
+        const mdl = fmtModels[attempt];
+        if (attempt === 2) { setStage("Fallback format (Haiku)..."); addDiag("info", "lookup", "Sonnet failed twice, falling back to Haiku"); }
+        const formatted = await runWithProgress(() => callClaude(fmtPrompt, mdl, false, 1, 2048), 6);
+        addDiag("info", "lookup", `Format attempt ${attempt + 1} (${mdl.includes("haiku") ? "Haiku" : "Sonnet"}), len=${formatted.length}`, formatted.slice(0, 400));
         try { data = parseJSON(formatted); } catch (e) {
           addDiag("warn", "lookup", `Parse attempt ${attempt + 1} failed: ${e.message}`);
-          if (attempt === 0) { await wait(2000); setStage("Retrying format..."); }
+          if (attempt < fmtModels.length - 1) { await wait(2000); setStage(attempt === 0 ? "Retrying format..." : "Retrying format (last)..."); }
         }
       }
       if (!data) throw new Error("Format failed — check DIAG log for details.");
