@@ -456,7 +456,7 @@ export default function App() {
     setDiscSearchingAmazon(true); setDiscError("");
     addDiag("info", "disc_amazon", `Searching Amazon.ae: "${keyword}"`);
     try {
-      const sdUrl = "https://api.scrapingdog.com/amazon/search?api_key=" + encodeURIComponent(scrapingDogKey) + "&domain=ae&keyword=" + encodeURIComponent(keyword.trim()) + "&page=1";
+      const sdUrl = "https://api.scrapingdog.com/amazon/search?api_key=" + encodeURIComponent(scrapingDogKey) + "&domain=ae&query=" + encodeURIComponent(keyword.trim()) + "&page=1";
       const r = await fetch(sdUrl);
       if (!r.ok) throw new Error("ScrapingDog HTTP " + r.status);
       const data = await r.json();
@@ -669,24 +669,39 @@ export default function App() {
         setStage("ScrapingDog Product API...");
         try {
           const sdUrl = "https://api.scrapingdog.com/amazon/product?api_key=" + encodeURIComponent(scrapingDogKey) + "&domain=ae&asin=" + asin;
+          addDiag("info", "lookup", `SD product API: domain=ae, asin=${asin}`);
           const sdRes = await fetch(sdUrl);
           if (sdRes.ok) {
             const sdData = await sdRes.json();
+            addDiag("ok", "lookup", `SD product OK, title: ${(sdData.title || "").slice(0, 60)}`);
             let priceAed = 0;
             for (const f of [sdData.price, sdData.sale_price, sdData.mrp]) { if (f) { const pm = String(f).match(/[\d,.]+/); if (pm) { priceAed = parseFloat(pm[0].replace(/,/g, "")); if (priceAed) break; } } }
             rawInfo = "Title: " + (sdData.title || "") + "\nPrice: AED " + priceAed + "\nBrand: " + (sdData.product_information?.Brand || sdData.product_information?.Manufacturer || "") + "\nRating: " + (sdData.average_rating || "") + "\nReviews: " + (sdData.total_ratings || "") + "\nASIN: " + asin;
+          } else {
+            let errBody = ""; try { errBody = await sdRes.text(); } catch {}
+            addDiag("warn", "lookup", `SD product HTTP ${sdRes.status}, falling back to Claude`, errBody.slice(0, 300));
           }
-        } catch {}
+        } catch (e) { addDiag("warn", "lookup", `SD product error: ${e.message}`); }
       }
       if (!rawInfo) { setStage("Reading product..."); rawInfo = await runWithProgress(() => callClaude("Find product details for " + marketplace + " listing.\nURL: " + input + (asin ? "\nASIN: " + asin : "") + "\nI need: name, price AED, brand, rating, reviews, pack size.", "claude-sonnet-4-20250514", true, 2, 4096), 12); }
+      addDiag("info", "lookup", `rawInfo length: ${rawInfo.length}`, rawInfo.slice(0, 200));
       setStage("Formatting..."); await wait(2000);
-      const formatted = await runWithProgress(() => callClaude("Convert:\n" + rawInfo + "\nURL: " + input + "\nMarketplace: " + marketplace + '\n\n{"product_name":"","price_aed":NUMBER,"pack_quantity":NUMBER,"brand":"","rating":NUMBER,"reviews":NUMBER,"source":"' + marketplace + '","clean_name_en":"","clean_name_id":"Bahasa","category":"","weight_class":"light/medium/heavy","search_queries_id":["q1","q2","q3"],"search_queries_en":["q1"]}\nJSON only:', "claude-sonnet-4-20250514", false, 2, 2048), 6);
-      let data; try { data = parseJSON(formatted); } catch { throw new Error("Format failed."); }
+      const fmtPrompt = "Convert:\n" + rawInfo + "\nURL: " + input + "\nMarketplace: " + marketplace + '\n\nReturn ONLY valid JSON (no text before/after):\n{"product_name":"","price_aed":NUMBER,"pack_quantity":NUMBER,"brand":"","rating":NUMBER,"reviews":NUMBER,"source":"' + marketplace + '","clean_name_en":"","clean_name_id":"Bahasa Indonesia translation","category":"electronics/kitchen/beauty/fashion/home/toys/sports/baby/office/other","weight_class":"light/medium/heavy","search_queries_id":["q1","q2","q3"],"search_queries_en":["q1"]}\nJSON only:';
+      let data = null;
+      for (let attempt = 0; attempt < 2 && !data; attempt++) {
+        const formatted = await runWithProgress(() => callClaude(fmtPrompt, "claude-sonnet-4-20250514", false, 1, 2048), 6);
+        addDiag("info", "lookup", `Format attempt ${attempt + 1}, len=${formatted.length}`, formatted.slice(0, 400));
+        try { data = parseJSON(formatted); } catch (e) {
+          addDiag("warn", "lookup", `Parse attempt ${attempt + 1} failed: ${e.message}`);
+          if (attempt === 0) { await wait(2000); setStage("Retrying format..."); }
+        }
+      }
+      if (!data) throw new Error("Format failed — check DIAG log for details.");
       if (!data.product_name) throw new Error("Product not found.");
-      if (!data.price_aed) { const pm = rawInfo.match(/AED\s*(\d+(?:\.\d+)?)/i); if (pm) data.price_aed = parseFloat(pm[1]); }
+      if (!data.price_aed) { const pm = rawInfo.match(/AED\s*(\d+(?:[.,]\d+)?)/i); if (pm) data.price_aed = parseFloat(pm[1].replace(/,/g, "")); }
       data.source = data.source || marketplace; data.url = input;
       setDryRunData(data);
-      setEditableQueries([...(data.search_queries_id || [data.clean_name_id]), ...(data.search_queries_en || [])]);
+      setEditableQueries([...(data.search_queries_id || [data.clean_name_id]), ...(data.search_queries_en || [])].filter(Boolean));
       setStage("");
     } catch (err) { setAutoError(err.message); setStage(""); if (err.message.includes("429")) setCooldown(30); }
     setLoading(false);
@@ -839,7 +854,7 @@ export default function App() {
       <div style={{ marginBottom: "16px", borderBottom: "1px solid " + c.border, paddingBottom: "12px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
           <div>
-            <h1 style={{ fontFamily: "'Instrument Serif',serif", fontSize: "28px", fontWeight: 400, color: c.gold, margin: 0 }}>GT Cross-Trade <span style={{ fontSize: "12px", color: c.dimmer, fontFamily: "monospace" }}>v4.0</span></h1>
+            <h1 style={{ fontFamily: "'Instrument Serif',serif", fontSize: "28px", fontWeight: 400, color: c.gold, margin: 0 }}>GT Cross-Trade <span style={{ fontSize: "12px", color: c.dimmer, fontFamily: "monospace" }}>v4.1</span></h1>
             <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "4px", letterSpacing: "2px", textTransform: "uppercase" }}>UAE {"\u2190"} Indonesia {"\u00b7"} PIN {currentPin.slice(0,2)}** {isBrainstormPin && <span style={{ color: c.red }}>{"\u00b7 ADMIN"}</span>} {"\u00b7"} {fxUpdated ? "FX " + fxUpdated.toLocaleDateString() : "FX: defaults"} {"\u00b7"} <span style={{ color: supabaseReady ? c.green : c.darkGold }}>{supabaseReady ? "\u25cf DB" : "\u25cb local"}</span></div>
           </div>
           <div style={{ display: "flex", gap: "12px", fontSize: "11px", alignItems: "flex-end" }}>
@@ -1263,6 +1278,7 @@ export default function App() {
           <div style={{ display: "flex", gap: "4px" }}>
             {["all", "error", "warn", "ok"].map(f => <button key={f} onClick={() => setDiagFilter(f)} style={{ padding: "2px 6px", fontSize: "8px", fontFamily: "monospace", cursor: "pointer", background: diagFilter === f ? c.gold : "transparent", color: diagFilter === f ? "#0a0a0a" : "#888", border: "1px solid " + (diagFilter === f ? c.gold : "#333"), borderRadius: "3px", textTransform: "uppercase" }}>{f}</button>)}
             <button onClick={clearDiag} style={{ padding: "2px 6px", fontSize: "8px", fontFamily: "monospace", cursor: "pointer", background: "transparent", color: "#f87171", border: "1px solid #5a2d2d", borderRadius: "3px" }}>CLR</button>
+            <button onClick={() => { const lines = diagRef.current.map(l => `${l.ts} [${l.level}] ${l.label}: ${l.message}${l.data ? "\n  " + l.data : ""}`).join("\n"); const blob = new Blob([lines], { type: "text/plain" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "gt-diag-" + new Date().toISOString().slice(0, 19).replace(/:/g, "") + ".txt"; a.click(); }} style={{ padding: "2px 6px", fontSize: "8px", fontFamily: "monospace", cursor: "pointer", background: "transparent", color: "#C9A84C", border: "1px solid #C9A84C66", borderRadius: "3px" }}>EXPORT</button>
             <button onClick={() => setShowDiag(false)} style={{ padding: "2px 6px", fontSize: "8px", fontFamily: "monospace", cursor: "pointer", background: "transparent", color: "#888", border: "1px solid #333", borderRadius: "3px" }}>{"\u2715"}</button>
           </div>
         </div>
