@@ -360,35 +360,67 @@ export default function App() {
   const normalizeApifyResults = (items, platform) => {
     if (!Array.isArray(items)) return [];
     return items.filter(i => i).map(i => {
-      let price = i.price || i.currentPrice || i.salePrice || i.price_idr || i.discountedPrice || i.promo_price || i.finalPrice || i.sale_price || i.normal_price || i.current_price || i.item_basic?.price || i.price_min || 0;
-      if (typeof price === "object" && price !== null) price = price.min || price.max || price.value || 0;
+      let price = 0;
+      // Tokopedia actor: price is { number: 650000, text: "Rp650.000" }
+      if (typeof i.price === "object" && i.price !== null) {
+        price = i.price.number || i.price.min || i.price.max || i.price.value || 0;
+      } else {
+        price = i.price || i.currentPrice || i.salePrice || i.price_idr || i.discountedPrice || i.promo_price || i.finalPrice || i.sale_price || i.normal_price || i.current_price || i.item_basic?.price || i.price_min || 0;
+      }
       if (typeof price === "string") price = sanitizeIDR(price);
       if (typeof price === "number" && price > 0 && price < 500) price = Math.round(price * 1000);
       if (typeof price === "number" && price > 1000000000) price = Math.round(price / 100000);
-      return { name: i.title || i.name || i.productName || i.item_name || "", price_idr: Math.round(price), source: platform, seller: i.shopName || i.sellerName || i.seller || i.shop?.name || "", sold: String(i.sold || i.totalSold || i.historicalSold || i.item_basic?.sold || ""), url: i.url || i.link || i.productUrl || "" };
+      const soldRaw = i.stock?.sold || i.sold || i.totalSold || i.historicalSold || i.item_basic?.sold || "";
+      return { name: i.title || i.name || i.productName || i.item_name || "", price_idr: Math.round(price), source: platform, seller: i.shopName || i.sellerName || i.seller || i.shop?.name || "", sold: String(soldRaw), url: i.url || i.link || i.productUrl || "", rating: i.rating || i.star || "" };
     }).filter(r => r.price_idr >= 1000 && r.name);
   };
 
-  const runIndoApify = async (bahasaQuery, allQueries) => {
+  const runTokoApify = async (allQueries) => {
     const waves = [];
-    const tokoInput = { querystring: bahasaQuery, filters: { price_min: 10000, price_max: 800000, sort: "reviews" }, limit: 30 };
-    const shopeeUrl = "https://shopee.co.id/search?keyword=" + encodeURIComponent(bahasaQuery) + "&price_min=10000&price_max=800000&sort=7";
+    // Filter to Bahasa-only queries (skip English-only strings)
+    const bahasaQueries = allQueries.filter(q => /[a-z]/.test(q) && !/^[a-zA-Z0-9\s,.\-()]+$/.test(q) || /kopi|biji|bubuk|kayu|bambu|rotan|kelapa|batu|minyak|sabun|teh|gula|coklat|kain|tas|mangkok/i.test(q));
+    const queryArray = bahasaQueries.length > 0 ? bahasaQueries : allQueries;
+    const tokoInput = { query: queryArray.slice(0, 5), limit: 30 };
+    addDiag("info", "toko_apify", `Sending ${tokoInput.query.length} queries`, JSON.stringify(tokoInput.query));
+    setStage("Scraping Tokopedia..."); setProgress(10);
+    try {
+      const items = await runApifyActor(tokoActorId, tokoInput, "Tokopedia");
+      const results = normalizeApifyResults(items, "Tokopedia");
+      addDiag(results.length > 0 ? "ok" : "warn", "toko_apify", `${items.length} raw → ${results.length} valid`);
+      waves.push({ name: "Tokopedia", status: results.length > 0 ? "ok" : "empty", count: results.length });
+      return { allResults: results, waves, source: "apify" };
+    } catch (e) {
+      addDiag("error", "toko_apify", e.message);
+      waves.push({ name: "Tokopedia", status: "fail", count: 0, reason: e.message });
+      return { allResults: [], waves, source: "apify" };
+    }
+  };
+
+  const runShopeeApify = async (allQueries) => {
+    const waves = [];
+    const mainQ = allQueries[0];
+    const shopeeUrl = "https://shopee.co.id/search?keyword=" + encodeURIComponent(mainQ) + "&price_min=10000&price_max=800000&sort=7";
     const shopeeInput = { searchUrls: [shopeeUrl], country: "ID", maxProducts: 30, scrapeMode: "fast" };
     if (shopeeCookie) shopeeInput.cookies = shopeeCookie;
-    setStage("Scraping Toko + Shopee..."); setProgress(10);
-    const [tokoR, shopeeR] = await Promise.all([
-      (async () => { try { return { items: await runApifyActor(tokoActorId, tokoInput, "Tokopedia"), err: null }; } catch (e) { return { items: [], err: e.message }; } })(),
-      (async () => { try { return { items: await runApifyActor(shopeeActorId, shopeeInput, "Shopee"), err: null }; } catch (e) { return { items: [], err: e.message }; } })(),
-    ]);
-    const tokoResults = normalizeApifyResults(tokoR.items, "Tokopedia");
-    const shopeeResults = normalizeApifyResults(shopeeR.items, "Shopee");
-    waves.push({ name: "Tokopedia", status: tokoResults.length > 0 ? "ok" : tokoR.err ? "fail" : "empty", count: tokoResults.length, reason: tokoR.err || "" });
-    waves.push({ name: "Shopee", status: shopeeResults.length > 0 ? "ok" : shopeeR.err ? "fail" : "empty", count: shopeeResults.length, reason: shopeeR.err || "" });
-    let allResults = [...tokoResults, ...shopeeResults];
-    if (allResults.length < 5 && allQueries.length > 1) {
-      try { const ri = await runApifyActor(tokoActorId, { querystring: allQueries[1], filters: { price_min: 10000, price_max: 800000, sort: "reviews" }, limit: 20 }, "Retry"); allResults.push(...normalizeApifyResults(ri, "Tokopedia")); waves.push({ name: "Retry", status: "ok", count: ri.length }); } catch { waves.push({ name: "Retry", status: "fail", count: 0 }); }
+    addDiag("info", "shopee_apify", `Query: "${mainQ}"`);
+    setStage("Scraping Shopee..."); setProgress(10);
+    try {
+      const items = await runApifyActor(shopeeActorId, shopeeInput, "Shopee");
+      const results = normalizeApifyResults(items, "Shopee");
+      addDiag(results.length > 0 ? "ok" : "warn", "shopee_apify", `${items.length} raw → ${results.length} valid`);
+      waves.push({ name: "Shopee", status: results.length > 0 ? "ok" : "empty", count: results.length });
+      return { allResults: results, waves, source: "apify" };
+    } catch (e) {
+      addDiag("error", "shopee_apify", e.message);
+      waves.push({ name: "Shopee", status: "fail", count: 0, reason: e.message });
+      return { allResults: [], waves, source: "apify" };
     }
-    return { allResults, waves, source: "apify" };
+  };
+
+  const runIndoApify = async (bahasaQuery, allQueries) => {
+    const toko = await runTokoApify(allQueries);
+    const shopee = await runShopeeApify(allQueries);
+    return { allResults: [...toko.allResults, ...shopee.allResults], waves: [...toko.waves, ...shopee.waves], source: "apify" };
   };
 
   // ══════════ INDO SEARCH — CLAUDE ══════════
@@ -744,8 +776,65 @@ export default function App() {
     setLoading(false);
   };
 
+  const buildMarginData = (dryRun, raw, existingResults, waves) => {
+    // Merge with any existing results
+    const prevResults = existingResults?.results || [];
+    const allRaw = [...prevResults, ...raw];
+    const seen = new Map();
+    let allResults = allRaw.filter(r => { if (!r.name || r.price_idr < 1000) return false; const k = r.name.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 40) + "|" + r.price_idr; if (seen.has(k)) return false; seen.set(k, true); return true; });
+    if (allResults.length === 0) throw new Error("No Indonesian listings found.");
+    if (allResults.length >= 5) { const sorted = [...allResults].sort((a, b) => a.price_idr - b.price_idr); if (sorted[sorted.length - 1].price_idr / sorted[0].price_idr > 10) { const tc = Math.max(1, Math.floor(allResults.length * 0.1)); const trimmed = sorted.slice(tc, sorted.length - tc); if (trimmed.length >= 3) allResults = trimmed; } }
+    const prices = allResults.map(r => r.price_idr).sort((a, b) => a - b);
+    const allWaves = [...(existingResults?.wave_status || []), ...waves];
+    const indo = { results: allResults, price_stats: { lowest_idr: prices[0], highest_idr: prices[prices.length - 1], median_idr: prices[Math.floor(prices.length / 2)], average_idr: Math.round(prices.reduce((s, x) => s + x, 0) / prices.length), num_results: prices.length }, wave_status: allWaves, source: "apify" };
+    indo.confidence = computeConfidence(indo.results, indo.price_stats);
+    const wc = dryRun.weight_class || "medium"; const med = indo.price_stats.median_idr, low = indo.price_stats.lowest_idr, high = indo.price_stats.highest_idr;
+    const margins = { median: calcMargin(dryRun.price_aed, dryRun.pack_quantity || 1, med, wc), best: calcMargin(dryRun.price_aed, dryRun.pack_quantity || 1, low, wc), worst: calcMargin(dryRun.price_aed, dryRun.pack_quantity || 1, high, wc) };
+    const status = margins.median.margin >= MARGIN_THRESHOLD.candidate ? "Candidate" : margins.median.margin >= MARGIN_THRESHOLD.borderline ? "Investigated" : "Rejected";
+    return { indo, margins, status, medianPriceIDR: med, lowestPriceIDR: low, highestPriceIDR: high, weightClass: wc };
+  };
+
+  const runLookupToko = async () => {
+    if (!dryRunData || !apifyKey) return;
+    setLoading(true); setAutoError("");
+    const queries = editableQueries.filter(q => q.trim());
+    if (!queries.length) { setAutoError("Add at least one query."); setLoading(false); return; }
+    try {
+      const { allResults, waves } = await runTokoApify(queries);
+      if (allResults.length === 0) { setAutoError("Tokopedia returned 0 results. Try different queries."); setLoading(false); setStage(""); return; }
+      const result = buildMarginData(dryRunData, allResults, indoResults, waves);
+      setIndoResults(result.indo); setWaveStatus(result.indo.wave_status || []);
+      const mData = { uaeProduct: dryRunData, normalized: dryRunData, indoResults: result.indo, margins: result.margins, confidence: result.indo.confidence, medianPriceIDR: result.medianPriceIDR, lowestPriceIDR: result.lowestPriceIDR, highestPriceIDR: result.highestPriceIDR, weightClass: result.weightClass, timestamp: new Date().toISOString(), source: "apify", status: result.status };
+      setMarginData(mData);
+      const nh = [mData, ...historyRef.current].slice(0, MAX_HISTORY);
+      setHistory(nh); await saveHistoryNow(nh);
+      setActiveSection(2);
+    } catch (err) { setAutoError(err.message); if (err.message.includes("429")) setCooldown(30); }
+    setLoading(false); setStage("");
+  };
+
+  const runLookupShopee = async () => {
+    if (!dryRunData || !apifyKey) return;
+    setLoading(true); setAutoError("");
+    const queries = editableQueries.filter(q => q.trim());
+    if (!queries.length) { setAutoError("Add at least one query."); setLoading(false); return; }
+    try {
+      const { allResults, waves } = await runShopeeApify(queries);
+      if (allResults.length === 0) { setAutoError("Shopee returned 0 results. Check if actor is rented."); setLoading(false); setStage(""); return; }
+      const result = buildMarginData(dryRunData, allResults, indoResults, waves);
+      setIndoResults(result.indo); setWaveStatus(result.indo.wave_status || []);
+      const mData = { uaeProduct: dryRunData, normalized: dryRunData, indoResults: result.indo, margins: result.margins, confidence: result.indo.confidence, medianPriceIDR: result.medianPriceIDR, lowestPriceIDR: result.lowestPriceIDR, highestPriceIDR: result.highestPriceIDR, weightClass: result.weightClass, timestamp: new Date().toISOString(), source: "apify", status: result.status };
+      setMarginData(mData);
+      const nh = [mData, ...historyRef.current].slice(0, MAX_HISTORY);
+      setHistory(nh); await saveHistoryNow(nh);
+      setActiveSection(2);
+    } catch (err) { setAutoError(err.message); if (err.message.includes("429")) setCooldown(30); }
+    setLoading(false); setStage("");
+  };
+
   const runLookupIndoSearch = async () => {
     if (!dryRunData) return;
+    if (indoMode === "apify") { await runLookupToko(); return; }
     setLoading(true); setAutoError(""); setIndoResults(null); setMarginData(null); setWaveStatus([]);
     const queries = editableQueries.filter(q => q.trim());
     if (!queries.length) { setAutoError("Add at least one query."); setLoading(false); return; }
@@ -896,7 +985,7 @@ export default function App() {
       <div style={{ marginBottom: "16px", borderBottom: "1px solid " + c.border, paddingBottom: "12px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
           <div>
-            <h1 style={{ fontFamily: "'Instrument Serif',serif", fontSize: "28px", fontWeight: 400, color: c.gold, margin: 0 }}>GT Cross-Trade <span style={{ fontSize: "12px", color: c.dimmer, fontFamily: "monospace" }}>v4.2</span></h1>
+            <h1 style={{ fontFamily: "'Instrument Serif',serif", fontSize: "28px", fontWeight: 400, color: c.gold, margin: 0 }}>GT Cross-Trade <span style={{ fontSize: "12px", color: c.dimmer, fontFamily: "monospace" }}>v4.7</span></h1>
             <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "4px", letterSpacing: "2px", textTransform: "uppercase" }}>UAE {"\u2190"} Indonesia {"\u00b7"} PIN {currentPin.slice(0,2)}** {isBrainstormPin && <span style={{ color: c.red }}>{"\u00b7 ADMIN"}</span>} {"\u00b7"} {fxUpdated ? "FX " + fxUpdated.toLocaleDateString() : "FX: defaults"} {"\u00b7"} <span style={{ color: supabaseReady ? c.green : c.darkGold }}>{supabaseReady ? "\u25cf DB" : "\u25cb local"}</span></div>
           </div>
           <div style={{ display: "flex", gap: "12px", fontSize: "11px", alignItems: "flex-end" }}>
@@ -1205,7 +1294,13 @@ export default function App() {
             </div>}
           </div>
           {!indoResults && !loading && <div style={{ padding: "14px", background: c.surface2, border: "1px solid " + c.green + "44", borderRadius: "4px", marginBottom: "10px", textAlign: "center" }}>
-            <button onClick={runLookupIndoSearch} disabled={editableQueries.filter(q => q.trim()).length === 0 || (indoMode === "apify" && !apifyKey)} style={{ ...btnGreen, padding: "12px 36px", fontSize: "12px", opacity: (editableQueries.filter(q => q.trim()).length === 0 || (indoMode === "apify" && !apifyKey)) ? 0.4 : 1 }}>{"\ud83d\udd0d"} {indoMode === "apify" ? "SCRAPE TOKO + SHOPEE (~$0.02)" : "CLAUDE SEARCH (~$0.15)"}</button>
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              {indoMode === "apify" ? <>
+                <button onClick={runLookupToko} disabled={editableQueries.filter(q => q.trim()).length === 0 || !apifyKey || loading} style={{ ...btnGreen, padding: "12px 24px", fontSize: "12px", opacity: (editableQueries.filter(q => q.trim()).length === 0 || !apifyKey || loading) ? 0.4 : 1 }}>{"\ud83d\udd0d"} SCRAPE TOKOPEDIA (~$0.01)</button>
+                <button onClick={runLookupShopee} disabled={editableQueries.filter(q => q.trim()).length === 0 || !apifyKey || loading} style={{ ...btnGreen, padding: "12px 24px", fontSize: "12px", background: "#EE4D2D", opacity: (editableQueries.filter(q => q.trim()).length === 0 || !apifyKey || loading) ? 0.4 : 1 }}>{"\ud83d\udd0d"} SCRAPE SHOPEE (~$0.01)</button>
+              </> : <button onClick={runLookupIndoSearch} disabled={editableQueries.filter(q => q.trim()).length === 0 || loading} style={{ ...btnGreen, padding: "12px 36px", fontSize: "12px", opacity: (editableQueries.filter(q => q.trim()).length === 0 || loading) ? 0.4 : 1 }}>{"\ud83d\udd0d"} CLAUDE SEARCH (~$0.15)</button>}
+            </div>
+            {indoResults?.results?.length > 0 && <div style={{ fontSize: "10px", color: c.green, fontFamily: "monospace" }}>{"\u2713"} {indoResults.results.length} listings loaded{indoResults.results.filter(r => r.source === "Tokopedia").length > 0 && " | Toko: " + indoResults.results.filter(r => r.source === "Tokopedia").length}{indoResults.results.filter(r => r.source === "Shopee").length > 0 && " | Shopee: " + indoResults.results.filter(r => r.source === "Shopee").length}</div>}
           </div>}
 
           {indoResults && <SectionToggle index={1} title={"Indonesia Market \u2014 " + (indoResults.source === "apify" ? "Apify" : "Claude Search")} icon={"\ud83c\uddee\ud83c\udde9"} count={indoResults.results?.length}>
