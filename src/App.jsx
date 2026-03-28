@@ -196,6 +196,7 @@ export default function App() {
   const [qty, setQty] = useState(1);
   const [qtyMode, setQtyMode] = useState("unit");
   const [waveStatus, setWaveStatus] = useState([]);
+  const [lookupView, setLookupView] = useState("landing"); // "landing" | "scrape" | "results"
 
   // Discover state
   const [discSearchInput, setDiscSearchInput] = useState("");
@@ -771,6 +772,7 @@ export default function App() {
       data.source = data.source || marketplace; data.url = input;
       setDryRunData(data);
       setEditableQueries([...(data.search_queries_id || [data.clean_name_id]), ...(data.search_queries_en || [])].filter(Boolean));
+      setLookupView("scrape");
       setStage("");
     } catch (err) { setAutoError(err.message); setStage(""); if (err.message.includes("429")) setCooldown(30); }
     setLoading(false);
@@ -808,7 +810,7 @@ export default function App() {
       setMarginData(mData);
       const nh = [mData, ...historyRef.current].slice(0, MAX_HISTORY);
       setHistory(nh); await saveHistoryNow(nh);
-      setActiveSection(2);
+      setLookupView("results");
     } catch (err) { setAutoError(err.message); if (err.message.includes("429")) setCooldown(30); }
     setLoading(false); setStage("");
   };
@@ -827,7 +829,7 @@ export default function App() {
       setMarginData(mData);
       const nh = [mData, ...historyRef.current].slice(0, MAX_HISTORY);
       setHistory(nh); await saveHistoryNow(nh);
-      setActiveSection(2);
+      setLookupView("results");
     } catch (err) { setAutoError(err.message); if (err.message.includes("429")) setCooldown(30); }
     setLoading(false); setStage("");
   };
@@ -845,13 +847,25 @@ export default function App() {
       setMarginData(mData);
       const nh = [mData, ...historyRef.current].slice(0, MAX_HISTORY);
       setHistory(nh); await saveHistoryNow(nh);
-      setActiveSection(2);
+      setLookupView("results");
     } catch (err) { setAutoError(err.message); if (err.message.includes("429")) setCooldown(30); }
     setLoading(false); setStage("");
   };
 
   const updateHistoryStatus = (i, s) => setHistory(prev => prev.map((x, idx) => idx === i ? { ...x, status: s } : x));
-  const resetLookup = () => { setDryRunData(null); setUaeSimilar(null); setIndoResults(null); setMarginData(null); setAutoError(""); setUrl(""); setEditableQueries([]); setActiveSection(0); setWaveStatus([]); };
+  const resetLookup = () => { setDryRunData(null); setUaeSimilar(null); setIndoResults(null); setMarginData(null); setAutoError(""); setUrl(""); setEditableQueries([]); setActiveSection(0); setWaveStatus([]); setLookupView("landing"); };
+
+  const restoreFromHistory = (entry) => {
+    const product = entry.uaeProduct || {};
+    setDryRunData(product);
+    setUrl(product.url || "");
+    setEditableQueries([...(product.search_queries_id || [product.clean_name_id || entry.normalized?.clean_name_id]), ...(product.search_queries_en || [])].filter(Boolean));
+    setIndoResults(entry.indoResults || null);
+    setMarginData(entry.indoResults ? entry : null);
+    setWaveStatus(entry.indoResults?.wave_status || []);
+    setAutoError("");
+    setLookupView(entry.indoResults ? "results" : "scrape");
+  };
 
   // ══════════ EXPORTS ══════════
   const exportBackup = () => { const b = new Blob([JSON.stringify({ pin: currentPin, exportedAt: new Date().toISOString(), history: history.map(compressEntry) }, null, 2)], { type: "application/json" }); const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = "gt-backup-" + new Date().toISOString().slice(0, 10) + ".json"; a.click(); };
@@ -1256,19 +1270,59 @@ export default function App() {
 
       {/* ══════════ LOOKUP TAB ══════════ */}
       {mode === "auto" && <div style={secStyle}>
-        <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
-          <input type="text" value={url} onChange={e => setUrl(e.target.value)} onKeyDown={e => e.key === "Enter" && !loading && runDryRun()} placeholder="Paste Amazon.ae product URL..." style={{ ...inputStyle, flex: 1, padding: "12px 14px" }} />
-          <button onClick={runDryRun} disabled={loading || !url.trim() || cooldown > 0} style={{ ...btnStyle, padding: "12px 20px", fontSize: "11px", opacity: loading || !url.trim() ? 0.4 : 1, whiteSpace: "nowrap" }}>{cooldown > 0 ? "WAIT " + cooldown + "s" : loading && !dryRunData ? "READING..." : "QUICK CHECK ~$0.02"}</button>
-        </div>
         {loading && stage && <div style={{ marginBottom: "12px" }}><div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}><Spinner /><span style={{ fontSize: "12px", color: c.gold }}>{stage}</span></div>{progress > 0 && <div style={{ width: "100%", height: "3px", background: c.border, borderRadius: "2px" }}><div style={{ width: progress + "%", height: "100%", background: c.gold, borderRadius: "2px", transition: "width 0.3s" }} /></div>}</div>}
         {autoError && <div style={{ padding: "12px", background: dark ? "#3a1a1a" : "#FEF2F2", border: "1px solid " + c.red + "44", borderRadius: "4px", marginBottom: "12px", fontSize: "12px", color: c.red }}>{autoError}</div>}
 
-        {!loading && !dryRunData && !autoError && <div style={{ textAlign: "center", padding: "40px 20px" }}>
-          <div style={{ fontSize: "36px", marginBottom: "10px", opacity: 0.15 }}>{"\u26a1"}</div>
-          <div style={{ fontSize: "12px", color: c.dim }}>Paste a product URL and click Quick Check</div>
-        </div>}
+        {/* ── LANDING VIEW ── */}
+        {lookupView === "landing" && <>
+          <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
+            <input type="text" value={url} onChange={e => setUrl(e.target.value)} onKeyDown={e => e.key === "Enter" && !loading && runDryRun()} placeholder="Paste Amazon.ae product URL..." style={{ ...inputStyle, flex: 1, padding: "12px 14px" }} />
+            <button onClick={runDryRun} disabled={loading || !url.trim() || cooldown > 0} style={{ ...btnStyle, padding: "12px 20px", fontSize: "11px", opacity: loading || !url.trim() ? 0.4 : 1, whiteSpace: "nowrap" }}>{cooldown > 0 ? "WAIT " + cooldown + "s" : loading ? "READING..." : "QUICK CHECK ~$0.02"}</button>
+          </div>
 
-        {dryRunData && <div>
+          {!loading && !autoError && <div style={{ textAlign: "center", padding: "30px 20px" }}>
+            <div style={{ fontSize: "36px", marginBottom: "10px", opacity: 0.15 }}>{"\u26a1"}</div>
+            <div style={{ fontSize: "12px", color: c.dim }}>Paste a product URL and click Quick Check</div>
+          </div>}
+
+          {/* ── RECENT SEARCHES ── */}
+          {(() => {
+            const seen = new Set();
+            const recent = history.filter(h => {
+              const key = h.uaeProduct?.asin || h.uaeProduct?.url || h.uaeProduct?.product_name;
+              if (!key || seen.has(key)) return false;
+              seen.add(key); return true;
+            }).slice(0, 8);
+            if (!recent.length) return null;
+            return <div style={{ marginTop: "8px" }}>
+              <div style={{ fontSize: "9px", color: c.dimmer, letterSpacing: "1px", textTransform: "uppercase", marginBottom: "8px" }}>RECENT SEARCHES</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                {recent.map((h, i) => {
+                  const m = h.margins?.median?.margin || 0;
+                  const tokoCount = (h.indoResults?.results || []).filter(r => r.source === "Tokopedia").length;
+                  const shopeeCount = (h.indoResults?.results || []).filter(r => r.source === "Shopee").length;
+                  return <div key={i} onClick={() => restoreFromHistory(h)} style={{ padding: "10px 12px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: "11px", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.uaeProduct?.product_name}</div>
+                      <div style={{ display: "flex", gap: "6px", marginTop: "4px", fontSize: "9px", color: c.dimmer }}>
+                        <span style={{ color: c.gold }}>AED {h.uaeProduct?.price_aed}</span>
+                        {tokoCount > 0 && <span style={{ color: c.green }}>T:{tokoCount}</span>}
+                        {shopeeCount > 0 && <span style={{ color: "#EE4D2D" }}>S:{shopeeCount}</span>}
+                        <span>{h.timestamp?.slice(0, 10)}</span>
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right", marginLeft: "10px" }}>
+                      <div style={{ fontSize: "16px", fontWeight: 700, color: marginColor(m) }}>{m.toFixed(1)}%</div>
+                    </div>
+                  </div>;
+                })}
+              </div>
+            </div>;
+          })()}
+        </>}
+
+        {/* ── SCRAPE VIEW ── */}
+        {lookupView === "scrape" && dryRunData && <div>
           <div style={{ padding: "14px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px", marginBottom: "10px" }}>
             <div style={{ fontSize: "9px", color: c.dimmer, letterSpacing: "1.5px", textTransform: "uppercase", marginBottom: "6px" }}>UAE PRODUCT {dryRunData.url && <a href={dryRunData.url} target="_blank" rel="noopener" style={{ color: c.dim, fontSize: "9px", marginLeft: "8px" }}>open {"\u2197"}</a>}</div>
             <div style={{ fontSize: "13px", fontWeight: 500, marginBottom: "6px" }}>{dryRunData.product_name}</div>
@@ -1287,21 +1341,36 @@ export default function App() {
           <div style={{ padding: "14px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px", marginBottom: "10px" }}>
             <div style={{ fontSize: "9px", color: c.dimmer, letterSpacing: "1.5px", textTransform: "uppercase", marginBottom: "6px" }}>TRANSLATION</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px", fontSize: "12px", marginBottom: "10px" }}><div><span style={{ color: c.dim }}>EN:</span> {dryRunData.clean_name_en}</div><div><span style={{ color: c.dim }}>ID:</span> <span style={{ color: c.gold, fontWeight: 600 }}>{dryRunData.clean_name_id}</span></div></div>
-            {!indoResults && <div>
+            <div>
               <div style={{ fontSize: "9px", color: c.dimmer, letterSpacing: "1px", marginBottom: "6px" }}>SEARCH QUERIES</div>
               <div style={{ display: "flex", flexDirection: "column", gap: "4px", marginBottom: "8px" }}>{editableQueries.map((q, i) => <div key={i} style={{ display: "flex", gap: "4px" }}><input value={q} onChange={e => { const u = [...editableQueries]; u[i] = e.target.value; setEditableQueries(u); }} style={{ ...inputStyle, padding: "5px 8px", fontSize: "11px", flex: 1 }} /><button onClick={() => setEditableQueries(editableQueries.filter((_, idx) => idx !== i))} style={{ background: "transparent", border: "1px solid " + c.red + "44", color: c.red, fontSize: "10px", padding: "4px 8px", borderRadius: "3px", cursor: "pointer" }}>{"\u2715"}</button></div>)}</div>
               <div style={{ display: "flex", gap: "4px" }}><input value={newQueryInput} onChange={e => setNewQueryInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && newQueryInput.trim()) { setEditableQueries([...editableQueries, newQueryInput.trim()]); setNewQueryInput(""); } }} placeholder="Add keyword..." style={{ ...inputStyle, padding: "5px 8px", fontSize: "11px", flex: 1 }} /><button onClick={() => { if (newQueryInput.trim()) { setEditableQueries([...editableQueries, newQueryInput.trim()]); setNewQueryInput(""); } }} style={{ ...btnSec, padding: "5px 12px", fontSize: "9px" }}>+ ADD</button></div>
-            </div>}
+            </div>
           </div>
-          {!indoResults && !loading && <div style={{ padding: "14px", background: c.surface2, border: "1px solid " + c.green + "44", borderRadius: "4px", marginBottom: "10px", textAlign: "center" }}>
-            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          {!loading && <div style={{ padding: "14px", background: c.surface2, border: "1px solid " + c.green + "44", borderRadius: "4px", marginBottom: "10px" }}>
+            {indoResults?.results?.length > 0 && <div style={{ fontSize: "10px", color: c.green, fontFamily: "monospace", marginBottom: "10px" }}>{"\u2713"} {indoResults.results.length} listings loaded{indoResults.results.filter(r => r.source === "Tokopedia").length > 0 && " | Toko: " + indoResults.results.filter(r => r.source === "Tokopedia").length}{indoResults.results.filter(r => r.source === "Shopee").length > 0 && " | Shopee: " + indoResults.results.filter(r => r.source === "Shopee").length}</div>}
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
               {indoMode === "apify" ? <>
                 <button onClick={runLookupToko} disabled={editableQueries.filter(q => q.trim()).length === 0 || !apifyKey || loading} style={{ ...btnGreen, padding: "12px 24px", fontSize: "12px", opacity: (editableQueries.filter(q => q.trim()).length === 0 || !apifyKey || loading) ? 0.4 : 1 }}>{"\ud83d\udd0d"} SCRAPE TOKOPEDIA (~$0.01)</button>
                 <button onClick={runLookupShopee} disabled={editableQueries.filter(q => q.trim()).length === 0 || !apifyKey || loading} style={{ ...btnGreen, padding: "12px 24px", fontSize: "12px", background: "#EE4D2D", opacity: (editableQueries.filter(q => q.trim()).length === 0 || !apifyKey || loading) ? 0.4 : 1 }}>{"\ud83d\udd0d"} SCRAPE SHOPEE (~$0.01)</button>
               </> : <button onClick={runLookupIndoSearch} disabled={editableQueries.filter(q => q.trim()).length === 0 || loading} style={{ ...btnGreen, padding: "12px 36px", fontSize: "12px", opacity: (editableQueries.filter(q => q.trim()).length === 0 || loading) ? 0.4 : 1 }}>{"\ud83d\udd0d"} CLAUDE SEARCH (~$0.15)</button>}
+              {indoResults && <button onClick={() => setLookupView("results")} style={{ ...btnStyle, padding: "12px 24px", fontSize: "12px" }}>VIEW RESULTS {"\u2192"}</button>}
             </div>
-            {indoResults?.results?.length > 0 && <div style={{ fontSize: "10px", color: c.green, fontFamily: "monospace" }}>{"\u2713"} {indoResults.results.length} listings loaded{indoResults.results.filter(r => r.source === "Tokopedia").length > 0 && " | Toko: " + indoResults.results.filter(r => r.source === "Tokopedia").length}{indoResults.results.filter(r => r.source === "Shopee").length > 0 && " | Shopee: " + indoResults.results.filter(r => r.source === "Shopee").length}</div>}
           </div>}
+          <div style={{ display: "flex", justifyContent: "center", marginTop: "8px" }}>
+            <button onClick={resetLookup} style={{ ...btnSec, padding: "6px 16px", fontSize: "9px" }}>{"\u2190"} NEW SEARCH</button>
+          </div>
+        </div>}
+
+        {/* ── RESULTS VIEW ── */}
+        {lookupView === "results" && dryRunData && <div>
+          {/* Product summary bar */}
+          <div style={{ padding: "10px 12px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px", marginBottom: "10px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: "12px", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{dryRunData.product_name}</div>
+              <div style={{ fontSize: "10px", color: c.dim, marginTop: "2px" }}>{dryRunData.clean_name_id} {"\u00b7"} <span style={{ color: c.gold }}>AED {dryRunData.price_aed}</span></div>
+            </div>
+          </div>
 
           {indoResults && <SectionToggle index={1} title={"Indonesia Market \u2014 " + (indoResults.source === "apify" ? "Apify" : "Claude Search")} icon={"\ud83c\uddee\ud83c\udde9"} count={indoResults.results?.length}>
             {indoResults.wave_status && <WaveStatusBar waves={indoResults.wave_status} c={c} />}
@@ -1366,9 +1435,10 @@ export default function App() {
             </div>
           </SectionToggle>}
 
-          {(indoResults || autoError) && !loading && <div style={{ display: "flex", justifyContent: "center", gap: "8px", marginTop: "12px" }}>
-            <button onClick={resetLookup} style={{ ...btnSec, padding: "8px 20px", fontSize: "10px" }}>{"\u2190 NEW LOOKUP"}</button>
-            {marginData && <button onClick={exportPDF} style={{ ...btnSec, padding: "8px 16px", fontSize: "10px" }}>{"\ud83d\udcc4 PDF"}</button>}
+          {!loading && <div style={{ display: "flex", justifyContent: "center", gap: "8px", marginTop: "12px" }}>
+            <button onClick={() => setLookupView("scrape")} style={{ ...btnSec, padding: "8px 20px", fontSize: "10px" }}>{"\u2190"} EDIT QUERIES</button>
+            <button onClick={resetLookup} style={{ ...btnSec, padding: "8px 20px", fontSize: "10px" }}>{"\u2190"} NEW SEARCH</button>
+            {marginData && <button onClick={exportPDF} style={{ ...btnSec, padding: "8px 16px", fontSize: "10px" }}>{"\ud83d\udcc4"} PDF</button>}
           </div>}
         </div>}
       </div>}
