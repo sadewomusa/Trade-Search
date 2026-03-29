@@ -161,12 +161,14 @@ export default function App() {
   // ── Auth State ──
   const [authUser, setAuthUser] = useState(null); // { id, email }
   const [authToken, setAuthToken] = useState("");
-  const [authMode, setAuthMode] = useState("login"); // "login" | "register"
+  const [authMode, setAuthMode] = useState("login"); // "login" | "register" | "reset"
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authDisplayName, setAuthDisplayName] = useState("");
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
+  const [authNewPassword, setAuthNewPassword] = useState("");
+  const [resetToken, setResetToken] = useState("");
   const [userProfile, setUserProfile] = useState(null); // { role, lookups_used, margins_used, ... }
   const [storageReady, setStorageReady] = useState(false);
   const [dark, setDark] = useState(true);
@@ -344,6 +346,25 @@ export default function App() {
     setAuthLoading(false);
   };
 
+  const handleResetPassword = async () => {
+    if (!authNewPassword || authNewPassword.length < 6) { setAuthError("New password must be 6+ characters"); return; }
+    setAuthLoading(true); setAuthError("");
+    try {
+      const r = await fetch(SUPABASE_URL + "/auth/v1/user", {
+        method: "PUT",
+        headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + resetToken, "Content-Type": "application/json" },
+        body: JSON.stringify({ password: authNewPassword })
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.msg || data.error_description || "Reset failed");
+      setAuthError("Password updated! You can now log in.");
+      setAuthMode("login");
+      setResetToken("");
+      setAuthNewPassword("");
+    } catch (e) { setAuthError(e.message); }
+    setAuthLoading(false);
+  };
+
   const handleSignOut = async () => {
     try { await fetch(SUPABASE_URL + "/auth/v1/logout", { method: "POST", headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + authToken } }); } catch {}
     localStorage.removeItem("gt_token");
@@ -425,6 +446,18 @@ export default function App() {
     // Clear any stale tokens
     localStorage.removeItem("gt_token");
     localStorage.removeItem("gt_refresh");
+    // Check for password reset token in URL
+    const hash = window.location.hash;
+    if (hash && hash.includes("type=recovery")) {
+      const params = new URLSearchParams(hash.replace("#", ""));
+      const token = params.get("access_token");
+      if (token) {
+        setResetToken(token);
+        setAuthMode("reset");
+        // Clean the URL
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+    }
   })(); }, []);
 
   // ── Load data on unlock (with legacy PIN migration) ──
@@ -1277,7 +1310,13 @@ export default function App() {
           <div style={{ width: "380px", padding: "40px", background: c.surface, border: "1px solid " + c.border, borderRadius: "8px", textAlign: "center" }}>
             <div style={{ fontSize: "32px", marginBottom: "12px", opacity: 0.3 }}>{"\ud83d\udd12"}</div>
             <h2 style={{ fontFamily: "'Lora',serif", fontSize: "24px", fontWeight: 500, color: c.gold, marginBottom: "4px" }}>GT Cross-Trade</h2>
-            <p style={{ fontSize: "11px", color: c.dimmer, marginBottom: "24px" }}>UAE {"\u2190"} Indonesia Trade Intelligence</p>
+            <p style={{ fontSize: "11px", color: c.dimmer, marginBottom: "24px" }}>{authMode === "reset" ? "Set your new password" : "UAE \u2190 Indonesia Trade Intelligence"}</p>
+            {authMode === "reset" ? <>
+              <input type="password" value={authNewPassword} onChange={e => { setAuthNewPassword(e.target.value); setAuthError(""); }} onKeyDown={e => e.key === "Enter" && handleResetPassword()} placeholder="New password (6+ characters)" autoFocus style={{ width: "100%", padding: "10px 14px", background: c.input, border: "1px solid " + (authError && !authError.includes("updated") ? c.red : c.border2), color: c.text, fontFamily: "monospace", fontSize: "12px", borderRadius: "4px", outline: "none", marginBottom: "12px" }} />
+              {authError && <div style={{ fontSize: "11px", color: authError.includes("updated") ? c.green : c.red, marginBottom: "12px", lineHeight: 1.5 }}>{authError}</div>}
+              <button onClick={handleResetPassword} disabled={authLoading} style={{ width: "100%", padding: "12px", background: authLoading ? c.dimmest : c.gold, color: c.btnText, border: "none", borderRadius: "4px", fontFamily: "monospace", fontWeight: 700, letterSpacing: "1px", cursor: authLoading ? "default" : "pointer", opacity: authLoading ? 0.6 : 1 }}>{authLoading ? "..." : "SET NEW PASSWORD"}</button>
+              <button onClick={() => { setAuthMode("login"); setAuthError(""); setResetToken(""); }} style={{ width: "100%", marginTop: "8px", padding: "8px", background: "transparent", color: c.dim, border: "none", fontFamily: "monospace", fontSize: "10px", cursor: "pointer", textDecoration: "underline" }}>Back to login</button>
+            </> : <>
             <div style={{ display: "flex", gap: "0", marginBottom: "20px", border: "1px solid " + c.border2, borderRadius: "4px", overflow: "hidden" }}>
               <button onClick={() => { setAuthMode("login"); setAuthError(""); }} style={{ flex: 1, padding: "8px", background: authMode === "login" ? c.gold : "transparent", color: authMode === "login" ? c.btnText : c.dim, border: "none", fontFamily: "monospace", fontSize: "11px", fontWeight: 700, cursor: "pointer" }}>LOG IN</button>
               <button onClick={() => { setAuthMode("register"); setAuthError(""); }} style={{ flex: 1, padding: "8px", background: authMode === "register" ? c.gold : "transparent", color: authMode === "register" ? c.btnText : c.dim, border: "none", fontFamily: "monospace", fontSize: "11px", fontWeight: 700, cursor: "pointer" }}>REGISTER</button>
@@ -1285,9 +1324,10 @@ export default function App() {
             {authMode === "register" && <input type="text" value={authDisplayName} onChange={e => setAuthDisplayName(e.target.value)} placeholder="Display name (optional)" style={{ width: "100%", padding: "10px 14px", background: c.input, border: "1px solid " + c.border2, color: c.text, fontFamily: "monospace", fontSize: "12px", borderRadius: "4px", outline: "none", marginBottom: "8px" }} />}
             <input type="email" value={authEmail} onChange={e => { setAuthEmail(e.target.value); setAuthError(""); }} placeholder="Email" autoFocus style={{ width: "100%", padding: "10px 14px", background: c.input, border: "1px solid " + (authError ? c.red : c.border2), color: c.text, fontFamily: "monospace", fontSize: "12px", borderRadius: "4px", outline: "none", marginBottom: "8px" }} />
             <input type="password" value={authPassword} onChange={e => { setAuthPassword(e.target.value); setAuthError(""); }} onKeyDown={e => e.key === "Enter" && (authMode === "login" ? handleSignIn() : handleSignUp())} placeholder="Password" style={{ width: "100%", padding: "10px 14px", background: c.input, border: "1px solid " + (authError ? c.red : c.border2), color: c.text, fontFamily: "monospace", fontSize: "12px", borderRadius: "4px", outline: "none", marginBottom: "12px" }} />
-            {authError && <div style={{ fontSize: "11px", color: authError.includes("confirm") || authError.includes("Check") ? c.green : c.red, marginBottom: "12px", lineHeight: 1.5 }}>{authError}</div>}
+            {authError && <div style={{ fontSize: "11px", color: authError.includes("confirm") || authError.includes("Check") || authError.includes("sent") || authError.includes("updated") ? c.green : c.red, marginBottom: "12px", lineHeight: 1.5 }}>{authError}</div>}
             <button onClick={authMode === "login" ? handleSignIn : handleSignUp} disabled={authLoading} style={{ width: "100%", padding: "12px", background: authLoading ? c.dimmest : c.gold, color: c.btnText, border: "none", borderRadius: "4px", fontFamily: "monospace", fontWeight: 700, letterSpacing: "1px", cursor: authLoading ? "default" : "pointer", opacity: authLoading ? 0.6 : 1 }}>{authLoading ? "..." : authMode === "login" ? "LOG IN" : "CREATE ACCOUNT"}</button>
             {authMode === "login" && <button onClick={handleForgotPassword} disabled={authLoading} style={{ width: "100%", marginTop: "8px", padding: "8px", background: "transparent", color: c.dim, border: "none", fontFamily: "monospace", fontSize: "10px", cursor: "pointer", textDecoration: "underline" }}>Forgot password?</button>}
+            </>}
           </div>
         </div>
       ) : !storageReady ? (
