@@ -345,7 +345,6 @@ export default function App() {
     localStorage.removeItem("gt_refresh");
     setAuthUser(null); setAuthToken(""); setUserProfile(null);
     setHistory([]); setStorageReady(false);
-    window.location.reload();
   };
 
   const loadProfile = async (uid, token) => {
@@ -1266,8 +1265,8 @@ export default function App() {
       <div style={{ marginBottom: "16px", borderBottom: "1px solid " + c.border, paddingBottom: "12px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
           <div>
-            <h1 style={{ fontFamily: "'Lora',serif", fontSize: "28px", fontWeight: 500, color: c.gold, margin: 0 }}>GT Cross-Trade <span style={{ fontSize: "12px", color: c.dimmer, fontFamily: "monospace" }}>v5.0</span></h1>
-            <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "4px", letterSpacing: "2px", textTransform: "uppercase" }}>UAE {"\u2190"} Indonesia {"\u00b7"} {authUser?.email?.split("@")[0]} {isAdmin && <span style={{ color: c.red }}>{"\u00b7 ADMIN"}</span>} {"\u00b7"} {userProfile ? (TIER_LIMITS[userProfile.role]?.label || userProfile.role) : ""} {"\u00b7"} {fxUpdated ? "FX " + fxUpdated.toLocaleDateString() : "FX: defaults"} {"\u00b7"} <span style={{ color: supabaseReady ? c.green : c.darkGold }}>{supabaseReady ? "\u25cf DB" : "\u25cb local"}</span></div>
+            <h1 style={{ fontFamily: "'Lora',serif", fontSize: "28px", fontWeight: 500, color: c.gold, margin: 0 }}>GT Cross-Trade <span style={{ fontSize: "12px", color: c.dimmer, fontFamily: "monospace" }}>v5.1</span></h1>
+            <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "4px", letterSpacing: "2px", textTransform: "uppercase" }}>UAE {"\u2190"} Indonesia {"\u00b7"} {authUser?.email?.split("@")[0]} {isAdmin && <span style={{ color: c.red }}>{"\u00b7 ADMIN"}</span>} {"\u00b7"} {userProfile ? (TIER_LIMITS[userProfile.role]?.label || userProfile.role) : ""}{isAdmin && <>{" \u00b7 "}{fxUpdated ? "FX " + fxUpdated.toLocaleDateString() : "FX: defaults"}{" \u00b7 "}<span style={{ color: supabaseReady ? c.green : c.darkGold }}>{supabaseReady ? "\u25cf DB" : "\u25cb local"}</span></>}</div>
           </div>
           <div style={{ display: "flex", gap: "12px", fontSize: "11px", alignItems: "flex-end" }}>
             <div style={{ textAlign: "right" }}><div style={{ color: c.dimmer }}>LOOKUPS</div><div style={{ color: c.gold, fontSize: "16px", fontWeight: 700 }}>{history.length}</div></div>
@@ -1333,7 +1332,7 @@ export default function App() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
               <span style={{ fontSize: "10px", color: c.gold, letterSpacing: "1px", fontWeight: 700 }}>AMAZON.AE SUB-CATEGORY DRILL</span>
-              <span style={{ fontSize: "8px", color: c.dimmer, padding: "1px 5px", border: "1px solid " + c.border, borderRadius: "3px" }}>~$0.89/dept</span>
+              {isAdmin && <span style={{ fontSize: "8px", color: c.dimmer, padding: "1px 5px", border: "1px solid " + c.border, borderRadius: "3px" }}>~$0.89/dept</span>}
             </div>
             {bsLastScan && <span style={{ fontSize: "10px", color: c.dimmer }}>Last: {new Date(bsLastScan).toLocaleDateString()}</span>}
           </div>
@@ -1343,7 +1342,7 @@ export default function App() {
               {AMAZON_AE_DEPTS.map(d => <option key={d.slug} value={d.slug}>{d.label}</option>)}
             </select>
             <button onClick={bsExtractSubcats} disabled={!authToken} style={{ ...btnGreen, padding: "10px 20px", fontSize: "11px", opacity: !authToken ? 0.4 : 1 }}>
-              {"\ud83e\udde0"} BRAINSTORM {(AMAZON_AE_DEPTS.find(d => d.slug === bsDept)?.label || "").toUpperCase()} (~$0.89)
+              {"\ud83e\udde0"} BRAINSTORM {(AMAZON_AE_DEPTS.find(d => d.slug === bsDept)?.label || "").toUpperCase()}
             </button>
           </div>}
 
@@ -1437,8 +1436,8 @@ export default function App() {
       {/* ══════════ DISCOVER TAB ══════════ */}
       {mode === "discover" && <div style={secStyle}>
 
-        {/* ── KEYWORD BANK ── */}
-        <div style={{ marginBottom: "16px", padding: "12px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px" }}>
+        {/* ── KEYWORD BANK (admin only) ── */}
+        {isAdmin && <div style={{ marginBottom: "16px", padding: "12px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px" }}>
           <div style={{ fontSize: "9px", color: c.gold, letterSpacing: "1px", fontWeight: 700, marginBottom: "8px" }}>{"\ud83c\udf1f"} KEYWORD BANK ({keywords.length})</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", marginBottom: "8px" }}>
             {keywords.map((kw, i) => (
@@ -1452,7 +1451,7 @@ export default function App() {
             <input value={newKeywordInput} onChange={e => setNewKeywordInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && newKeywordInput.trim() && !keywords.includes(newKeywordInput.trim())) { setKeywords([...keywords, newKeywordInput.trim()]); setNewKeywordInput(""); } }} placeholder="Add keyword..." style={{ ...inputStyle, flex: 1, padding: "5px 8px", fontSize: "10px" }} />
             <button onClick={() => { if (newKeywordInput.trim() && !keywords.includes(newKeywordInput.trim())) { setKeywords([...keywords, newKeywordInput.trim()]); setNewKeywordInput(""); } }} style={{ ...btnSec, padding: "5px 12px", fontSize: "9px" }}>+ ADD</button>
           </div>
-        </div>
+        </div>}
 
         {/* ── SEARCH ── */}
         <div style={{ marginBottom: "16px", padding: "12px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px" }}>
@@ -1461,11 +1460,11 @@ export default function App() {
           </div>
           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
             <button onClick={() => searchAmazonSD(discSearchInput)} disabled={discSearchingAmazon || !discSearchInput.trim()} style={{ ...btnGreen, padding: "8px 16px", fontSize: "10px", opacity: (discSearchingAmazon || !discSearchInput.trim()) ? 0.4 : 1 }}>
-              {discSearchingAmazon ? <><Spinner />{" Searching..."}</> : "SEARCH AMAZON (~$0.18)"}
+              {discSearchingAmazon ? <><Spinner />{" Searching..."}</> : "SEARCH AMAZON"}
             </button>
             {discAllProducts.length > 0 && <button onClick={() => exportDiscoverCSV(discAllProducts, discHistory[discSelectedIdx]?.keyword || discSearchInput)} style={{ ...btnSec, padding: "6px 12px", fontSize: "9px" }}>{"\ud83d\udcca"} CSV</button>}
           </div>
-          <div style={{ fontSize: "8px", color: c.dimmest, marginTop: "4px" }}>Fetches 3 pages · Filters zero-review products · Sorted by popularity</div>
+          {isAdmin && <div style={{ fontSize: "8px", color: c.dimmest, marginTop: "4px" }}>Fetches 3 pages · Filters zero-review products · Sorted by popularity</div>}
         </div>
 
         {/* ── PAST SEARCHES — persistent chip bar ── */}
@@ -1532,8 +1531,8 @@ export default function App() {
 
         {discAllProducts.length === 0 && !discSearchingAmazon && <div style={{ textAlign: "center", padding: "40px 20px" }}>
           <div style={{ fontSize: "36px", marginBottom: "10px", opacity: 0.15 }}>{"\ud83d\udd0d"}</div>
-          <div style={{ fontSize: "12px", color: c.dim }}>{discHistory.length > 0 ? "Select a past search above, or search a new keyword" : "Click a keyword above or type your own to search Amazon.ae"}</div>
-          <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "6px" }}>3 pages per search · ~$0.18 · Zero-review products excluded</div>
+          <div style={{ fontSize: "12px", color: c.dim }}>{discHistory.length > 0 ? "Select a past search above, or search a new keyword" : "Type a product keyword to search Amazon.ae"}</div>
+          <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "6px" }}>Find products on Amazon.ae, then validate margins against Indonesian prices</div>
         </div>}
       </div>}
 
@@ -1546,12 +1545,13 @@ export default function App() {
         {lookupView === "landing" && <>
           <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
             <input type="text" value={url} onChange={e => setUrl(e.target.value)} onKeyDown={e => e.key === "Enter" && !loading && runDryRun()} placeholder="Paste Amazon.ae product URL..." style={{ ...inputStyle, flex: 1, padding: "12px 14px" }} />
-            <button onClick={runDryRun} disabled={loading || !url.trim() || cooldown > 0} style={{ ...btnStyle, padding: "12px 20px", fontSize: "11px", opacity: loading || !url.trim() ? 0.4 : 1, whiteSpace: "nowrap" }}>{cooldown > 0 ? "WAIT " + cooldown + "s" : loading ? "READING..." : "QUICK CHECK ~$0.02"}</button>
+            <button onClick={runDryRun} disabled={loading || !url.trim() || cooldown > 0} style={{ ...btnStyle, padding: "12px 20px", fontSize: "11px", opacity: loading || !url.trim() ? 0.4 : 1, whiteSpace: "nowrap" }}>{cooldown > 0 ? "WAIT " + cooldown + "s" : loading ? "READING..." : "QUICK CHECK"}</button>
           </div>
 
           {!loading && !autoError && <div style={{ textAlign: "center", padding: "30px 20px" }}>
             <div style={{ fontSize: "36px", marginBottom: "10px", opacity: 0.15 }}>{"\u26a1"}</div>
-            <div style={{ fontSize: "12px", color: c.dim }}>Paste a product URL and click Quick Check</div>
+            <div style={{ fontSize: "12px", color: c.dim }}>Paste an Amazon.ae product URL to analyze trade potential</div>
+            <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "6px" }}>Extracts price, translates to Bahasa, searches Indonesian marketplaces, calculates margins</div>
           </div>}
 
           {/* ── RECENT SEARCHES ── */}
@@ -1619,10 +1619,10 @@ export default function App() {
           {!loading && <div style={{ padding: "14px", background: c.surface2, border: "1px solid " + c.green + "44", borderRadius: "4px", marginBottom: "10px" }}>
             {indoResults?.results?.length > 0 && <div style={{ fontSize: "10px", color: c.green, fontFamily: "monospace", marginBottom: "10px" }}>{"\u2713"} {indoResults.results.length} listings loaded{indoResults.results.filter(r => r.source === "Tokopedia").length > 0 && " | Toko: " + indoResults.results.filter(r => r.source === "Tokopedia").length}{indoResults.results.filter(r => r.source === "Shopee").length > 0 && " | Shopee: " + indoResults.results.filter(r => r.source === "Shopee").length}</div>}
             <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
-              {indoMode === "apify" ? <>
-                <button onClick={runLookupToko} disabled={editableQueries.filter(q => q.trim()).length === 0 || loading} style={{ ...btnGreen, padding: "12px 24px", fontSize: "12px", opacity: (editableQueries.filter(q => q.trim()).length === 0 || loading) ? 0.4 : 1 }}>{"\ud83d\udd0d"} SCRAPE TOKOPEDIA (~$0.01)</button>
-                <button onClick={runLookupShopee} disabled={editableQueries.filter(q => q.trim()).length === 0 || loading} style={{ ...btnGreen, padding: "12px 24px", fontSize: "12px", background: "#EE4D2D", opacity: (editableQueries.filter(q => q.trim()).length === 0 || loading) ? 0.4 : 1 }}>{"\ud83d\udd0d"} SCRAPE SHOPEE (~$0.01)</button>
-              </> : <button onClick={runLookupIndoSearch} disabled={editableQueries.filter(q => q.trim()).length === 0 || loading} style={{ ...btnGreen, padding: "12px 36px", fontSize: "12px", opacity: (editableQueries.filter(q => q.trim()).length === 0 || loading) ? 0.4 : 1 }}>{"\ud83d\udd0d"} CLAUDE SEARCH (~$0.15)</button>}
+              {(isAdmin ? indoMode : "apify") === "apify" ? <>
+                <button onClick={runLookupToko} disabled={editableQueries.filter(q => q.trim()).length === 0 || loading} style={{ ...btnGreen, padding: "12px 24px", fontSize: "12px", opacity: (editableQueries.filter(q => q.trim()).length === 0 || loading) ? 0.4 : 1 }}>{"\ud83d\udd0d"} SCRAPE TOKOPEDIA</button>
+                <button onClick={runLookupShopee} disabled={editableQueries.filter(q => q.trim()).length === 0 || loading} style={{ ...btnGreen, padding: "12px 24px", fontSize: "12px", background: "#EE4D2D", opacity: (editableQueries.filter(q => q.trim()).length === 0 || loading) ? 0.4 : 1 }}>{"\ud83d\udd0d"} SCRAPE SHOPEE</button>
+              </> : <button onClick={runLookupIndoSearch} disabled={editableQueries.filter(q => q.trim()).length === 0 || loading} style={{ ...btnGreen, padding: "12px 36px", fontSize: "12px", opacity: (editableQueries.filter(q => q.trim()).length === 0 || loading) ? 0.4 : 1 }}>{"\ud83d\udd0d"} SEARCH INDONESIA</button>}
               {indoResults && <button onClick={() => setLookupView("results")} style={{ ...btnStyle, padding: "12px 24px", fontSize: "12px" }}>VIEW RESULTS {"\u2192"}</button>}
             </div>
           </div>}
@@ -1641,8 +1641,8 @@ export default function App() {
             </div>
           </div>
 
-          {indoResults && <SectionToggle index={1} title={"Indonesia Market \u2014 " + (indoResults.source === "apify" ? "Apify" : "Claude Search")} icon={"\ud83c\uddee\ud83c\udde9"} count={indoResults.results?.length}>
-            {indoResults.wave_status && <WaveStatusBar waves={indoResults.wave_status} c={c} />}
+          {indoResults && <SectionToggle index={1} title={"Indonesia Market" + (isAdmin ? " \u2014 " + (indoResults.source === "apify" ? "Apify" : "Claude") : "")} icon={"\ud83c\uddee\ud83c\udde9"} count={indoResults.results?.length}>
+            {isAdmin && indoResults.wave_status && <WaveStatusBar waves={indoResults.wave_status} c={c} />}
             {indoResults.confidence && (
               <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 12px", marginBottom: "12px", background: indoResults.confidence.level === "high" ? (dark ? "#0D2E1A" : "#E8F5EC") : indoResults.confidence.level === "medium" ? (dark ? "#2A2210" : "#FDF8ED") : (dark ? "#3a1a1a" : "#FEF2F2"), border: "1px solid " + (indoResults.confidence.level === "high" ? c.green : indoResults.confidence.level === "medium" ? c.gold : c.red) + "44", borderRadius: "4px" }}>
                 <div style={{ fontSize: "10px", fontWeight: 700, textTransform: "uppercase", color: indoResults.confidence.level === "high" ? c.green : indoResults.confidence.level === "medium" ? c.gold : c.red }}>{"\u25cf "}{indoResults.confidence.level} CONFIDENCE</div>
@@ -1757,12 +1757,14 @@ export default function App() {
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "14px", flexWrap: "wrap", gap: "6px" }}>
           <span style={{ fontSize: "10px", color: c.dim, letterSpacing: "1px" }}>{history.length} LOOKUPS</span>
           <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-            <button style={btnSec} onClick={exportQuickCSV}>QUICK CSV</button>
-            <button style={btnSec} onClick={exportStructuredCSV}>{"\ud83d\udcca FULL CSV"}</button>
-            <button style={btnSec} onClick={exportBackup}>{"\ud83d\udcbe BACKUP"}</button>
-            <input type="file" ref={backupFileRef} accept=".json" style={{ display: "none" }} onChange={e => e.target.files[0] && importBackup(e.target.files[0])} />
-            <button style={btnSec} onClick={() => backupFileRef.current?.click()}>{"\ud83d\udcc2 RESTORE"}</button>
-            <button style={{ ...btnSec, color: c.red, borderColor: c.red }} onClick={async () => { if (!confirm("Clear all?")) return; setHistory([]); await saveHistory(userId, []); }}>CLEAR</button>
+            <button style={btnSec} onClick={exportQuickCSV}>{"\ud83d\udcca"} EXPORT CSV</button>
+            {isAdmin && <>
+              <button style={btnSec} onClick={exportStructuredCSV}>FULL CSV</button>
+              <button style={btnSec} onClick={exportBackup}>{"\ud83d\udcbe BACKUP"}</button>
+              <input type="file" ref={backupFileRef} accept=".json" style={{ display: "none" }} onChange={e => e.target.files[0] && importBackup(e.target.files[0])} />
+              <button style={btnSec} onClick={() => backupFileRef.current?.click()}>{"\ud83d\udcc2 RESTORE"}</button>
+              <button style={{ ...btnSec, color: c.red, borderColor: c.red }} onClick={async () => { if (!confirm("Clear all?")) return; setHistory([]); await saveHistory(userId, []); }}>CLEAR</button>
+            </>}
           </div>
         </div>
         {!history.length ? <div style={{ textAlign: "center", padding: "40px", color: c.dimmer }}>No lookups yet.</div> : (
