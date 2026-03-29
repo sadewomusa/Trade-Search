@@ -348,8 +348,16 @@ export default function App() {
     try { await fetch(SUPABASE_URL + "/auth/v1/logout", { method: "POST", headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + authToken } }); } catch {}
     localStorage.removeItem("gt_token");
     localStorage.removeItem("gt_refresh");
+    // Clear all user-specific cached data
+    const keysToRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith("gt:") && !k.startsWith("gt:global:")) keysToRemove.push(k);
+    }
+    keysToRemove.forEach(k => localStorage.removeItem(k));
     setAuthUser(null); setAuthToken(""); setUserProfile(null);
     setHistory([]); setStorageReady(false);
+    window.location.reload();
   };
 
   // Keep storage layer in sync with auth token
@@ -411,38 +419,12 @@ export default function App() {
     } catch (e) { addDiag("error", "admin", "Update role failed: " + e.message); }
   };
 
-  // ── Init: restore session ──
+  // ── Init: no auto-login, user must log in each visit ──
   useEffect(() => { (async () => {
     const t = await storeGet("global:theme"); if (t === "light") setDark(false);
-    const savedToken = localStorage.getItem("gt_token");
-    if (savedToken) {
-      try {
-        const r = await fetch(SUPABASE_URL + "/auth/v1/user", {
-          headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + savedToken }
-        });
-        if (r.ok) {
-          const user = await r.json();
-          if (user?.id) {
-            setAuthToken(savedToken);
-            setAuthUser(user);
-            await loadProfile(user.id, savedToken);
-          } else { localStorage.removeItem("gt_token"); }
-        } else {
-          // Try refresh
-          const refreshToken = localStorage.getItem("gt_refresh");
-          if (refreshToken) {
-            const rr = await supabaseAuth("token?grant_type=refresh_token", { refresh_token: refreshToken });
-            if (rr.ok && rr.data.access_token) {
-              localStorage.setItem("gt_token", rr.data.access_token);
-              localStorage.setItem("gt_refresh", rr.data.refresh_token || refreshToken);
-              setAuthToken(rr.data.access_token);
-              setAuthUser(rr.data.user);
-              await loadProfile(rr.data.user.id, rr.data.access_token);
-            } else { localStorage.removeItem("gt_token"); localStorage.removeItem("gt_refresh"); }
-          }
-        }
-      } catch { localStorage.removeItem("gt_token"); }
-    }
+    // Clear any stale tokens
+    localStorage.removeItem("gt_token");
+    localStorage.removeItem("gt_refresh");
   })(); }, []);
 
   // ── Load data on unlock (with legacy PIN migration) ──
