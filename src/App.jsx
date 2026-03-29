@@ -345,6 +345,7 @@ export default function App() {
     localStorage.removeItem("gt_refresh");
     setAuthUser(null); setAuthToken(""); setUserProfile(null);
     setHistory([]); setStorageReady(false);
+    window.location.reload();
   };
 
   const loadProfile = async (uid, token) => {
