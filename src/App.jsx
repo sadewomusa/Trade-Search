@@ -9,6 +9,19 @@ const CUSTOMS_DUTY = 0.05;
 const LAST_MILE_AED = 20;
 const MARGIN_THRESHOLD = { candidate: 40, borderline: 20 };
 const WEIGHT_KG = { light: 0.3, medium: 1.0, heavy: 3.0 };
+const VOLUME_CBM = { light: 0.002, medium: 0.005, heavy: 0.015 };
+const FREIGHT_MODES = {
+  air:     { label: "Air Freight",    icon: "\u2708", transit: "5\u20137 days",  note: "Best for samples, urgent, <2kg items" },
+  sea_lcl: { label: "Sea LCL",       icon: "\ud83d\udea2", transit: "14\u201328 days", note: "Small batches, testing (per CBM)" },
+  sea_fcl: { label: "Sea FCL (20ft)", icon: "\ud83d\udce6", transit: "18\u201325 days", note: "500+ units, proven products" },
+};
+const TIER_LIMITS = {
+  free:       { lookups: 5,   margins: 1,  label: "Free" },
+  registered: { lookups: 30,  margins: 5,  label: "Registered" },
+  paid:       { lookups: 100, margins: 20, label: "Pro ($20/mo)" },
+  admin:      { lookups: 99999, margins: 99999, label: "Admin" },
+};
+const WORKER_URL = "https://trades-proxy.sadewoahmadm.workers.dev";
 const STATUS_COLORS = { Candidate: { bg: "#0D2E1A", text: "#2EAA5A", border: "#1A5C32" }, Investigated: { bg: "#0D1F15", text: "#5BAD6E", border: "#1A4A2D" }, Rejected: { bg: "#3a1a1a", text: "#f87171", border: "#5a2d2d" }, Active: { bg: "#2A2210", text: "#D4A843", border: "#4A3D18" } };
 const STATUS_COLORS_LIGHT = { Candidate: { bg: "#E8F5EC", text: "#1A7A3A", border: "#B6E2C4" }, Investigated: { bg: "#EDF7F0", text: "#3D8B56", border: "#C4E1CE" }, Rejected: { bg: "#FEF2F2", text: "#DC2626", border: "#FECACA" }, Active: { bg: "#FDF8ED", text: "#9A7A1C", border: "#E8D9A0" } };
 const MAX_HISTORY = 2000;
@@ -122,7 +135,7 @@ function compressEntry(h) { const mm = h.margins?.median || {}; return { pn: h.u
 function expandEntry(c) { if (c.uaeProduct) return c; const mc = c.mc || {}; return { uaeProduct: { product_name: c.pn, clean_name_en: c.pen, clean_name_id: c.pid, brand: c.br, category: c.cat, weight_class: c.wc, source: c.src, url: c.url, price_aed: c.pa, pack_quantity: c.pq || 1 }, normalized: { clean_name_id: c.pid, clean_name_en: c.pen, category: c.cat, weight_class: c.wc }, indoResults: { results: (c.ir || []).map(r => ({ name: r.n, price_idr: r.p, source: r.s === "S" ? "Shopee" : "Tokopedia", seller: r.sl, sold: r.sd, url: "" })), price_stats: { lowest_idr: c.lo, median_idr: c.md, highest_idr: c.hi, num_results: c.nr }, confidence: { score: c.cs, level: c.cl, flags: c.cf } }, margins: { best: { margin: c.mb }, median: { margin: c.mm, uaeUSD: mc.uU, uaeAED: mc.uA, uaeIDR: mc.uI, indoUSD: mc.iU, indoAED: mc.iA, indoIDR: mc.iI, freightUSD: mc.fU, freightAED: mc.fA, freightIDR: mc.fI, dutyUSD: mc.dU, dutyAED: mc.dA, dutyIDR: mc.dI, lastMileUSD: mc.lU, lastMileAED: mc.lA, lastMileIDR: mc.lI, totalUSD: mc.tU, totalAED: mc.tA, totalIDR: mc.tI }, worst: { margin: c.mw } }, confidence: { score: c.cs, level: c.cl, flags: c.cf }, medianPriceIDR: c.md, lowestPriceIDR: c.lo, highestPriceIDR: c.hi, weightClass: c.wc, status: c.st, timestamp: c.ts, source: c.ap ? "apify" : "legacy" }; }
 async function loadHistory(pin) { try { const d = await storeGet(pin + ":history"); return d?.length ? d.map(expandEntry) : []; } catch { return []; } }
 async function saveHistory(pin, h) { try { return await storeSet(pin + ":history", h.map(compressEntry)); } catch { return false; } }
-async function hashPin(pin) { const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(pin + "arb-salt-2026")); return Array.from(new Uint8Array(b)).map(x => x.toString(16).padStart(2, "0")).join(""); }
+// hashPin removed — replaced by Supabase Auth
 
 const Badge = ({ text, color = "#2EAA5A", bg = "#0D2E1A" }) => <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: "3px", fontSize: "10px", fontFamily: "monospace", background: bg, color, border: "1px solid " + color + "33" }}>{text}</span>;
 const Spinner = () => <div style={{ width: "14px", height: "14px", border: "2px solid #C9A84C", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite", display: "inline-block" }} />;
@@ -134,17 +147,22 @@ function CookieWizard({ c, onSave, onClose }) { const [step, setStep] = useState
 
 // ══════════ MAIN APP ══════════
 export default function App() {
-  const [unlocked, setUnlocked] = useState(false);
-  const [currentPin, setCurrentPin] = useState("");
-  const [pinInput, setPinInput] = useState("");
-  const [pinError, setPinError] = useState("");
-  const [attempts, setAttempts] = useState(0);
-  const [lockedOut, setLockedOut] = useState(false);
-  const [pinHashes, setPinHashes] = useState({});
+  // ── Auth State ──
+  const [authUser, setAuthUser] = useState(null); // { id, email }
+  const [authToken, setAuthToken] = useState("");
+  const [authMode, setAuthMode] = useState("login"); // "login" | "register"
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authDisplayName, setAuthDisplayName] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+  const [userProfile, setUserProfile] = useState(null); // { role, lookups_used, margins_used, ... }
   const [storageReady, setStorageReady] = useState(false);
   const [dark, setDark] = useState(true);
   const toggleTheme = async () => { const n = !dark; setDark(n); await storeSet("global:theme", n ? "dark" : "light"); };
-  const isBrainstormPin = currentPin === "240996";
+  const userId = authUser?.id || "";
+  const isAdmin = userProfile?.role === "admin";
+  const unlocked = !!authUser;
 
   const [mode, setMode] = useState("discover");
   const [apiKey, setApiKey] = useState("");
@@ -194,6 +212,7 @@ export default function App() {
   const [cooldown, setCooldown] = useState(0);
   const [activeSection, setActiveSection] = useState(0);
   const [qty, setQty] = useState(1);
+  const [freightMode, setFreightMode] = useState("air");
   const [qtyMode, setQtyMode] = useState("unit");
   const [waveStatus, setWaveStatus] = useState([]);
   const [lookupView, setLookupView] = useState("landing"); // "landing" | "scrape" | "results"
@@ -241,25 +260,167 @@ export default function App() {
   const sdKeyLoaded = useRef(false);
   const historyRef = useRef(history);
   historyRef.current = history;
-  const currentPinRef = useRef(currentPin);
-  currentPinRef.current = currentPin;
+  const userIdRef = useRef(userId);
+  userIdRef.current = userId;
 
   const c = dark ? { bg: "#0a0a0a", surface: "#0C0F0C", surface2: "#0E120E", input: "#1a1a1a", border: "#222", border2: "#333", text: "#d4d4d4", dim: "#888", dimmer: "#555", dimmest: "#444", gold: "#C9A84C", green: "#2EAA5A", red: "#f87171", darkGold: "#D4A843", cardBg: "#080808", btnText: "#0f0f0f", sectionBg: "#0D1F15" } : { bg: "#F5F2EB", surface: "#FFFFFF", surface2: "#F0EDE4", input: "#FFFFFF", border: "#D4CFC4", border2: "#C0BAB0", text: "#1A1A1A", dim: "#555", dimmer: "#888", dimmest: "#AAA", gold: "#8B6914", green: "#1A7A3A", red: "#DC2626", darkGold: "#9A7A1C", cardBg: "#F8F6F0", btnText: "#FFFFFF", sectionBg: "#E8F5EC" };
 
   const wait = (ms) => new Promise(r => setTimeout(r, ms));
   const runWithProgress = async (fn, estimatedSec) => { setProgress(0); const interval = setInterval(() => { setProgress(p => { const next = p + (100 / estimatedSec / 4); return next > 95 ? 95 : next; }); }, 250); try { const result = await fn(); setProgress(100); clearInterval(interval); return result; } catch (e) { clearInterval(interval); setProgress(0); throw e; } };
 
-  // ── Init ──
-  useEffect(() => { (async () => { const h1 = await hashPin("766911"); const h2 = await hashPin("240996"); setPinHashes({ [h1]: "766911", [h2]: "240996" }); const t = await storeGet("global:theme"); if (t === "light") setDark(false); })(); }, []);
-  const handleUnlock = async () => { if (lockedOut || !Object.keys(pinHashes).length) return; const h = await hashPin(pinInput); const mp = pinHashes[h]; if (mp) { setCurrentPin(mp); setUnlocked(true); setPinError(""); setPinInput(""); } else { const n = attempts + 1; setAttempts(n); setPinInput(""); if (n >= 5) setLockedOut(true); else setPinError("Wrong PIN (" + (5 - n) + " left)"); } };
+  // ── Auth Functions ──
+  const supabaseAuth = async (endpoint, body, method = "POST") => {
+    const r = await fetch(SUPABASE_URL + "/auth/v1/" + endpoint, {
+      method, headers: { apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json", ...(body?.token ? { Authorization: "Bearer " + body.token } : {}) },
+      ...(method !== "GET" ? { body: JSON.stringify(body) } : {})
+    });
+    return { ok: r.ok, status: r.status, data: await r.json() };
+  };
 
-  // ── Load data on unlock ──
+  const handleSignUp = async () => {
+    if (!authEmail || !authPassword) { setAuthError("Email and password required"); return; }
+    if (authPassword.length < 6) { setAuthError("Password must be 6+ characters"); return; }
+    setAuthLoading(true); setAuthError("");
+    try {
+      const { ok, data } = await supabaseAuth("signup", { email: authEmail, password: authPassword });
+      if (!ok) throw new Error(data.msg || data.error_description || data.message || "Signup failed");
+      if (data.access_token) {
+        // Auto-confirmed (Supabase setting)
+        localStorage.setItem("gt_token", data.access_token);
+        localStorage.setItem("gt_refresh", data.refresh_token || "");
+        setAuthToken(data.access_token);
+        setAuthUser(data.user);
+        await loadProfile(data.user.id, data.access_token);
+      } else {
+        setAuthError("Check your email to confirm your account, then log in.");
+        setAuthMode("login");
+      }
+    } catch (e) { setAuthError(e.message); }
+    setAuthLoading(false);
+  };
+
+  const handleSignIn = async () => {
+    if (!authEmail || !authPassword) { setAuthError("Email and password required"); return; }
+    setAuthLoading(true); setAuthError("");
+    try {
+      const { ok, data } = await supabaseAuth("token?grant_type=password", { email: authEmail, password: authPassword });
+      if (!ok) throw new Error(data.msg || data.error_description || data.message || "Login failed");
+      localStorage.setItem("gt_token", data.access_token);
+      localStorage.setItem("gt_refresh", data.refresh_token || "");
+      setAuthToken(data.access_token);
+      setAuthUser(data.user);
+      await loadProfile(data.user.id, data.access_token);
+    } catch (e) { setAuthError(e.message); }
+    setAuthLoading(false);
+  };
+
+  const handleSignOut = async () => {
+    try { await fetch(SUPABASE_URL + "/auth/v1/logout", { method: "POST", headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + authToken } }); } catch {}
+    localStorage.removeItem("gt_token");
+    localStorage.removeItem("gt_refresh");
+    setAuthUser(null); setAuthToken(""); setUserProfile(null);
+    setHistory([]); setStorageReady(false);
+  };
+
+  const loadProfile = async (uid, token) => {
+    try {
+      const r = await fetch(SUPABASE_URL + "/rest/v1/profiles?id=eq." + uid + "&select=*", {
+        headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + token }
+      });
+      if (r.ok) { const rows = await r.json(); if (rows?.[0]) setUserProfile(rows[0]); }
+    } catch (e) { console.warn("Profile load failed:", e); }
+  };
+
+  const refreshProfile = async () => {
+    if (userId && authToken) await loadProfile(userId, authToken);
+  };
+
+  // ── Init: restore session ──
+  useEffect(() => { (async () => {
+    const t = await storeGet("global:theme"); if (t === "light") setDark(false);
+    const savedToken = localStorage.getItem("gt_token");
+    if (savedToken) {
+      try {
+        const r = await fetch(SUPABASE_URL + "/auth/v1/user", {
+          headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + savedToken }
+        });
+        if (r.ok) {
+          const user = await r.json();
+          if (user?.id) {
+            setAuthToken(savedToken);
+            setAuthUser(user);
+            await loadProfile(user.id, savedToken);
+          } else { localStorage.removeItem("gt_token"); }
+        } else {
+          // Try refresh
+          const refreshToken = localStorage.getItem("gt_refresh");
+          if (refreshToken) {
+            const rr = await supabaseAuth("token?grant_type=refresh_token", { refresh_token: refreshToken });
+            if (rr.ok && rr.data.access_token) {
+              localStorage.setItem("gt_token", rr.data.access_token);
+              localStorage.setItem("gt_refresh", rr.data.refresh_token || refreshToken);
+              setAuthToken(rr.data.access_token);
+              setAuthUser(rr.data.user);
+              await loadProfile(rr.data.user.id, rr.data.access_token);
+            } else { localStorage.removeItem("gt_token"); localStorage.removeItem("gt_refresh"); }
+          }
+        }
+      } catch { localStorage.removeItem("gt_token"); }
+    }
+  })(); }, []);
+
+  // ── Load data on unlock (with legacy PIN migration) ──
+  const LEGACY_PINS = ["766911", "240996"];
   useEffect(() => {
-    if (!unlocked || !currentPin) return;
+    if (!unlocked || !userId) return;
     setStorageReady(false);
     (async () => {
       try {
-        const cfg = await storeGet(currentPin + ":config");
+        // ── Check if user already has data ──
+        let cfg = await storeGet(userId + ":config");
+        let hist = await loadHistory(userId);
+
+        // ── One-time migration: copy legacy PIN data to UUID ──
+        if (!cfg && !hist.length) {
+          const migrated = await storeGet(userId + ":migrated");
+          if (!migrated) {
+            addDiag("info", "migration", "No data under UUID, checking legacy PINs...");
+            for (const pin of LEGACY_PINS) {
+              const legacyCfg = await storeGet(pin + ":config");
+              const legacyHist = await loadHistory(pin);
+              if (legacyCfg || legacyHist.length) {
+                addDiag("ok", "migration", `Found data under PIN ${pin}: config=${!!legacyCfg}, history=${legacyHist.length}`);
+                // Copy config
+                if (legacyCfg && !cfg) {
+                  await storeSet(userId + ":config", legacyCfg);
+                  cfg = legacyCfg;
+                }
+                // Copy history
+                if (legacyHist.length && !hist.length) {
+                  await saveHistory(userId, legacyHist);
+                  hist = legacyHist;
+                }
+                // Copy keywords
+                const legacyKw = await storeGet(pin + ":keywords");
+                if (legacyKw?.length) await storeSet(userId + ":keywords", legacyKw);
+                // Copy brandlist
+                const legacyBl = await storeGet(pin + ":brandlist");
+                if (legacyBl?.length) await storeSet(userId + ":brandlist", legacyBl);
+                // Copy brainstorm data
+                const legacyBs = await storeGet(pin + ":brainstorm:amazon");
+                if (legacyBs?.products?.length) await storeSet(userId + ":brainstorm:amazon", legacyBs);
+                // Copy discover history
+                const legacyDisc = await storeGet(pin + ":discover:history");
+                if (legacyDisc?.length) await storeSet(userId + ":discover:history", legacyDisc);
+                addDiag("ok", "migration", `Migrated PIN ${pin} data to UUID ${userId.slice(0,8)}...`);
+                break; // Only migrate from the first PIN that has data
+              }
+            }
+            await storeSet(userId + ":migrated", { from: "pin", ts: new Date().toISOString() });
+          }
+        }
+
+        // ── Load data (now includes migrated data if applicable) ──
         if (cfg) {
           if (cfg.apiKey) { apiKeyLoaded.current = true; setApiKey(cfg.apiKey); setApiKeyStatus("loaded"); }
           if (cfg.apifyKey) { apifyKeyLoaded.current = true; setApifyKey(cfg.apifyKey); setApifyStatus("loaded"); }
@@ -269,31 +430,31 @@ export default function App() {
           if (cfg.shopeeCookie) setShopeeCookie(cfg.shopeeCookie);
           if (cfg.shopeeCookieUpdatedAt) setShopeeCookieUpdatedAt(cfg.shopeeCookieUpdatedAt);
         }
-        setHistory(await loadHistory(currentPin));
-        const kw = await storeGet(currentPin + ":keywords");
+        setHistory(hist.length ? hist : await loadHistory(userId));
+        const kw = await storeGet(userId + ":keywords");
         if (kw?.length) setKeywords(kw);
-        const bl = await storeGet(currentPin + ":brandlist");
+        const bl = await storeGet(userId + ":brandlist");
         if (bl?.length) setCustomBrands(bl);
-        const bsA = await storeGet(currentPin + ":brainstorm:amazon");
+        const bsA = await storeGet(userId + ":brainstorm:amazon");
         if (bsA?.products?.length) { setBsAmazonProducts(bsA.products); setBsLastScan(bsA.scannedAt); }
-        const disc = await storeGet(currentPin + ":discover:history");
+        const disc = await storeGet(userId + ":discover:history");
         if (disc?.length) { setDiscHistory(disc); setDiscAmazonResults(disc[0]?.results || []); setDiscSelectedIdx(0); }
       } catch (e) { console.warn("Load failed:", e); }
       setStorageReady(true);
     })();
-  }, [unlocked, currentPin]);
+  }, [unlocked, userId]);
 
   // ── Auto-save config ──
-  useEffect(() => { if (!storageReady || !currentPin) return; const t = setTimeout(() => storeSet(currentPin + ":config", { apiKey, apifyKey, scrapingDogKey, indoMode, freight: freight.source === "live" ? freight : null, shopeeCookie, shopeeCookieUpdatedAt }), 1500); return () => clearTimeout(t); }, [storageReady, currentPin, apiKey, apifyKey, scrapingDogKey, indoMode, freight, shopeeCookie, shopeeCookieUpdatedAt]);
+  useEffect(() => { if (!storageReady || !userId) return; const t = setTimeout(() => storeSet(userId + ":config", { apiKey, apifyKey, scrapingDogKey, indoMode, freight: freight.source === "live" ? freight : null, shopeeCookie, shopeeCookieUpdatedAt }), 1500); return () => clearTimeout(t); }, [storageReady, userId, apiKey, apifyKey, scrapingDogKey, indoMode, freight, shopeeCookie, shopeeCookieUpdatedAt]);
   // Auto-save history
-  const saveHistoryNow = useCallback(async (h) => { if (currentPinRef.current) await saveHistory(currentPinRef.current, h); }, []);
-  useEffect(() => { if (!storageReady || !currentPin) return; if (saveTimerRef.current) clearTimeout(saveTimerRef.current); saveTimerRef.current = setTimeout(() => saveHistory(currentPin, history), 2000); }, [history, storageReady, currentPin]);
+  const saveHistoryNow = useCallback(async (h) => { if (userIdRef.current) await saveHistory(userIdRef.current, h); }, []);
+  useEffect(() => { if (!storageReady || !userId) return; if (saveTimerRef.current) clearTimeout(saveTimerRef.current); saveTimerRef.current = setTimeout(() => saveHistory(userId, history), 2000); }, [history, storageReady, userId]);
   // Auto-save keywords
-  useEffect(() => { if (!storageReady || !currentPin) return; const t = setTimeout(() => storeSet(currentPin + ":keywords", keywords), 1500); return () => clearTimeout(t); }, [keywords, storageReady, currentPin]);
+  useEffect(() => { if (!storageReady || !userId) return; const t = setTimeout(() => storeSet(userId + ":keywords", keywords), 1500); return () => clearTimeout(t); }, [keywords, storageReady, userId]);
   // Auto-save brand list
-  useEffect(() => { if (!storageReady || !currentPin) return; const t = setTimeout(() => storeSet(currentPin + ":brandlist", customBrands), 1500); return () => clearTimeout(t); }, [customBrands, storageReady, currentPin]);
+  useEffect(() => { if (!storageReady || !userId) return; const t = setTimeout(() => storeSet(userId + ":brandlist", customBrands), 1500); return () => clearTimeout(t); }, [customBrands, storageReady, userId]);
   // Auto-save discover history
-  useEffect(() => { if (!storageReady || !currentPin || !discHistory.length) return; const t = setTimeout(() => storeSet(currentPin + ":discover:history", discHistory), 2000); return () => clearTimeout(t); }, [discHistory, storageReady, currentPin]);
+  useEffect(() => { if (!storageReady || !userId || !discHistory.length) return; const t = setTimeout(() => storeSet(userId + ":discover:history", discHistory), 2000); return () => clearTimeout(t); }, [discHistory, storageReady, userId]);
 
   // Key status indicators
   useEffect(() => { if (!apiKey || apiKey.length < 10 || !storageReady) return; if (apiKeyLoaded.current) { apiKeyLoaded.current = false; return; } setApiKeyStatus("saved"); const t = setTimeout(() => setApiKeyStatus(""), 1500); return () => clearTimeout(t); }, [apiKey, storageReady]);
@@ -310,7 +471,7 @@ export default function App() {
     const body = { action: "claude", data: { model, max_tokens: maxTokens, messages: [{ role: "user", content: prompt }], tools: useSearch ? [{ type: "web_search_20250305", name: "web_search" }] : undefined } };
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        const r = await fetch("https://trades-proxy.sadewoahmadm.workers.dev", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        const r = await fetch(WORKER_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
         if (r.status === 429) { if (attempt < retries) { setStage(s => s.replace(/ \(retry.*/, "") + " (retry...)"); await wait((attempt + 1) * (useSearch ? 15000 : 8000)); continue; } throw new Error("Rate limited. Wait 30s."); }
         if (!r.ok) { let d = ""; try { d = (await r.json()).error?.message || ""; } catch {} throw new Error("API " + r.status + ": " + (d || "error")); }
         const data = await r.json();
@@ -339,23 +500,42 @@ export default function App() {
   };
 
   // ══════════ MARGIN CALCULATOR ══════════
-  const calcMargin = (uaePriceAed, packQty, indoIDR, weightClass) => {
-    const uaeUnitAed = uaePriceAed / (packQty || 1); const uaeUSD = uaeUnitAed * fx.AEDUSD; const indoUSD = indoIDR * fx.IDRUSD; const wkg = WEIGHT_KG[weightClass] || 1.0; const fr = (freight.air?.rate_per_kg || 4) * wkg; const duty = (indoUSD + fr) * CUSTOMS_DUTY; const lm = LAST_MILE_AED * fx.AEDUSD; const total = indoUSD + fr + duty + lm; const margin = uaeUSD > 0 ? ((uaeUSD - total) / uaeUSD) * 100 : 0;
-    return { uaeUSD, uaeAED: uaeUnitAed, uaeIDR: uaeUnitAed * fx.AED_TO_IDR, indoUSD, indoAED: indoUSD / fx.AEDUSD, indoIDR, freightUSD: fr, freightAED: fr / fx.AEDUSD, freightIDR: fr / fx.IDRUSD, dutyUSD: duty, dutyAED: duty / fx.AEDUSD, dutyIDR: duty / fx.IDRUSD, lastMileUSD: lm, lastMileAED: LAST_MILE_AED, lastMileIDR: LAST_MILE_AED * fx.AED_TO_IDR, totalUSD: total, totalAED: total / fx.AEDUSD, totalIDR: total / fx.IDRUSD, margin };
+  const calcMargin = (uaePriceAed, packQty, indoIDR, weightClass, fMode = "air") => {
+    const uaeUnitAed = uaePriceAed / (packQty || 1); const uaeUSD = uaeUnitAed * fx.AEDUSD; const indoUSD = indoIDR * fx.IDRUSD;
+    const wkg = WEIGHT_KG[weightClass] || 1.0; const cbm = VOLUME_CBM[weightClass] || 0.005;
+    let fr;
+    if (fMode === "sea_lcl") { fr = (freight.ocean?.rate_per_cbm || 45) * cbm; }
+    else if (fMode === "sea_fcl") { const upc = Math.floor(28 / cbm); fr = (freight.ocean?.rate_20ft || 800) / Math.max(1, upc); }
+    else { fr = (freight.air?.rate_per_kg || 4) * wkg; }
+    const duty = (indoUSD + fr) * CUSTOMS_DUTY; const lm = LAST_MILE_AED * fx.AEDUSD; const total = indoUSD + fr + duty + lm; const margin = uaeUSD > 0 ? ((uaeUSD - total) / uaeUSD) * 100 : 0;
+    return { uaeUSD, uaeAED: uaeUnitAed, uaeIDR: uaeUnitAed * fx.AED_TO_IDR, indoUSD, indoAED: indoUSD / fx.AEDUSD, indoIDR, freightUSD: fr, freightAED: fr / fx.AEDUSD, freightIDR: fr / fx.IDRUSD, dutyUSD: duty, dutyAED: duty / fx.AEDUSD, dutyIDR: duty / fx.IDRUSD, lastMileUSD: lm, lastMileAED: LAST_MILE_AED, lastMileIDR: LAST_MILE_AED * fx.AED_TO_IDR, totalUSD: total, totalAED: total / fx.AEDUSD, totalIDR: total / fx.IDRUSD, margin, freightMode: fMode };
   };
+  // Dynamic display margins (recalc when freight toggle changes)
+  const displayMargins = marginData ? {
+    median: calcMargin(marginData.uaeProduct?.price_aed||0, marginData.uaeProduct?.pack_quantity||1, marginData.medianPriceIDR||0, marginData.weightClass||"medium", freightMode),
+    best: calcMargin(marginData.uaeProduct?.price_aed||0, marginData.uaeProduct?.pack_quantity||1, marginData.lowestPriceIDR||0, marginData.weightClass||"medium", freightMode),
+    worst: calcMargin(marginData.uaeProduct?.price_aed||0, marginData.uaeProduct?.pack_quantity||1, marginData.highestPriceIDR||0, marginData.weightClass||"medium", freightMode),
+  } : null;
+  const displayStatus = displayMargins ? (displayMargins.median.margin >= MARGIN_THRESHOLD.candidate ? "Candidate" : displayMargins.median.margin >= MARGIN_THRESHOLD.borderline ? "Investigated" : "Rejected") : "";
 
   // ══════════ INDO SEARCH — APIFY ══════════
+  const workerCall = async (action, data) => {
+    const r = await fetch(WORKER_URL, { method: "POST", headers: { "Content-Type": "application/json", ...(authToken ? { Authorization: "Bearer " + authToken } : {}) }, body: JSON.stringify({ action, authToken, ...data }) });
+    if (r.status === 429) { const d = await r.json().catch(() => ({})); throw new Error(d.error || "Rate limit reached. Upgrade your plan."); }
+    if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || "Worker error " + r.status); }
+    return r.json();
+  };
+
   const runApifyActor = async (actorId, input, label) => {
-    setStage("Starting " + label + "..."); const apiActorId = actorId.replace(/\//g, "~");
-    const sr = await fetch("https://api.apify.com/v2/acts/" + apiActorId + "/runs?token=" + apifyKey, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) });
-    if (!sr.ok) throw new Error(label + " failed: " + sr.status);
-    const rd = await sr.json(); const runId = rd.data?.id; if (!runId) throw new Error(label + " no run ID");
+    setStage("Starting " + label + "...");
+    const rd = await workerCall("apify_run", { actorId, input });
+    const runId = rd.data?.id; if (!runId) throw new Error(label + " no run ID");
     let status = "RUNNING", pc = 0;
-    while (status === "RUNNING" || status === "READY") { if (pc > 60) throw new Error(label + " timeout"); await wait(5000); pc++; setStage(label + " (" + (pc * 5) + "s)"); setProgress(Math.min(90, pc * 3)); try { const pr = await fetch("https://api.apify.com/v2/actor-runs/" + runId + "?token=" + apifyKey); if (pr.ok) status = (await pr.json()).data?.status || "RUNNING"; } catch {} }
+    while (status === "RUNNING" || status === "READY") { if (pc > 60) throw new Error(label + " timeout"); await wait(5000); pc++; setStage(label + " (" + (pc * 5) + "s)"); setProgress(Math.min(90, pc * 3)); try { const pr = await workerCall("apify_status", { runId }); status = pr.data?.status || "RUNNING"; } catch {} }
     if (status !== "SUCCEEDED") throw new Error(label + " status: " + status);
     const dsId = rd.data?.defaultDatasetId; if (!dsId) throw new Error(label + " no dataset");
-    const ir = await fetch("https://api.apify.com/v2/datasets/" + dsId + "/items?token=" + apifyKey + "&limit=50");
-    return ir.ok ? await ir.json() : [];
+    const items = await workerCall("apify_dataset", { datasetId: dsId, limit: 50 });
+    return Array.isArray(items) ? items : [];
   };
 
   const normalizeApifyResults = (items, platform) => {
@@ -465,7 +645,7 @@ export default function App() {
 
   // ══════════ VALIDATE (shared by Discover + Brainstorm) ══════════
   const validateProduct = async (product, setValidIdx, setResults) => {
-    if (!apiKey) return;
+    if (!authToken) return;
     const pk = product.asin || product.url || `${product.name}_${product.price_aed}`;
     setValidIdx(pk);
     try {
@@ -485,7 +665,7 @@ export default function App() {
 
   // ══════════ DISCOVER: ScrapingDog Amazon Search ══════════
   const searchAmazonSD = async (keyword) => {
-    if (!keyword.trim() || !scrapingDogKey) return;
+    if (!keyword.trim()) return;
     setDiscSearchingAmazon(true); setDiscError(""); setDiscSelectedIdx(-1);
     addDiag("info", "disc_amazon", `Searching Amazon.ae: "${keyword}" (3 pages)`);
     try {
@@ -494,11 +674,10 @@ export default function App() {
       // Fetch up to 3 pages for broader results
       for (let page = 1; page <= 3; page++) {
         setStage(`Searching page ${page}/3...`);
-        const sdUrl = "https://api.scrapingdog.com/amazon/search?api_key=" + encodeURIComponent(scrapingDogKey) + "&domain=ae&query=" + encodeURIComponent(keyword.trim()) + "&page=" + page;
         try {
-          const r = await fetch(sdUrl);
-          if (!r.ok) { addDiag("warn", "disc_amazon", `Page ${page}: HTTP ${r.status}`); break; }
-          const data = await r.json();
+          const r2 = await workerCall("scrapingdog_search", { query: keyword.trim(), domain: "ae", page });
+          const r = { ok: true, json: async () => r2 }; // wrap for compat
+          const data = r2;
           const products = (data.results || data.organic_results || data.search_results || data || []);
           const items = (Array.isArray(products) ? products : []).map(p => ({
             name: p.title || p.name || "",
@@ -564,15 +743,14 @@ export default function App() {
 
   // ══════════ BRAINSTORM: Amazon Pipeline ══════════
   const bsExtractSubcats = async () => {
-    if (!scrapingDogKey || !apiKey) { setBsError("Add ScrapingDog + Claude keys."); return; }
+    if (!authToken) { setBsError("Login required."); return; }
     setBsStep(1); setBsError(""); setBsSubcats([]);
     addDiag("info", "bs_subcats", `Extracting sub-categories for ${bsDept}`);
     try {
       setStage("Scraping main page...");
       const pageUrl = "https://www.amazon.ae/gp/bestsellers/" + bsDept;
-      const sdRes = await fetch("https://api.scrapingdog.com/scrape?api_key=" + encodeURIComponent(scrapingDogKey) + "&url=" + encodeURIComponent(pageUrl) + "&dynamic=true&premium=true");
-      if (!sdRes.ok) throw new Error("ScrapingDog HTTP " + sdRes.status);
-      const html = await sdRes.text();
+      const sdRes = await workerCall("scrapingdog_scrape", { url: pageUrl, dynamic: true, premium: true });
+      const html = sdRes.html || "";
       addDiag("info", "bs_subcats", `Got ${html.length} chars HTML`);
       if (html.length < 500) throw new Error("Page blocked or empty (" + html.length + " chars)");
 
@@ -617,9 +795,8 @@ export default function App() {
       try {
         setStage("Scraping " + sc.name + "...");
         const scUrl = sc.url.startsWith("http") ? sc.url : "https://www.amazon.ae" + sc.url;
-        const sdRes = await fetch("https://api.scrapingdog.com/scrape?api_key=" + encodeURIComponent(scrapingDogKey) + "&url=" + encodeURIComponent(scUrl) + "&dynamic=true&premium=true");
-        if (!sdRes.ok) { addDiag("error", "bs_scrape", `${sc.name}: HTTP ${sdRes.status}`); continue; }
-        const html = await sdRes.text();
+        const sdRes = await workerCall("scrapingdog_scrape", { url: scUrl, dynamic: true, premium: true });
+        const html = sdRes.html || "";
         if (html.length < 500) { addDiag("warn", "bs_scrape", `${sc.name}: blocked (${html.length} chars)`); continue; }
         setStage("Extracting " + sc.name + "...");
         const parsed = await callClaude('Extract ALL products from this Amazon.ae Best Sellers HTML. Return ONLY JSON:\n{"products":[{"name":"","price_aed":NUMBER,"rating":NUMBER,"reviews":NUMBER,"asin":"","url":"","brand":""}]}\nRULES: price_aed=NUMBER. reviews=INTEGER. Include brand if visible. Extract ALL.\nJSON only:\n' + html.slice(0, 60000), "claude-sonnet-4-20250514", false, 1, 4096);
@@ -666,7 +843,7 @@ export default function App() {
     setStage("");
     const ts = new Date().toISOString();
     setBsLastScan(ts);
-    await storeSet(currentPin + ":brainstorm:amazon", { products: allProducts, scannedAt: ts });
+    await storeSet(userId + ":brainstorm:amazon", { products: allProducts, scannedAt: ts });
   };
 
 
@@ -685,14 +862,12 @@ export default function App() {
       let rawInfo = "";
 
       // ── Part A: Try ScrapingDog → direct structured mapping ──
-      if (asin && scrapingDogKey) {
+      if (asin) {
         setStage("ScrapingDog Product API...");
         try {
-          const sdUrl = "https://api.scrapingdog.com/amazon/product?api_key=" + encodeURIComponent(scrapingDogKey) + "&domain=ae&asin=" + asin;
           addDiag("info", "lookup", `SD product API: domain=ae, asin=${asin}`);
-          const sdRes = await fetch(sdUrl);
-          if (sdRes.ok) {
-            const sdData = await sdRes.json();
+          const sdData = await workerCall("scrapingdog_product", { asin, domain: "ae" });
+          if (sdData && !sdData.error) {
             addDiag("ok", "lookup", `SD product OK, title: ${(sdData.title || "").slice(0, 60)}`);
             let priceAed = 0;
             for (const f of [sdData.price, sdData.sale_price, sdData.mrp, sdData.buybox_price, sdData.pricing, sdData.current_price]) { if (f) { const pm = String(f).match(/[\d,.]+/); if (pm) { priceAed = parseFloat(pm[0].replace(/,/g, "")); if (priceAed) break; } } }
@@ -715,8 +890,7 @@ export default function App() {
               addDiag("warn", "lookup", "SD data incomplete, using text fallback");
             }
           } else {
-            let errBody = ""; try { errBody = await sdRes.text(); } catch {}
-            addDiag("warn", "lookup", `SD product HTTP ${sdRes.status}, falling back to Claude`, errBody.slice(0, 300));
+            addDiag("warn", "lookup", `SD product returned error or empty, falling back to Claude`);
           }
         } catch (e) { addDiag("warn", "lookup", `SD product error: ${e.message}`); }
       }
@@ -797,7 +971,7 @@ export default function App() {
   };
 
   const runLookupToko = async () => {
-    if (!dryRunData || !apifyKey) return;
+    if (!dryRunData || !authToken) return;
     setLoading(true); setAutoError("");
     const queries = editableQueries.filter(q => q.trim());
     if (!queries.length) { setAutoError("Add at least one query."); setLoading(false); return; }
@@ -816,7 +990,7 @@ export default function App() {
   };
 
   const runLookupShopee = async () => {
-    if (!dryRunData || !apifyKey) return;
+    if (!dryRunData || !authToken) return;
     setLoading(true); setAutoError("");
     const queries = editableQueries.filter(q => q.trim());
     if (!queries.length) { setAutoError("Add at least one query."); setLoading(false); return; }
@@ -868,8 +1042,8 @@ export default function App() {
   };
 
   // ══════════ EXPORTS ══════════
-  const exportBackup = () => { const b = new Blob([JSON.stringify({ pin: currentPin, exportedAt: new Date().toISOString(), history: history.map(compressEntry) }, null, 2)], { type: "application/json" }); const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = "gt-backup-" + new Date().toISOString().slice(0, 10) + ".json"; a.click(); };
-  const importBackup = (file) => { const r = new FileReader(); r.onload = async (e) => { try { const b = JSON.parse(e.target.result); if (!b.history?.length) throw new Error("Invalid"); const exp = b.history.map(expandEntry); setHistory(exp); await saveHistory(currentPin, exp); alert("Restored " + exp.length + " lookups"); } catch (err) { alert("Import failed: " + err.message); } }; r.readAsText(file); };
+  const exportBackup = () => { const b = new Blob([JSON.stringify({ userId, exportedAt: new Date().toISOString(), history: history.map(compressEntry) }, null, 2)], { type: "application/json" }); const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = "gt-backup-" + new Date().toISOString().slice(0, 10) + ".json"; a.click(); };
+  const importBackup = (file) => { const r = new FileReader(); r.onload = async (e) => { try { const b = JSON.parse(e.target.result); if (!b.history?.length) throw new Error("Invalid"); const exp = b.history.map(expandEntry); setHistory(exp); await saveHistory(userId, exp); alert("Restored " + exp.length + " lookups"); } catch (err) { alert("Import failed: " + err.message); } }; r.readAsText(file); };
   const backupFileRef = useRef(null);
 
   const exportPDF = () => {
@@ -980,15 +1154,19 @@ export default function App() {
       {!unlocked ? (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "80vh", position: "relative" }}>
           <button onClick={toggleTheme} style={{ position: "absolute", top: 0, right: 0, background: "transparent", border: "1px solid " + c.border2, color: c.dim, fontFamily: "monospace", fontSize: "11px", padding: "6px 12px", borderRadius: "4px", cursor: "pointer" }}>{dark ? "\u2600" : "\ud83c\udf19"}</button>
-          <div style={{ width: "340px", padding: "40px", background: c.surface, border: "1px solid " + c.border, borderRadius: "8px", textAlign: "center" }}>
-            <div style={{ fontSize: "32px", marginBottom: "16px", opacity: 0.3 }}>{"\ud83d\udd12"}</div>
-            <h2 style={{ fontFamily: "'Lora',serif", fontSize: "24px", fontWeight: 500, color: c.gold, marginBottom: "8px" }}>{lockedOut ? "Access Denied" : "Enter PIN"}</h2>
-            {lockedOut ? <p style={{ fontSize: "13px", color: c.red }}>Too many attempts.</p> : <div>
-              <p style={{ fontSize: "12px", color: c.dimmer, marginBottom: "24px" }}>Restricted access</p>
-              <input type="password" value={pinInput} onChange={e => { setPinInput(e.target.value); setPinError(""); }} onKeyDown={e => e.key === "Enter" && handleUnlock()} placeholder="PIN" autoFocus style={{ width: "100%", padding: "14px", background: c.input, border: "1px solid " + (pinError ? c.red : c.border2), color: c.gold, fontFamily: "monospace", fontSize: "18px", borderRadius: "4px", textAlign: "center", letterSpacing: "8px", outline: "none", marginBottom: "12px" }} />
-              {pinError && <div style={{ fontSize: "12px", color: c.red, marginBottom: "12px" }}>{pinError}</div>}
-              <button onClick={handleUnlock} style={{ width: "100%", padding: "12px", background: c.gold, color: c.btnText, border: "none", borderRadius: "4px", fontFamily: "monospace", fontWeight: 700, letterSpacing: "1px", cursor: "pointer" }}>UNLOCK</button>
-            </div>}
+          <div style={{ width: "380px", padding: "40px", background: c.surface, border: "1px solid " + c.border, borderRadius: "8px", textAlign: "center" }}>
+            <div style={{ fontSize: "32px", marginBottom: "12px", opacity: 0.3 }}>{"\ud83d\udd12"}</div>
+            <h2 style={{ fontFamily: "'Lora',serif", fontSize: "24px", fontWeight: 500, color: c.gold, marginBottom: "4px" }}>GT Cross-Trade</h2>
+            <p style={{ fontSize: "11px", color: c.dimmer, marginBottom: "24px" }}>UAE {"\u2190"} Indonesia Trade Intelligence</p>
+            <div style={{ display: "flex", gap: "0", marginBottom: "20px", border: "1px solid " + c.border2, borderRadius: "4px", overflow: "hidden" }}>
+              <button onClick={() => { setAuthMode("login"); setAuthError(""); }} style={{ flex: 1, padding: "8px", background: authMode === "login" ? c.gold : "transparent", color: authMode === "login" ? c.btnText : c.dim, border: "none", fontFamily: "monospace", fontSize: "11px", fontWeight: 700, cursor: "pointer" }}>LOG IN</button>
+              <button onClick={() => { setAuthMode("register"); setAuthError(""); }} style={{ flex: 1, padding: "8px", background: authMode === "register" ? c.gold : "transparent", color: authMode === "register" ? c.btnText : c.dim, border: "none", fontFamily: "monospace", fontSize: "11px", fontWeight: 700, cursor: "pointer" }}>REGISTER</button>
+            </div>
+            {authMode === "register" && <input type="text" value={authDisplayName} onChange={e => setAuthDisplayName(e.target.value)} placeholder="Display name (optional)" style={{ width: "100%", padding: "10px 14px", background: c.input, border: "1px solid " + c.border2, color: c.text, fontFamily: "monospace", fontSize: "12px", borderRadius: "4px", outline: "none", marginBottom: "8px" }} />}
+            <input type="email" value={authEmail} onChange={e => { setAuthEmail(e.target.value); setAuthError(""); }} placeholder="Email" autoFocus style={{ width: "100%", padding: "10px 14px", background: c.input, border: "1px solid " + (authError ? c.red : c.border2), color: c.text, fontFamily: "monospace", fontSize: "12px", borderRadius: "4px", outline: "none", marginBottom: "8px" }} />
+            <input type="password" value={authPassword} onChange={e => { setAuthPassword(e.target.value); setAuthError(""); }} onKeyDown={e => e.key === "Enter" && (authMode === "login" ? handleSignIn() : handleSignUp())} placeholder="Password" style={{ width: "100%", padding: "10px 14px", background: c.input, border: "1px solid " + (authError ? c.red : c.border2), color: c.text, fontFamily: "monospace", fontSize: "12px", borderRadius: "4px", outline: "none", marginBottom: "12px" }} />
+            {authError && <div style={{ fontSize: "11px", color: authError.includes("confirm") || authError.includes("Check") ? c.green : c.red, marginBottom: "12px", lineHeight: 1.5 }}>{authError}</div>}
+            <button onClick={authMode === "login" ? handleSignIn : handleSignUp} disabled={authLoading} style={{ width: "100%", padding: "12px", background: authLoading ? c.dimmest : c.gold, color: c.btnText, border: "none", borderRadius: "4px", fontFamily: "monospace", fontWeight: 700, letterSpacing: "1px", cursor: authLoading ? "default" : "pointer", opacity: authLoading ? 0.6 : 1 }}>{authLoading ? "..." : authMode === "login" ? "LOG IN" : "CREATE ACCOUNT"}</button>
           </div>
         </div>
       ) : !storageReady ? (
@@ -999,20 +1177,22 @@ export default function App() {
       <div style={{ marginBottom: "16px", borderBottom: "1px solid " + c.border, paddingBottom: "12px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
           <div>
-            <h1 style={{ fontFamily: "'Lora',serif", fontSize: "28px", fontWeight: 500, color: c.gold, margin: 0 }}>GT Cross-Trade <span style={{ fontSize: "12px", color: c.dimmer, fontFamily: "monospace" }}>v4.7</span></h1>
-            <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "4px", letterSpacing: "2px", textTransform: "uppercase" }}>UAE {"\u2190"} Indonesia {"\u00b7"} PIN {currentPin.slice(0,2)}** {isBrainstormPin && <span style={{ color: c.red }}>{"\u00b7 ADMIN"}</span>} {"\u00b7"} {fxUpdated ? "FX " + fxUpdated.toLocaleDateString() : "FX: defaults"} {"\u00b7"} <span style={{ color: supabaseReady ? c.green : c.darkGold }}>{supabaseReady ? "\u25cf DB" : "\u25cb local"}</span></div>
+            <h1 style={{ fontFamily: "'Lora',serif", fontSize: "28px", fontWeight: 500, color: c.gold, margin: 0 }}>GT Cross-Trade <span style={{ fontSize: "12px", color: c.dimmer, fontFamily: "monospace" }}>v5.0</span></h1>
+            <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "4px", letterSpacing: "2px", textTransform: "uppercase" }}>UAE {"\u2190"} Indonesia {"\u00b7"} {authUser?.email?.split("@")[0]} {isAdmin && <span style={{ color: c.red }}>{"\u00b7 ADMIN"}</span>} {"\u00b7"} {userProfile ? (TIER_LIMITS[userProfile.role]?.label || userProfile.role) : ""} {"\u00b7"} {fxUpdated ? "FX " + fxUpdated.toLocaleDateString() : "FX: defaults"} {"\u00b7"} <span style={{ color: supabaseReady ? c.green : c.darkGold }}>{supabaseReady ? "\u25cf DB" : "\u25cb local"}</span></div>
           </div>
           <div style={{ display: "flex", gap: "12px", fontSize: "11px", alignItems: "flex-end" }}>
             <div style={{ textAlign: "right" }}><div style={{ color: c.dimmer }}>LOOKUPS</div><div style={{ color: c.gold, fontSize: "16px", fontWeight: 700 }}>{history.length}</div></div>
             <div style={{ textAlign: "right" }}><div style={{ color: c.dimmer }}>CANDIDATES</div><div style={{ color: c.green, fontSize: "16px", fontWeight: 700 }}>{candidates.length}</div></div>
+            {userProfile && !isAdmin && <div style={{ textAlign: "right" }}><div style={{ color: c.dimmer }}>QUOTA</div><div style={{ color: c.gold, fontSize: "11px", fontWeight: 600 }}>{userProfile.lookups_used}/{TIER_LIMITS[userProfile.role]?.lookups || "?"}</div></div>}
             <button onClick={toggleTheme} style={{ background: c.surface2, border: "1px solid " + c.border2, color: c.dim, fontFamily: "monospace", fontSize: "10px", padding: "6px 10px", borderRadius: "4px", cursor: "pointer" }}>{dark ? "\u2600" : "\ud83c\udf19"}</button>
-            <button onClick={() => setShowDiag(!showDiag)} style={{ background: showDiag ? c.gold : c.surface2, border: "1px solid " + (showDiag ? c.gold : c.border2), color: showDiag ? c.btnText : c.dim, fontFamily: "monospace", fontSize: "10px", padding: "6px 10px", borderRadius: "4px", cursor: "pointer" }}>DIAG</button>
+            {isAdmin && <button onClick={() => setShowDiag(!showDiag)} style={{ background: showDiag ? c.gold : c.surface2, border: "1px solid " + (showDiag ? c.gold : c.border2), color: showDiag ? c.btnText : c.dim, fontFamily: "monospace", fontSize: "10px", padding: "6px 10px", borderRadius: "4px", cursor: "pointer" }}>DIAG</button>}
+            <button onClick={handleSignOut} style={{ background: "transparent", border: "1px solid " + c.red + "44", color: c.red, fontFamily: "monospace", fontSize: "9px", padding: "6px 10px", borderRadius: "4px", cursor: "pointer" }}>LOGOUT</button>
           </div>
         </div>
       </div>
 
-      {/* ══════════ CONFIG ══════════ */}
-      <div style={{ marginBottom: "12px", padding: "10px 12px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px" }}>
+      {/* ══════════ CONFIG (admin only) ══════════ */}
+      {isAdmin && <div style={{ marginBottom: "12px", padding: "10px 12px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px" }}>
         {[
           { label: "CLAUDE", val: apiKey, set: setApiKey, show: showKey, toggle: () => setShowKey(!showKey), status: apiKeyStatus, ph: "sk-ant-..." },
           { label: "APIFY", val: apifyKey, set: setApifyKey, show: showApifyKey, toggle: () => setShowApifyKey(!showApifyKey), status: apifyStatus, ph: "apify_api_..." },
@@ -1033,12 +1213,12 @@ export default function App() {
           <span style={{ padding: "2px 8px", borderRadius: "10px", fontSize: "9px", background: cookieAgeDays === null ? c.surface : cookieAgeDays <= 10 ? (dark ? "#0D2E1A" : "#E8F5EC") : (dark ? "#3a1a1a" : "#FEF2F2"), color: cookieColor, border: "1px solid " + cookieColor + "44" }}>{"\ud83c\udf6a "}{cookieAgeDays === null ? "No cookie" : cookieAgeDays + "d"}</span>
           <button onClick={() => setShowCookieWizard(true)} style={{ ...btnSec, padding: "3px 8px", fontSize: "8px" }}>Update</button>
         </div>
-      </div>
+      </div>}
 
       {/* ══════════ TAB BAR ══════════ */}
       <div style={{ display: "flex", gap: "2px", borderBottom: "1px solid " + c.border2 }}>
         {[
-          ...(isBrainstormPin ? [{ id: "brainstorm", label: "\ud83e\udde0 BRAINSTORM" }] : []),
+          ...(isAdmin ? [{ id: "brainstorm", label: "\ud83e\udde0 BRAINSTORM" }] : []),
           { id: "discover", label: "\ud83d\udd0d DISCOVER" },
           { id: "auto", label: "\u26a1 LOOKUP" },
           { id: "history", label: "\ud83d\udccb HISTORY" }
@@ -1052,7 +1232,7 @@ export default function App() {
       </div>
 
       {/* ══════════ BRAINSTORM TAB ══════════ */}
-      {mode === "brainstorm" && isBrainstormPin && <div style={secStyle}>
+      {mode === "brainstorm" && isAdmin && <div style={secStyle}>
 
         {/* Status bar */}
         {(loading || bsStep === 3) && stage && <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" }}><Spinner /><span style={{ fontSize: "12px", color: c.gold }}>{stage}</span></div>}
@@ -1072,7 +1252,7 @@ export default function App() {
             <select value={bsDept} onChange={e => setBsDept(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "8px 12px", fontSize: "11px" }}>
               {AMAZON_AE_DEPTS.map(d => <option key={d.slug} value={d.slug}>{d.label}</option>)}
             </select>
-            <button onClick={bsExtractSubcats} disabled={!scrapingDogKey || !apiKey} style={{ ...btnGreen, padding: "10px 20px", fontSize: "11px", opacity: !scrapingDogKey || !apiKey ? 0.4 : 1 }}>
+            <button onClick={bsExtractSubcats} disabled={!authToken} style={{ ...btnGreen, padding: "10px 20px", fontSize: "11px", opacity: !authToken ? 0.4 : 1 }}>
               {"\ud83e\udde0"} BRAINSTORM {(AMAZON_AE_DEPTS.find(d => d.slug === bsDept)?.label || "").toUpperCase()} (~$0.89)
             </button>
           </div>}
@@ -1190,12 +1370,11 @@ export default function App() {
             <input value={discSearchInput} onChange={e => setDiscSearchInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && discSearchInput.trim()) { searchAmazonSD(discSearchInput); } }} placeholder="Search keyword (e.g. coconut bowl, rattan basket)..." style={{ ...inputStyle, flex: 1, padding: "10px 12px" }} />
           </div>
           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
-            <button onClick={() => searchAmazonSD(discSearchInput)} disabled={discSearchingAmazon || !discSearchInput.trim() || !scrapingDogKey} style={{ ...btnGreen, padding: "8px 16px", fontSize: "10px", opacity: (discSearchingAmazon || !discSearchInput.trim() || !scrapingDogKey) ? 0.4 : 1 }}>
+            <button onClick={() => searchAmazonSD(discSearchInput)} disabled={discSearchingAmazon || !discSearchInput.trim()} style={{ ...btnGreen, padding: "8px 16px", fontSize: "10px", opacity: (discSearchingAmazon || !discSearchInput.trim()) ? 0.4 : 1 }}>
               {discSearchingAmazon ? <><Spinner />{" Searching..."}</> : "SEARCH AMAZON (~$0.18)"}
             </button>
             {discAllProducts.length > 0 && <button onClick={() => exportDiscoverCSV(discAllProducts, discHistory[discSelectedIdx]?.keyword || discSearchInput)} style={{ ...btnSec, padding: "6px 12px", fontSize: "9px" }}>{"\ud83d\udcca"} CSV</button>}
           </div>
-          {!scrapingDogKey && <div style={{ fontSize: "9px", color: c.red, marginTop: "6px" }}>Add ScrapingDog key for Amazon search</div>}
           <div style={{ fontSize: "8px", color: c.dimmest, marginTop: "4px" }}>Fetches 3 pages · Filters zero-review products · Sorted by popularity</div>
         </div>
 
@@ -1351,8 +1530,8 @@ export default function App() {
             {indoResults?.results?.length > 0 && <div style={{ fontSize: "10px", color: c.green, fontFamily: "monospace", marginBottom: "10px" }}>{"\u2713"} {indoResults.results.length} listings loaded{indoResults.results.filter(r => r.source === "Tokopedia").length > 0 && " | Toko: " + indoResults.results.filter(r => r.source === "Tokopedia").length}{indoResults.results.filter(r => r.source === "Shopee").length > 0 && " | Shopee: " + indoResults.results.filter(r => r.source === "Shopee").length}</div>}
             <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
               {indoMode === "apify" ? <>
-                <button onClick={runLookupToko} disabled={editableQueries.filter(q => q.trim()).length === 0 || !apifyKey || loading} style={{ ...btnGreen, padding: "12px 24px", fontSize: "12px", opacity: (editableQueries.filter(q => q.trim()).length === 0 || !apifyKey || loading) ? 0.4 : 1 }}>{"\ud83d\udd0d"} SCRAPE TOKOPEDIA (~$0.01)</button>
-                <button onClick={runLookupShopee} disabled={editableQueries.filter(q => q.trim()).length === 0 || !apifyKey || loading} style={{ ...btnGreen, padding: "12px 24px", fontSize: "12px", background: "#EE4D2D", opacity: (editableQueries.filter(q => q.trim()).length === 0 || !apifyKey || loading) ? 0.4 : 1 }}>{"\ud83d\udd0d"} SCRAPE SHOPEE (~$0.01)</button>
+                <button onClick={runLookupToko} disabled={editableQueries.filter(q => q.trim()).length === 0 || loading} style={{ ...btnGreen, padding: "12px 24px", fontSize: "12px", opacity: (editableQueries.filter(q => q.trim()).length === 0 || loading) ? 0.4 : 1 }}>{"\ud83d\udd0d"} SCRAPE TOKOPEDIA (~$0.01)</button>
+                <button onClick={runLookupShopee} disabled={editableQueries.filter(q => q.trim()).length === 0 || loading} style={{ ...btnGreen, padding: "12px 24px", fontSize: "12px", background: "#EE4D2D", opacity: (editableQueries.filter(q => q.trim()).length === 0 || loading) ? 0.4 : 1 }}>{"\ud83d\udd0d"} SCRAPE SHOPEE (~$0.01)</button>
               </> : <button onClick={runLookupIndoSearch} disabled={editableQueries.filter(q => q.trim()).length === 0 || loading} style={{ ...btnGreen, padding: "12px 36px", fontSize: "12px", opacity: (editableQueries.filter(q => q.trim()).length === 0 || loading) ? 0.4 : 1 }}>{"\ud83d\udd0d"} CLAUDE SEARCH (~$0.15)</button>}
               {indoResults && <button onClick={() => setLookupView("results")} style={{ ...btnStyle, padding: "12px 24px", fontSize: "12px" }}>VIEW RESULTS {"\u2192"}</button>}
             </div>
@@ -1404,7 +1583,20 @@ export default function App() {
             </div>
           </SectionToggle>}
 
-          {marginData && <SectionToggle index={2} title="Margin Analysis" icon={"\ud83d\udcca"}>
+          {marginData && displayMargins && <SectionToggle index={2} title="Margin Analysis" icon={"\ud83d\udcca"}>
+            {/* Freight mode toggle */}
+            <div style={{ marginBottom: "14px", padding: "10px 12px", background: c.cardBg, border: "1px solid " + c.border, borderRadius: "4px" }}>
+              <div style={{ fontSize: "9px", color: c.dimmer, letterSpacing: "1px", marginBottom: "8px", textTransform: "uppercase" }}>FREIGHT MODE</div>
+              <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                {Object.entries(FREIGHT_MODES).map(([id, info]) => (
+                  <button key={id} onClick={() => setFreightMode(id)} style={{ padding: "6px 12px", background: freightMode === id ? c.gold : "transparent", color: freightMode === id ? c.btnText : c.dim, border: "1px solid " + (freightMode === id ? c.gold : c.border2), borderRadius: "3px", fontSize: "10px", cursor: "pointer", fontFamily: "monospace", flex: "1 1 auto", textAlign: "center" }}>
+                    {info.icon} {info.label}
+                    <div style={{ fontSize: "8px", color: freightMode === id ? c.btnText + "cc" : c.dimmest, marginTop: "2px" }}>{info.transit}</div>
+                  </button>
+                ))}
+              </div>
+              <div style={{ fontSize: "9px", color: c.dimmer, marginTop: "6px", fontStyle: "italic" }}>{FREIGHT_MODES[freightMode]?.note || ""}</div>
+            </div>
             <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "14px", flexWrap: "wrap" }}>
               <span style={{ fontSize: "10px", color: c.dim }}>FOR:</span>
               {[{ id: "unit", label: "Per Unit" }, { id: "custom", label: "Custom Qty" }, { id: "container", label: "Container (20ft)" }].map(m => (
@@ -1414,13 +1606,13 @@ export default function App() {
               <span style={{ fontSize: "10px", color: c.dimmer }}>{"\u00d7 "}{getQty()} units</span>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px", marginBottom: "14px" }}>
-              {[{ l: "BEST", m: marginData.margins.best }, { l: "MEDIAN", m: marginData.margins.median }, { l: "WORST", m: marginData.margins.worst }].map(x => (
+              {[{ l: "BEST", m: displayMargins.best }, { l: "MEDIAN", m: displayMargins.median }, { l: "WORST", m: displayMargins.worst }].map(x => (
                 <div key={x.l} style={{ padding: "12px", background: c.cardBg, border: "1px solid " + c.border, borderRadius: "4px", textAlign: "center" }}><div style={{ fontSize: "8px", color: c.dimmer }}>{x.l}</div><div style={{ fontSize: "24px", fontWeight: 700, color: marginColor(x.m.margin) }}>{x.m.margin.toFixed(1)}%</div></div>
               ))}
             </div>
             <div style={{ background: c.cardBg, border: "1px solid " + c.border, borderRadius: "4px", padding: "12px" }}>
               <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr", gap: "6px", fontSize: "10px", padding: "4px 0", borderBottom: "1px solid " + c.border2, color: c.dimmer, fontWeight: 700 }}><div>COST</div><div>USD</div><div>AED</div><div>IDR</div></div>
-              {(() => { const m = marginData.margins.median, q = getQty(); return <>
+              {(() => { const m = displayMargins.median, q = getQty(); return <>
                 <PriceRow label={"UAE Sell"} usd={m.uaeUSD*q} aed={m.uaeAED*q} idr={m.uaeIDR*q} />
                 <PriceRow label={"Indo"} usd={m.indoUSD*q} aed={m.indoAED*q} idr={m.indoIDR*q} />
                 <PriceRow label={"Freight"} usd={m.freightUSD*q} aed={m.freightAED*q} idr={m.freightIDR*q} />
@@ -1430,8 +1622,8 @@ export default function App() {
                 <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr", gap: "6px", fontSize: "11px", padding: "6px 0", fontWeight: 700 }}><div style={{ color: c.green }}>PROFIT</div><div style={{ color: c.green }}>{fmtUSD((m.uaeUSD-m.totalUSD)*q)}</div><div style={{ color: c.green }}>{fmtAED((m.uaeAED-m.totalAED)*q)}</div><div style={{ color: c.green }}>{fmtIDR((m.uaeIDR-m.totalIDR)*q)}</div></div>
               </>; })()}
             </div>
-            <div style={{ marginTop: "10px", padding: "8px", borderRadius: "4px", textAlign: "center", fontSize: "12px", fontWeight: 600, background: marginData.status === "Candidate" ? (dark ? STATUS_COLORS : STATUS_COLORS_LIGHT).Candidate.bg : marginData.status === "Investigated" ? (dark ? STATUS_COLORS : STATUS_COLORS_LIGHT).Active.bg : (dark ? STATUS_COLORS : STATUS_COLORS_LIGHT).Rejected.bg, color: marginColor(marginData.margins.median.margin), border: "1px solid " + (marginData.status === "Candidate" ? STATUS_COLORS.Candidate.border : STATUS_COLORS.Rejected.border) }}>
-              {marginData.margins.median.margin >= MARGIN_THRESHOLD.candidate ? "\u2713 CANDIDATE" : marginData.margins.median.margin >= MARGIN_THRESHOLD.borderline ? "\u25cb BORDERLINE" : "\u2717 LOW MARGIN"} {"\u2014"} {marginData.margins.median.margin.toFixed(1)}%
+            <div style={{ marginTop: "10px", padding: "8px", borderRadius: "4px", textAlign: "center", fontSize: "12px", fontWeight: 600, background: displayStatus === "Candidate" ? (dark ? STATUS_COLORS : STATUS_COLORS_LIGHT).Candidate.bg : displayStatus === "Investigated" ? (dark ? STATUS_COLORS : STATUS_COLORS_LIGHT).Active.bg : (dark ? STATUS_COLORS : STATUS_COLORS_LIGHT).Rejected.bg, color: marginColor(displayMargins.median.margin), border: "1px solid " + (displayStatus === "Candidate" ? STATUS_COLORS.Candidate.border : STATUS_COLORS.Rejected.border) }}>
+              {displayMargins.median.margin >= MARGIN_THRESHOLD.candidate ? "\u2713 CANDIDATE" : displayMargins.median.margin >= MARGIN_THRESHOLD.borderline ? "\u25cb BORDERLINE" : "\u2717 LOW MARGIN"} {"\u2014"} {displayMargins.median.margin.toFixed(1)}%
             </div>
           </SectionToggle>}
 
@@ -1453,7 +1645,7 @@ export default function App() {
             <button style={btnSec} onClick={exportBackup}>{"\ud83d\udcbe BACKUP"}</button>
             <input type="file" ref={backupFileRef} accept=".json" style={{ display: "none" }} onChange={e => e.target.files[0] && importBackup(e.target.files[0])} />
             <button style={btnSec} onClick={() => backupFileRef.current?.click()}>{"\ud83d\udcc2 RESTORE"}</button>
-            <button style={{ ...btnSec, color: c.red, borderColor: c.red }} onClick={async () => { if (!confirm("Clear all?")) return; setHistory([]); await saveHistory(currentPin, []); }}>CLEAR</button>
+            <button style={{ ...btnSec, color: c.red, borderColor: c.red }} onClick={async () => { if (!confirm("Clear all?")) return; setHistory([]); await saveHistory(userId, []); }}>CLEAR</button>
           </div>
         </div>
         {!history.length ? <div style={{ textAlign: "center", padding: "40px", color: c.dimmer }}>No lookups yet.</div> : (
