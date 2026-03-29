@@ -740,20 +740,45 @@ export default function App() {
   const runShopeeApify = async (allQueries) => {
     const waves = [];
     const mainQ = allQueries[0];
-    const shopeeInput = { searchKeywords: allQueries.slice(0, 3), country: "ID", maxProducts: 100, shopeeCookies: shopeeCookie || "[]" };
-    addDiag("info", "shopee_apify", `Query: "${mainQ}"`);
+
+    // Attempt 1: Apify actor (relevancy sort)
+    const shopeeInput = { searchKeywords: allQueries.slice(0, 3), country: "ID", maxProducts: 100, scrapeMode: "fast", sortBy: "relevancy", shopeeCookies: shopeeCookie || "[]", proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ["RESIDENTIAL"], apifyProxyCountry: "ID" } };
+    addDiag("info", "shopee_apify", `Query: "${mainQ}" (attempt 1: relevancy)`);
     setStage("Scraping Shopee..."); setProgress(10);
     try {
       const items = await runApifyActor(shopeeActorId, shopeeInput, "Shopee");
       const results = normalizeApifyResults(items, "Shopee");
-      addDiag(results.length > 0 ? "ok" : "warn", "shopee_apify", `${items.length} raw → ${results.length} valid`);
-      waves.push({ name: "Shopee", status: results.length > 0 ? "ok" : "empty", count: results.length });
-      return { allResults: results, waves, source: "apify" };
+      if (results.length > 0) {
+        addDiag("ok", "shopee_apify", `Attempt 1: ${items.length} raw → ${results.length} valid`);
+        waves.push({ name: "Shopee", status: "ok", count: results.length });
+        return { allResults: results, waves, source: "apify" };
+      }
+      addDiag("warn", "shopee_apify", `Attempt 1: 0 valid, retrying with sales sort...`);
     } catch (e) {
-      addDiag("error", "shopee_apify", typeof e === "object" ? (e.message || JSON.stringify(e)) : String(e));
-      waves.push({ name: "Shopee", status: "fail", count: 0, reason: e.message });
-      return { allResults: [], waves, source: "apify" };
+      addDiag("warn", "shopee_apify", `Attempt 1 failed: ${typeof e === "object" ? (e.message || JSON.stringify(e)) : String(e)}`);
     }
+
+    // Attempt 2: Retry with sales sort (different page, different anti-bot fingerprint)
+    if (!apifyAbortRef.current) {
+      const retryInput = { searchKeywords: [mainQ], country: "ID", maxProducts: 100, scrapeMode: "fast", sortBy: "sales", shopeeCookies: shopeeCookie || "[]", proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ["RESIDENTIAL"], apifyProxyCountry: "ID" } };
+      addDiag("info", "shopee_apify", `Attempt 2: sortBy=sales`);
+      setStage("Retrying Shopee (best sellers)..."); setProgress(10);
+      try {
+        const items = await runApifyActor(shopeeActorId, retryInput, "Shopee retry");
+        const results = normalizeApifyResults(items, "Shopee");
+        if (results.length > 0) {
+          addDiag("ok", "shopee_apify", `Attempt 2: ${items.length} raw → ${results.length} valid`);
+          waves.push({ name: "Shopee (retry)", status: "ok", count: results.length });
+          return { allResults: results, waves, source: "apify" };
+        }
+        addDiag("warn", "shopee_apify", `Attempt 2: still 0. Shopee may be blocking.`);
+      } catch (e) {
+        addDiag("warn", "shopee_apify", `Attempt 2 failed: ${typeof e === "object" ? (e.message || JSON.stringify(e)) : String(e)}`);
+      }
+    }
+
+    waves.push({ name: "Shopee", status: "fail", count: 0, reason: "Blocked by Shopee anti-bot. Try again in a few minutes." });
+    return { allResults: [], waves, source: "apify" };
   };
 
   const runIndoApify = async (bahasaQuery, allQueries) => {
@@ -1029,7 +1054,11 @@ export default function App() {
           if (sdData && !sdData.error) {
             addDiag("ok", "lookup", `SD product OK, title: ${(sdData.title || "").slice(0, 60)}`);
             let priceAed = 0;
-            for (const f of [sdData.price, sdData.sale_price, sdData.mrp, sdData.buybox_price, sdData.pricing, sdData.current_price]) { if (f) { const pm = String(f).match(/[\d,.]+/); if (pm) { priceAed = parseFloat(pm[0].replace(/,/g, "")); if (priceAed) break; } } }
+            // Log all price fields for debugging
+            const priceFields = { price: sdData.price, sale_price: sdData.sale_price, mrp: sdData.mrp, buybox_price: sdData.buybox_price, pricing: sdData.pricing, current_price: sdData.current_price, extracted_price: sdData.extracted_price, buybox: sdData.buybox };
+            addDiag("info", "lookup", "SD price fields: " + JSON.stringify(priceFields));
+            // Priority: buybox > current > extracted > mrp > pricing > price > sale
+            for (const f of [sdData.buybox_price, sdData.current_price, sdData.extracted_price, sdData.mrp, sdData.pricing, sdData.price, sdData.sale_price]) { if (f) { const pm = String(f).match(/[\d,.]+/); if (pm) { priceAed = parseFloat(pm[0].replace(/,/g, "")); if (priceAed) break; } } }
             if (!priceAed) addDiag("warn", "lookup", `SD price=0, keys: ${Object.keys(sdData).filter(k => /price|cost|mrp/i.test(k)).join(",") || "none"}`);
             if (sdData.title && priceAed > 0) {
               sdParsed = {
