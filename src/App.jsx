@@ -665,7 +665,7 @@ export default function App() {
   const workerCall = async (action, data) => {
     const r = await fetch(WORKER_URL, { method: "POST", headers: { "Content-Type": "application/json", ...(authToken ? { Authorization: "Bearer " + authToken } : {}) }, body: JSON.stringify({ action, authToken, ...data }) });
     if (r.status === 429) { const d = await r.json().catch(() => ({})); throw new Error(d.error || "Rate limit reached. Upgrade your plan."); }
-    if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || "Worker error " + r.status); }
+    if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(typeof d.error === "string" ? d.error : JSON.stringify(d).slice(0, 300) || "Worker error " + r.status); }
     return r.json();
   };
 
@@ -718,7 +718,7 @@ export default function App() {
       waves.push({ name: "Tokopedia", status: results.length > 0 ? "ok" : "empty", count: results.length });
       return { allResults: results, waves, source: "apify" };
     } catch (e) {
-      addDiag("error", "toko_apify", e.message);
+      addDiag("error", "toko_apify", typeof e === "object" ? (e.message || JSON.stringify(e)) : String(e));
       waves.push({ name: "Tokopedia", status: "fail", count: 0, reason: e.message });
       return { allResults: [], waves, source: "apify" };
     }
@@ -739,7 +739,7 @@ export default function App() {
       waves.push({ name: "Shopee", status: results.length > 0 ? "ok" : "empty", count: results.length });
       return { allResults: results, waves, source: "apify" };
     } catch (e) {
-      addDiag("error", "shopee_apify", e.message);
+      addDiag("error", "shopee_apify", typeof e === "object" ? (e.message || JSON.stringify(e)) : String(e));
       waves.push({ name: "Shopee", status: "fail", count: 0, reason: e.message });
       return { allResults: [], waves, source: "apify" };
     }
