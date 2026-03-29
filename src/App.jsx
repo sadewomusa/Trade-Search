@@ -447,11 +447,21 @@ export default function App() {
   const updateUserRole = async (uid, newRole) => {
     if (!authToken || !isAdmin) return;
     try {
-      await fetch(SUPABASE_URL + "/rest/v1/profiles?id=eq." + uid, {
+      // Try PATCH first (normal case)
+      const r = await fetch(SUPABASE_URL + "/rest/v1/profiles?id=eq." + uid, {
         method: "PATCH",
         headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + authToken, "Content-Type": "application/json", Prefer: "return=minimal" },
         body: JSON.stringify({ role: newRole })
       });
+      // If PATCH didn't match any rows, try upsert (profile row might not exist yet)
+      if (!r.ok || r.status === 404) {
+        const user = adminUsers.find(u => u.id === uid);
+        await fetch(SUPABASE_URL + "/rest/v1/profiles", {
+          method: "POST",
+          headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + authToken, "Content-Type": "application/json", Prefer: "resolution=merge-duplicates,return=minimal" },
+          body: JSON.stringify({ id: uid, email: user?.email || "", role: newRole, lookups_used: 0, margins_used: 0 })
+        });
+      }
       await loadAdminUsers();
     } catch (e) { addDiag("error", "admin", "Update role failed: " + e.message); }
   };
@@ -461,18 +471,17 @@ export default function App() {
     if (invitePassword.length < 6) { setInviteMsg("Password must be 6+ characters"); return; }
     setInviteMsg("Creating...");
     try {
-      // Step 1: Create account via Supabase signup
-      const { ok, data } = await supabaseAuth("signup", { email: inviteEmail, password: invitePassword });
-      if (!ok) throw new Error(data.msg || data.error_description || data.message || "Signup failed");
-      const newUserId = data.user?.id || data.id;
-      if (!newUserId) throw new Error("Account created but no user ID returned. User may need to confirm email first.");
-      // Step 2: Set role
-      await fetch(SUPABASE_URL + "/rest/v1/profiles?id=eq." + newUserId, {
-        method: "PATCH",
-        headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + authToken, "Content-Type": "application/json", Prefer: "return=minimal" },
-        body: JSON.stringify({ role: inviteRole })
+      // Use worker to create user via Supabase Admin API (service_role key, auto-confirms email)
+      const result = await workerCall("admin_create_user", { email: inviteEmail, password: invitePassword, role: inviteRole });
+      const newUserId = result.user?.id || result.id;
+      if (!newUserId) throw new Error("No user ID returned. Check worker logs.");
+      // Ensure profile row exists with correct role
+      await fetch(SUPABASE_URL + "/rest/v1/profiles", {
+        method: "POST",
+        headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + authToken, "Content-Type": "application/json", Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify({ id: newUserId, email: inviteEmail, role: inviteRole, lookups_used: 0, margins_used: 0 })
       });
-      setInviteMsg("Account created: " + inviteEmail + " (" + inviteRole + "). Share the credentials.");
+      setInviteMsg("Account created: " + inviteEmail + " (" + inviteRole.toUpperCase() + "). No confirmation needed — share credentials directly.");
       setInviteEmail(""); setInvitePassword("");
       await loadAdminUsers();
     } catch (e) { setInviteMsg("Error: " + e.message); }
