@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 // ══════════ SUPABASE CONFIG ══════════
 const SUPABASE_URL = "https://cqpxzxafavqflnrilgjh.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNxcHh6eGFmYXZxZmxucmlsZ2poIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ1MDUyNzEsImV4cCI6MjA5MDA4MTI3MX0.tAK15mxTdofv5eymd9wJOxxA4vjVuS_QkpmKiqA5qCI";
+const SUPABASE_ANON_KEY = "sb_publishable_f4N-v3Gs7qJsPW4jUe_fzw_u81VVIg3";
 // ══════════ CONSTANTS ══════════
 const DEFAULT_FX = { AEDUSD: 0.2723, IDRUSD: 0.0000613, AED_TO_IDR: 0.2723 / 0.0000613, IDR_TO_AED: 0.0000613 / 0.2723 };
 const DEFAULT_FREIGHT = { air: { rate_per_kg: 4, min_kg: 100, transit: { port_port: "3-5 days", port_door: "5-7 days", door_door: "7-10 days" } }, ocean: { rate_20ft: 800, rate_40ft: 1400, rate_per_cbm: 45, transit: { port_port: "14-18 days", port_door: "18-25 days", door_door: "21-30 days" } }, source: "default", updated: null };
@@ -16,11 +16,12 @@ const FREIGHT_MODES = {
   sea_fcl: { label: "Sea FCL (20ft)", icon: "\ud83d\udce6", transit: "18\u201325 days", note: "500+ units, proven products" },
 };
 const ROUTES = [
-  { id: "air_dxb", label: "Air Jakarta\u2192DXB", mode: "air", origin: "Jakarta (CGK)", dest: "Dubai (DXB)", transit: "5\u20137 days", rate: 4.25, unit: "USD/kg", bestFor: "Samples, urgent, <2kg items", icon: "\u2708" },
-  { id: "sea_lcl_jea", label: "Sea LCL\u2192Jebel Ali", mode: "sea_lcl", origin: "Jakarta", dest: "Jebel Ali", transit: "21\u201328 days", rate: 47.5, unit: "USD/CBM", bestFor: "Small batches, testing", icon: "\ud83d\udea2" },
-  { id: "sea_lcl_kct", label: "Sea LCL\u2192KCT \u2605", mode: "sea_lcl", origin: "Surabaya", dest: "Khorfakkan (KCT)", transit: "14\u201320 days", rate: 42, unit: "USD/CBM", bestFor: "Regular shipments, east coast", icon: "\ud83d\udea2", highlight: true },
-  { id: "sea_fcl_jea", label: "Sea FCL 20ft\u2192Jebel Ali", mode: "sea_fcl", origin: "Jakarta", dest: "Jebel Ali", transit: "18\u201325 days", rate: 850, unit: "USD/ctr", bestFor: "500+ units, proven products", icon: "\ud83d\udce6" },
-  { id: "sea_lcl_klf", label: "Sea LCL\u2192Khalifa Port", mode: "sea_lcl", origin: "Jakarta", dest: "Khalifa Port", transit: "20\u201328 days", rate: 46, unit: "USD/CBM", bestFor: "Abu Dhabi destination", icon: "\ud83d\udea2" },
+  { id: "air_dxb", label: "Air via Dubai (DXB)", mode: "air", origin: "Jakarta (CGK)", dest: "Dubai (DXB)", transit: "5\u20137 days", rate: 4.25, unit: "USD/kg", bestFor: "Samples, urgent, <2kg items", icon: "\u2708" },
+  { id: "sea_lcl_jea", label: "Sea LCL via Jebel Ali (Dubai)", mode: "sea_lcl", origin: "Jakarta", dest: "Jebel Ali, Dubai", transit: "21\u201328 days", rate: 47.5, unit: "USD/CBM", bestFor: "Small batches, testing", icon: "\ud83d\udea2" },
+  { id: "sea_lcl_kct", label: "Sea LCL via Khorfakkan (Sharjah) \u2605", mode: "sea_lcl", origin: "Surabaya", dest: "Khorfakkan, Sharjah", transit: "14\u201320 days", rate: 42, unit: "USD/CBM", bestFor: "Regular shipments, east coast", icon: "\ud83d\udea2", highlight: true },
+  { id: "sea_fcl_jea", label: "Sea FCL 20ft via Jebel Ali (Dubai)", mode: "sea_fcl", origin: "Jakarta", dest: "Jebel Ali, Dubai", transit: "18\u201325 days", rate: 850, unit: "USD/ctr", bestFor: "500+ units, proven products", icon: "\ud83d\udce6" },
+  { id: "sea_fcl_kct", label: "Sea FCL 20ft via Khorfakkan (Sharjah) \u2605", mode: "sea_fcl", origin: "Surabaya", dest: "Khorfakkan, Sharjah", transit: "14\u201322 days", rate: 780, unit: "USD/ctr", bestFor: "Bulk via east coast, fastest sea", icon: "\ud83d\udce6", highlight: true },
+  { id: "sea_lcl_klf", label: "Sea LCL via Khalifa (Abu Dhabi)", mode: "sea_lcl", origin: "Jakarta", dest: "Khalifa Port, Abu Dhabi", transit: "20\u201328 days", rate: 46, unit: "USD/CBM", bestFor: "Abu Dhabi destination", icon: "\ud83d\udea2" },
 ];
 const TIER_LIMITS = {
   free:       { lookups: 3,   margins: 3,  label: "Free" },
@@ -201,10 +202,12 @@ export default function App() {
   const shopeeActorId = "fatihtahta/shopee-scraper";
 
   // Brand blocklist
+  const [baseBrands, setBaseBrands] = useState([...BRAND_BLOCKLIST_DEFAULT]);
   const [customBrands, setCustomBrands] = useState([]);
   const [showBrandList, setShowBrandList] = useState(false);
   const [newBrandInput, setNewBrandInput] = useState("");
-  const allBrands = [...new Set([...BRAND_BLOCKLIST_DEFAULT, ...customBrands])];
+  const [brandSearchFilter, setBrandSearchFilter] = useState("");
+  const allBrands = [...new Set([...baseBrands, ...customBrands])];
 
   // Keyword bank
   const [keywords, setKeywords] = useState([...DEFAULT_KEYWORDS]);
@@ -535,6 +538,9 @@ export default function App() {
         if (kw?.length) setKeywords(kw);
         const bl = await storeGet(userId + ":brandlist");
         if (bl?.length) setCustomBrands(bl);
+        // Load admin-managed base brand blocklist (shared)
+        const baseBl = await storeGet("global:brandlist_base");
+        if (baseBl?.length) setBaseBrands(baseBl);
         const bsA = await storeGet(userId + ":brainstorm:amazon");
         if (bsA?.products?.length) { setBsAmazonProducts(bsA.products); setBsLastScan(bsA.scannedAt); }
         const disc = await storeGet(userId + ":discover:history");
@@ -553,6 +559,8 @@ export default function App() {
   useEffect(() => { if (!storageReady || !userId) return; const t = setTimeout(() => storeSet(userId + ":keywords", keywords), 1500); return () => clearTimeout(t); }, [keywords, storageReady, userId]);
   // Auto-save brand list
   useEffect(() => { if (!storageReady || !userId) return; const t = setTimeout(() => storeSet(userId + ":brandlist", customBrands), 1500); return () => clearTimeout(t); }, [customBrands, storageReady, userId]);
+  // Auto-save base brand blocklist (admin-managed, shared globally)
+  useEffect(() => { if (!storageReady || !isAdmin) return; const t = setTimeout(() => storeSet("global:brandlist_base", baseBrands), 1500); return () => clearTimeout(t); }, [baseBrands, storageReady, isAdmin]);
   // Auto-save discover history
   useEffect(() => { if (!storageReady || !userId || !discHistory.length) return; const t = setTimeout(() => storeSet(userId + ":discover:history", discHistory), 2000); return () => clearTimeout(t); }, [discHistory, storageReady, userId]);
 
@@ -940,7 +948,7 @@ export default function App() {
     setValidIdx(pk);
     try {
       setStage("Translating...");
-      const fmt = await callClaude('What would an Indonesian buyer type on Tokopedia to find this product? Give me 3 SHORT search queries in Bahasa Indonesia (2-3 words each). Strip ALL brand names, sizes, quantities.\n\nExamples:\n"Nielsen-Massey Madagascar Bourbon Vanilla Bean Paste 32oz" → ["pasta vanilla","ekstrak vanilla","vanilla murni"]\n"KitchenAid Artisan Stand Mixer 5Qt" → ["mixer berdiri","mixer kue","mixer adonan"]\n"Coconut Bowl Set of 4 with Spoons" → ["mangkok kelapa","bowl coconut","mangkok kayu"]\n\nProduct: "' + product.name + '"\n\n{"clean_name_id":"2-3 word Bahasa name","category":"electronics/kitchen/beauty/fashion/home/toys/sports/baby/office/other","weight_class":"light/medium/heavy","search_queries_id":["query1","query2","query3"]}\nJSON only:', "claude-sonnet-4-20250514", false, 1, 1024);
+      const fmt = await callClaude('Generate search queries for finding this product on Indonesian marketplaces.\n\nRULES:\n1. Strip brand names but KEEP specs (size, volume, weight, ml, gram)\n2. Mix Bahasa Indonesia AND English — Indonesian buyers search both\n3. Include specific size/volume in at least 2 queries\n4. Each query 2-5 words, specific to THIS product\n\nExamples:\n"Vanilla Roller On Essential Oil 10ml" → ["roller oil vanilla 10ml","minyak vanilla roll on 10ml","essential oil vanilla roller"]\n"Coconut Bowl Set of 4 with Spoons" → ["mangkok kelapa set 4","coconut bowl spoon set","bowl kelapa kayu"]\n\nProduct: "' + product.name + '" (AED ' + (product.price_aed || "") + ')\n\n{"clean_name_id":"2-4 word Bahasa name","category":"electronics/kitchen/beauty/fashion/home/toys/sports/baby/office/other","weight_class":"light/medium/heavy","search_queries_id":["mixed query with specs","bahasa query","english query","variant"]}\nJSON only:', "claude-sonnet-4-20250514", false, 1, 1024);
       const parsed = parseJSON(fmt);
       const productData = { ...product, clean_name_id: parsed.clean_name_id || product.name, clean_name_en: product.name, category: parsed.category || guessCategory(product.name), weight_class: parsed.weight_class || "medium", pack_quantity: 1 };
       const queries = parsed.search_queries_id || [parsed.clean_name_id || product.name];
@@ -1173,17 +1181,26 @@ export default function App() {
             for (const f of [sdData.buybox_price, sdData.current_price, sdData.extracted_price, sdData.mrp, sdData.pricing, sdData.price, sdData.sale_price]) { if (f) { const pm = String(f).match(/[\d,.]+/); if (pm) { priceAed = parseFloat(pm[0].replace(/,/g, "")); if (priceAed) break; } } }
             if (!priceAed) addDiag("warn", "lookup", `SD price=0, keys: ${Object.keys(sdData).filter(k => /price|cost|mrp/i.test(k)).join(",") || "none"}`);
             if (sdData.title && priceAed > 0) {
+              // Extract product specs from SD product_information
+              const pi = sdData.product_information || {};
+              const specFields = ["Size", "Item Volume", "Volume", "Net Content Volume", "Item Weight", "Product Dimensions", "Capacity", "Number of Items", "Package Information", "Item Form", "Unit Count", "Colour", "Material", "Scent"];
+              const specs = {};
+              for (const f of specFields) { if (pi[f]) specs[f.toLowerCase().replace(/\s+/g, "_")] = pi[f]; }
+              // Build concise summary
+              const specSummary = Object.entries(specs).map(([k, v]) => k.replace(/_/g, " ") + ": " + v).join(" | ");
               sdParsed = {
                 product_name: sdData.title,
                 price_aed: priceAed,
-                brand: sdData.product_information?.Brand || sdData.product_information?.Manufacturer || "",
+                brand: pi.Brand || pi.Manufacturer || "",
                 rating: parseFloat(sdData.average_rating) || 0,
                 reviews: parseInt(sdData.total_ratings) || 0,
                 pack_quantity: 1,
                 source: marketplace,
-                asin: asin
+                asin: asin,
+                specs: specs,
+                spec_summary: specSummary || ""
               };
-              addDiag("ok", "lookup", `SD direct parse: "${sdParsed.product_name.slice(0, 50)}" AED ${sdParsed.price_aed}`);
+              addDiag("ok", "lookup", `SD direct parse: "${sdParsed.product_name.slice(0, 50)}" AED ${sdParsed.price_aed} specs: ${specSummary.slice(0, 100) || "none"}`);
             } else {
               // SD returned but missing critical fields, fall back to text path
               rawInfo = "Title: " + (sdData.title || "") + "\nPrice: AED " + priceAed + "\nBrand: " + (sdData.product_information?.Brand || sdData.product_information?.Manufacturer || "") + "\nRating: " + (sdData.average_rating || "") + "\nReviews: " + (sdData.total_ratings || "") + "\nASIN: " + asin;
@@ -1201,7 +1218,8 @@ export default function App() {
         // ── Part B: SD succeeded → only call Haiku for translation + classification ──
         setStage("Translating...");
         addDiag("info", "lookup", "SD path: Haiku translate only");
-        const transPrompt = 'What would an Indonesian buyer type on Tokopedia to find this product? Give me 3 SHORT search queries in Bahasa Indonesia (2-3 words each). Strip ALL brand names, sizes, quantities.\n\nExamples:\n"Nielsen-Massey Madagascar Bourbon Vanilla Bean Paste 32oz" → clean_name_en="vanilla bean paste", queries=["pasta vanilla","ekstrak vanilla","vanilla murni"]\n"KitchenAid Artisan Stand Mixer 5Qt" → clean_name_en="stand mixer", queries=["mixer berdiri","mixer kue","mixer adonan"]\n\nProduct: "' + sdParsed.product_name + '"\nBrand to REMOVE: "' + (sdParsed.brand || "") + '"\n\n{"clean_name_en":"2-3 word generic English name","clean_name_id":"2-3 word Bahasa name","category":"electronics/kitchen/beauty/fashion/home/toys/sports/baby/office/other","weight_class":"light/medium/heavy","search_queries_id":["query1","query2","query3"],"search_queries_en":["short english query"]}\nJSON only:';
+        const specInfo = sdParsed.spec_summary ? "\nProduct specs: " + sdParsed.spec_summary : "";
+        const transPrompt = 'Generate search queries for finding this product on Indonesian marketplaces (Tokopedia/Shopee).\n\nRULES:\n1. Strip ALL brand names but KEEP product specs (size, volume, weight, ml, gram, count)\n2. Mix of Bahasa Indonesia AND English queries — Indonesian buyers often search in English too\n3. Include the specific size/volume in at least 2 queries (e.g. "10ml", "500g", "1 liter")\n4. Each query 2-5 words, specific enough to find THIS product, not just the category\n\nExamples:\n"Gya Labs Vanilla Roller On Essential Oil 10ml" → queries=["roller oil vanilla 10ml","minyak vanilla roll on 10ml","essential oil vanilla roller","minyak atsiri vanilla 10ml"]\n"Nielsen-Massey Madagascar Bourbon Vanilla Bean Paste 32oz" → queries=["vanilla bean paste 32oz","pasta vanilla 900ml","vanilla extract pure"]\n"KitchenAid Artisan Stand Mixer 5Qt" → queries=["stand mixer 5 quart","mixer berdiri adonan","mixer kue besar"]\n\nProduct: "' + sdParsed.product_name + '"' + specInfo + '\nBrand to REMOVE: "' + (sdParsed.brand || "") + '"\n\n{"clean_name_en":"2-4 word generic English name with size if applicable","clean_name_id":"2-4 word Bahasa name","product_summary":"one-line: what it is + size/volume + key feature (max 15 words)","category":"electronics/kitchen/beauty/fashion/home/toys/sports/baby/office/other","weight_class":"light/medium/heavy","search_queries_id":["mixed lang query with specs","bahasa query with specs","english query with specs","variant query"],"search_queries_en":["short english query with specs"]}\nJSON only:';
         const transModels = ["claude-haiku-4-5-20251001", "claude-sonnet-4-20250514"];
         for (let attempt = 0; attempt < transModels.length && !data; attempt++) {
           const mdl = transModels[attempt];
@@ -1210,7 +1228,7 @@ export default function App() {
             const translated = await runWithProgress(() => callClaude(transPrompt, mdl, false, 1, 1024), 3);
             addDiag("info", "lookup", `Translate attempt ${attempt + 1} (${mdl.includes("haiku") ? "Haiku" : "Sonnet"}), len=${translated.length}`, translated.slice(0, 400));
             const trans = parseJSON(translated);
-            data = { ...sdParsed, ...trans, product_name: sdParsed.product_name, price_aed: sdParsed.price_aed, brand: sdParsed.brand, rating: sdParsed.rating, reviews: sdParsed.reviews, pack_quantity: sdParsed.pack_quantity };
+            data = { ...sdParsed, ...trans, product_name: sdParsed.product_name, price_aed: sdParsed.price_aed, brand: sdParsed.brand, rating: sdParsed.rating, reviews: sdParsed.reviews, pack_quantity: sdParsed.pack_quantity, specs: sdParsed.specs, spec_summary: sdParsed.spec_summary, product_summary: trans.product_summary || sdParsed.spec_summary || "" };
           } catch (e) {
             addDiag("warn", "lookup", `Translate attempt ${attempt + 1} failed: ${e.message}`);
             if (attempt < transModels.length - 1) await wait(1500);
@@ -1220,14 +1238,14 @@ export default function App() {
         if (!data) {
           addDiag("warn", "lookup", "All translate attempts failed, using SD data with defaults");
           const fallbackId = sdParsed.product_name;
-          data = { ...sdParsed, clean_name_en: sdParsed.product_name, clean_name_id: fallbackId, category: guessCategory(sdParsed.product_name), weight_class: "medium", search_queries_id: [fallbackId], search_queries_en: [sdParsed.product_name] };
+          data = { ...sdParsed, clean_name_en: sdParsed.product_name, clean_name_id: fallbackId, category: guessCategory(sdParsed.product_name), weight_class: "medium", search_queries_id: [fallbackId], search_queries_en: [sdParsed.product_name], specs: sdParsed.specs, spec_summary: sdParsed.spec_summary, product_summary: sdParsed.spec_summary || "" };
         }
       } else {
         // ── Legacy path: No SD data → full Claude format (existing flow) ──
         if (!rawInfo) { setStage("Reading product..."); rawInfo = await runWithProgress(() => callClaude("Find product details for " + marketplace + " listing.\nURL: " + input + (asin ? "\nASIN: " + asin : "") + "\nI need: name, price AED, brand, rating, reviews, pack size.", "claude-sonnet-4-20250514", true, 2, 4096), 12); }
         addDiag("info", "lookup", `rawInfo length: ${rawInfo.length}`, rawInfo.slice(0, 200));
         setStage("Formatting...");
-        const fmtPrompt = "Convert to JSON. For search_queries_id: give 3 SHORT Bahasa Indonesia queries (2-3 words) that a Tokopedia buyer would type. NO brand names, NO sizes. Example: 'Nielsen-Massey Vanilla Paste 32oz' → ['pasta vanilla','ekstrak vanilla','vanilla murni']. clean_name_en = short generic name (e.g. 'vanilla bean paste').\n\n" + rawInfo + "\nURL: " + input + "\nMarketplace: " + marketplace + '\n\nReturn ONLY valid JSON:\n{"product_name":"full original name","price_aed":NUMBER,"pack_quantity":NUMBER,"brand":"","rating":NUMBER,"reviews":NUMBER,"source":"' + marketplace + '","clean_name_en":"short generic English name","clean_name_id":"short Bahasa name","category":"electronics/kitchen/beauty/fashion/home/toys/sports/baby/office/other","weight_class":"light/medium/heavy","search_queries_id":["generic bahasa query","variant query","specific query"],"search_queries_en":["generic english query"]}\nJSON only:';
+        const fmtPrompt = "Convert to JSON. For search_queries_id: give 4 search queries mixing Bahasa Indonesia AND English that an Indonesian marketplace buyer would type. KEEP product specs (size, volume, weight, ml, gram) in queries. Strip brand names only. Example: 'Gya Labs Vanilla Roller Oil 10ml' → ['roller oil vanilla 10ml','minyak vanilla roll on 10ml','essential oil vanilla roller','minyak atsiri vanilla 10ml']. clean_name_en = short generic name WITH size (e.g. 'vanilla roller oil 10ml').\n\n" + rawInfo + "\nURL: " + input + "\nMarketplace: " + marketplace + '\n\nReturn ONLY valid JSON:\n{"product_name":"full original name","price_aed":NUMBER,"pack_quantity":NUMBER,"brand":"","rating":NUMBER,"reviews":NUMBER,"source":"' + marketplace + '","clean_name_en":"short generic English name with size","clean_name_id":"short Bahasa name","product_summary":"one-line: what + size + key feature (max 15 words)","category":"electronics/kitchen/beauty/fashion/home/toys/sports/baby/office/other","weight_class":"light/medium/heavy","search_queries_id":["mixed lang query with specs","bahasa query","english query","variant"],"search_queries_en":["english query with specs"]}\nJSON only:';
         const fmtModels = ["claude-sonnet-4-20250514", "claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"];
         for (let attempt = 0; attempt < fmtModels.length && !data; attempt++) {
           const mdl = fmtModels[attempt];
@@ -1477,7 +1495,7 @@ export default function App() {
           <div style={{ width: "380px", padding: "40px", background: c.surface, border: "1px solid " + c.border, borderRadius: "8px", textAlign: "center" }}>
             <div style={{ fontSize: "32px", marginBottom: "12px", opacity: 0.3 }}>{"\ud83d\udd12"}</div>
             <h2 style={{ fontFamily: "'Lora',serif", fontSize: "24px", fontWeight: 500, color: c.gold, marginBottom: "4px" }}>Bandar</h2>
-            <p style={{ fontSize: "11px", color: c.dimmer, marginBottom: "24px" }}>{authMode === "reset" ? "Set your new password" : "Cross-border Trade Intelligence"}</p>
+            <p style={{ fontSize: "11px", color: c.dimmer, marginBottom: "24px" }}>{authMode === "reset" ? "Set your new password" : "World\u2013Indonesia Trade Intelligence"}</p>
             {authMode === "reset" ? <>
               <input type="password" value={authNewPassword} onChange={e => { setAuthNewPassword(e.target.value); setAuthError(""); }} onKeyDown={e => e.key === "Enter" && handleResetPassword()} placeholder="New password (6+ characters)" autoFocus style={{ width: "100%", padding: "10px 14px", background: c.input, border: "1px solid " + (authError && !authError.includes("updated") ? c.red : c.border2), color: c.text, fontFamily: "monospace", fontSize: "12px", borderRadius: "4px", outline: "none", marginBottom: "12px" }} />
               {authError && <div style={{ fontSize: "11px", color: authError.includes("updated") ? c.green : c.red, marginBottom: "12px", lineHeight: 1.5 }}>{authError}</div>}
@@ -1506,7 +1524,7 @@ export default function App() {
         <div className="bandar-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
           <div>
             <h1 style={{ fontFamily: "'Lora',serif", fontSize: "28px", fontWeight: 500, color: c.gold, margin: 0 }}>Bandar <span style={{ fontSize: "12px", color: c.dimmer, fontFamily: "monospace" }}>v5.2</span></h1>
-            <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "4px", letterSpacing: "2px", textTransform: "uppercase" }}>UAE {"\u2190"} Indonesia {"\u00b7"} {authUser?.email?.split("@")[0]} {isAdmin && <span style={{ color: c.red }}>{"\u00b7 ADMIN"}</span>} {"\u00b7"} {userProfile ? (TIER_LIMITS[userProfile.role]?.label || userProfile.role) : ""}{isAdmin && <>{" \u00b7 "}{fxUpdated ? "FX " + fxUpdated.toLocaleDateString() : "FX: defaults"}{" \u00b7 "}<span style={{ color: supabaseReady ? c.green : c.darkGold }}>{supabaseReady ? "\u25cf DB" : "\u25cb local"}</span></>}</div>
+            <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "4px", letterSpacing: "2px", textTransform: "uppercase" }}>World {"\u2192"} Indonesia {"\u00b7"} {authUser?.email?.split("@")[0]} {isAdmin && <span style={{ color: c.red }}>{"\u00b7 ADMIN"}</span>} {"\u00b7"} {userProfile ? (TIER_LIMITS[userProfile.role]?.label || userProfile.role) : ""}{isAdmin && <>{" \u00b7 "}{fxUpdated ? "FX " + fxUpdated.toLocaleDateString() : "FX: defaults"}{" \u00b7 "}<span style={{ color: supabaseReady ? c.green : c.darkGold }}>{supabaseReady ? "\u25cf DB" : "\u25cb local"}</span></>}</div>
           </div>
           <div className="bandar-header-stats" style={{ display: "flex", gap: "12px", fontSize: "11px", alignItems: "flex-end" }}>
             <div style={{ textAlign: "right" }}><div style={{ color: c.dimmer }}>LOOKUPS</div><div style={{ color: c.gold, fontSize: "16px", fontWeight: 700 }}>{history.length}</div></div>
@@ -1639,25 +1657,40 @@ export default function App() {
         {/* ── BRAND BLOCKLIST ── */}
         <div style={{ marginBottom: "16px" }}>
           <button onClick={() => setShowBrandList(!showBrandList)} style={{ width: "100%", padding: "8px 12px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px", cursor: "pointer", display: "flex", justifyContent: "space-between", color: c.dim, fontFamily: "monospace", fontSize: "10px" }}>
-            <span>{"\ud83d\udeab"} Brand Blocklist ({allBrands.length} total, {customBrands.length} custom)</span>
+            <span>{"\ud83d\udeab"} Brand Blocklist ({allBrands.length} total{isAdmin && " \u00b7 " + baseBrands.length + " base \u00b7 " + customBrands.length + " custom"})</span>
             <span>{showBrandList ? "\u25be" : "\u25b8"}</span>
           </button>
           {showBrandList && <div style={{ padding: "12px", background: c.surface2, border: "1px solid " + c.border, borderTop: "none", borderRadius: "0 0 4px 4px" }}>
+            {/* Add brand */}
             <div style={{ display: "flex", gap: "4px", marginBottom: "8px" }}>
-              <input value={newBrandInput} onChange={e => setNewBrandInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && newBrandInput.trim()) { setCustomBrands([...customBrands, newBrandInput.trim()]); setNewBrandInput(""); } }} placeholder="Add brand..." style={{ ...inputStyle, flex: 1, padding: "4px 8px", fontSize: "10px" }} />
-              <button onClick={() => { if (newBrandInput.trim()) { setCustomBrands([...customBrands, newBrandInput.trim()]); setNewBrandInput(""); } }} style={{ ...btnSec, padding: "4px 10px", fontSize: "9px" }}>+ ADD</button>
+              <input value={newBrandInput} onChange={e => setNewBrandInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && newBrandInput.trim()) { if (isAdmin) { setBaseBrands(prev => [...new Set([...prev, newBrandInput.trim()])]); } else { setCustomBrands(prev => [...new Set([...prev, newBrandInput.trim()])]); } setNewBrandInput(""); } }} placeholder={isAdmin ? "Add to base blocklist..." : "Add brand..."} style={{ ...inputStyle, flex: 1, padding: "4px 8px", fontSize: "10px" }} />
+              <button onClick={() => { if (newBrandInput.trim()) { if (isAdmin) { setBaseBrands(prev => [...new Set([...prev, newBrandInput.trim()])]); } else { setCustomBrands(prev => [...new Set([...prev, newBrandInput.trim()])]); } setNewBrandInput(""); } }} style={{ ...btnSec, padding: "4px 10px", fontSize: "9px" }}>+ ADD</button>
             </div>
-            {customBrands.length > 0 && <div style={{ marginBottom: "8px" }}>
-              <div style={{ fontSize: "8px", color: c.dimmer, letterSpacing: "1px", marginBottom: "4px" }}>CUSTOM BRANDS</div>
+            {/* Search/filter */}
+            <div style={{ marginBottom: "8px" }}>
+              <input value={brandSearchFilter} onChange={e => setBrandSearchFilter(e.target.value)} placeholder="Search brands..." style={{ ...inputStyle, width: "100%", padding: "4px 8px", fontSize: "10px" }} />
+            </div>
+            {/* Custom brands (user-level) */}
+            {customBrands.length > 0 && <div style={{ marginBottom: "10px" }}>
+              <div style={{ fontSize: "8px", color: c.dimmer, letterSpacing: "1px", marginBottom: "4px" }}>MY CUSTOM ({customBrands.length})</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "3px" }}>
-                {customBrands.map((b, i) => <span key={i} style={{ padding: "2px 6px", background: dark ? "#2A2210" : "#FDF8ED", border: "1px solid " + c.darkGold + "44", borderRadius: "3px", fontSize: "9px", color: c.darkGold, cursor: "pointer" }} onClick={() => setCustomBrands(customBrands.filter((_, idx) => idx !== i))}>{b} {"\u2715"}</span>)}
+                {customBrands.filter(b => !brandSearchFilter || b.toLowerCase().includes(brandSearchFilter.toLowerCase())).map((b, i) => <span key={"c" + i} style={{ padding: "2px 6px", background: dark ? "#2A2210" : "#FDF8ED", border: "1px solid " + c.darkGold + "44", borderRadius: "3px", fontSize: "9px", color: c.darkGold, cursor: "pointer" }} onClick={() => setCustomBrands(customBrands.filter(x => x !== b))}>{b} {"\u2715"}</span>)}
               </div>
             </div>}
-            <div style={{ fontSize: "8px", color: c.dimmer, letterSpacing: "1px", marginBottom: "4px" }}>HARDCODED ({BRAND_BLOCKLIST_DEFAULT.length})</div>
-            <div style={{ maxHeight: "100px", overflowY: "auto", display: "flex", flexWrap: "wrap", gap: "2px" }}>
-              {BRAND_BLOCKLIST_DEFAULT.slice(0, 50).map((b, i) => <span key={i} style={{ padding: "1px 5px", background: dark ? "#3a1a1a" : "#FEF2F2", border: "1px solid " + c.red + "22", borderRadius: "2px", fontSize: "8px", color: c.dimmest }}>{b}</span>)}
-              {BRAND_BLOCKLIST_DEFAULT.length > 50 && <span style={{ fontSize: "8px", color: c.dimmest }}>...+{BRAND_BLOCKLIST_DEFAULT.length - 50} more</span>}
+            {/* Base brand blocklist — editable for admin, read-only for others */}
+            <div style={{ marginBottom: "4px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ fontSize: "8px", color: c.dimmer, letterSpacing: "1px" }}>BASE BLOCKLIST ({baseBrands.length}){isAdmin && " \u2014 click to remove"}</div>
+              {isAdmin && <div style={{ display: "flex", gap: "4px" }}>
+                <button onClick={() => { if (confirm("Reset to default " + BRAND_BLOCKLIST_DEFAULT.length + " brands?")) setBaseBrands([...BRAND_BLOCKLIST_DEFAULT]); }} style={{ padding: "2px 6px", fontSize: "7px", fontFamily: "monospace", cursor: "pointer", background: "transparent", color: c.dimmer, border: "1px solid " + c.border2, borderRadius: "2px" }}>RESET DEFAULT</button>
+              </div>}
             </div>
+            <div style={{ maxHeight: "200px", overflowY: "auto", display: "flex", flexWrap: "wrap", gap: "3px" }}>
+              {baseBrands.filter(b => !brandSearchFilter || b.toLowerCase().includes(brandSearchFilter.toLowerCase())).map((b, i) => (
+                <span key={"b" + i} style={{ padding: "2px 6px", background: isAdmin ? (dark ? "#1a1a2a" : "#F0F0FF") : (dark ? "#3a1a1a" : "#FEF2F2"), border: "1px solid " + (isAdmin ? c.dim + "33" : c.red + "22"), borderRadius: "3px", fontSize: "8px", color: isAdmin ? c.dim : c.dimmest, cursor: isAdmin ? "pointer" : "default" }} onClick={() => { if (isAdmin) setBaseBrands(baseBrands.filter(x => x !== b)); }}>{b}{isAdmin && " \u2715"}</span>
+              ))}
+              {baseBrands.filter(b => !brandSearchFilter || b.toLowerCase().includes(brandSearchFilter.toLowerCase())).length === 0 && <span style={{ fontSize: "9px", color: c.dimmest }}>No brands match filter</span>}
+            </div>
+            {isAdmin && <div style={{ marginTop: "8px", fontSize: "9px", color: c.dimmer, fontStyle: "italic" }}>Changes auto-save globally for all users</div>}
           </div>}
         </div>
 
@@ -1846,8 +1879,9 @@ export default function App() {
         {/* ── SCRAPE VIEW ── */}
         {lookupView === "scrape" && dryRunData && <div>
           <div style={{ padding: "14px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px", marginBottom: "10px" }}>
-            <div style={{ fontSize: "9px", color: c.dimmer, letterSpacing: "1.5px", textTransform: "uppercase", marginBottom: "6px" }}>UAE PRODUCT {dryRunData.url && <a href={dryRunData.url} target="_blank" rel="noopener" style={{ color: c.dim, fontSize: "9px", marginLeft: "8px" }}>open {"\u2197"}</a>}</div>
-            <div style={{ fontSize: "13px", fontWeight: 500, marginBottom: "6px" }}>{dryRunData.product_name}</div>
+            <div style={{ fontSize: "9px", color: c.dimmer, letterSpacing: "1.5px", textTransform: "uppercase", marginBottom: "6px" }}>PRODUCT {dryRunData.url && <a href={dryRunData.url} target="_blank" rel="noopener" style={{ color: c.dim, fontSize: "9px", marginLeft: "8px" }}>open {"\u2197"}</a>}</div>
+            <div style={{ fontSize: "13px", fontWeight: 500, marginBottom: "4px" }}>{dryRunData.product_name}</div>
+            {(dryRunData.product_summary || dryRunData.spec_summary) && <div style={{ fontSize: "10px", color: c.dim, marginBottom: "6px", padding: "4px 8px", background: c.cardBg, borderRadius: "3px", borderLeft: "2px solid " + c.gold }}>{dryRunData.product_summary || dryRunData.spec_summary}</div>}
             <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center", fontSize: "12px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
                 <span style={{ color: c.dim, fontSize: "10px" }}>AED</span>
@@ -1874,22 +1908,13 @@ export default function App() {
             {(() => {
               const hasTokoResults = (indoResults?.results || []).filter(r => r.source === "Tokopedia").length > 0;
               const hasShopeeResults = (indoResults?.results || []).filter(r => r.source === "Shopee").length > 0;
-              const hasBoth = hasTokoResults && hasShopeeResults;
-              const hasOnlyToko = hasTokoResults && !hasShopeeResults;
-              const hasOnlyShopee = hasShopeeResults && !hasTokoResults;
-              const hasNone = !hasTokoResults && !hasShopeeResults;
               const isApifyMode = (isAdmin ? indoMode : "apify") === "apify";
+              const noQueries = editableQueries.filter(q => q.trim()).length === 0;
               return <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
                 {isApifyMode ? <>
-                  {/* Show primary explore button if nothing scraped or to re-scrape */}
-                  {(hasNone || hasOnlyShopee) && <button onClick={runLookupToko} disabled={editableQueries.filter(q => q.trim()).length === 0 || loading} style={{ ...btnGreen, padding: "12px 24px", fontSize: "12px", opacity: (editableQueries.filter(q => q.trim()).length === 0 || loading) ? 0.4 : 1 }}>{"\ud83d\udd0d"} {hasOnlyShopee ? "Explore Source 1" : "Explore Source 1"}</button>}
-                  {(hasNone || hasOnlyToko) && <button onClick={runLookupShopee} disabled={editableQueries.filter(q => q.trim()).length === 0 || loading} style={{ ...btnGreen, padding: "12px 24px", fontSize: "12px", background: "#EE4D2D", opacity: (editableQueries.filter(q => q.trim()).length === 0 || loading) ? 0.4 : 1 }}>{"\ud83d\udd0d"} {hasOnlyToko ? "Explore Source 2" : "Explore Source 2"}</button>}
-                  {/* If both are scraped, still let them re-explore */}
-                  {hasBoth && <>
-                    <button onClick={runLookupToko} disabled={editableQueries.filter(q => q.trim()).length === 0 || loading} style={{ ...btnSec, padding: "10px 18px", fontSize: "11px", opacity: (editableQueries.filter(q => q.trim()).length === 0 || loading) ? 0.4 : 1 }}>{"\u21bb"} Re-explore Source 1</button>
-                    <button onClick={runLookupShopee} disabled={editableQueries.filter(q => q.trim()).length === 0 || loading} style={{ ...btnSec, padding: "10px 18px", fontSize: "11px", color: "#EE4D2D", borderColor: "#EE4D2D", opacity: (editableQueries.filter(q => q.trim()).length === 0 || loading) ? 0.4 : 1 }}>{"\u21bb"} Re-explore Source 2</button>
-                  </>}
-                </> : <button onClick={runLookupIndoSearch} disabled={editableQueries.filter(q => q.trim()).length === 0 || loading} style={{ ...btnGreen, padding: "12px 36px", fontSize: "12px", opacity: (editableQueries.filter(q => q.trim()).length === 0 || loading) ? 0.4 : 1 }}>{"\ud83d\udd0d"} EXPLORE INDONESIA</button>}
+                  <button onClick={runLookupToko} disabled={noQueries || loading} style={{ ...btnGreen, padding: "12px 24px", fontSize: "12px", opacity: (noQueries || loading) ? 0.4 : 1 }}>{hasTokoResults ? "\u21bb Re-explore" : "\ud83d\udd0d Explore"} Source 1</button>
+                  <button onClick={runLookupShopee} disabled={noQueries || loading} style={{ ...btnGreen, padding: "12px 24px", fontSize: "12px", background: "#EE4D2D", opacity: (noQueries || loading) ? 0.4 : 1 }}>{hasShopeeResults ? "\u21bb Re-explore" : "\ud83d\udd0d Explore"} Source 2</button>
+                </> : <button onClick={runLookupIndoSearch} disabled={noQueries || loading} style={{ ...btnGreen, padding: "12px 36px", fontSize: "12px", opacity: (noQueries || loading) ? 0.4 : 1 }}>{"\ud83d\udd0d"} EXPLORE INDONESIA</button>}
                 {indoResults && <button onClick={() => setLookupView("results")} style={{ ...btnStyle, padding: "12px 24px", fontSize: "12px" }}>VIEW RESULTS {"\u2192"}</button>}
               </div>;
             })()}
@@ -1948,7 +1973,7 @@ export default function App() {
                 <div>SCENARIO A</div>
                 <div style={{ fontSize: "8px", fontWeight: 400, marginTop: "2px", opacity: 0.8 }}>Link price vs Indonesia median/average</div>
               </button>
-              <button onClick={() => { setMarginScenario("B"); if (!scenarioBData && !scenarioBLoading) loadScenarioB(); }} style={{ flex: 1, padding: "10px 12px", background: marginScenario === "B" ? c.gold : "transparent", color: marginScenario === "B" ? c.btnText : c.dim, border: "none", borderLeft: "1px solid " + c.border2, cursor: "pointer", fontFamily: "monospace", fontSize: "10px", fontWeight: 700, textAlign: "left" }}>
+              <button onClick={() => { setMarginScenario("B"); }} style={{ flex: 1, padding: "10px 12px", background: marginScenario === "B" ? c.gold : "transparent", color: marginScenario === "B" ? c.btnText : c.dim, border: "none", borderLeft: "1px solid " + c.border2, cursor: "pointer", fontFamily: "monospace", fontSize: "10px", fontWeight: 700, textAlign: "left" }}>
                 <div>SCENARIO B</div>
                 <div style={{ fontSize: "8px", fontWeight: 400, marginTop: "2px", opacity: 0.8 }}>Similar items regional avg vs Indonesia</div>
               </button>
@@ -1985,7 +2010,7 @@ export default function App() {
                         <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
                           <span>{rt.icon}</span>
                           <span style={{ fontSize: "10px", fontWeight: rt.highlight ? 600 : 400, color: rt.highlight ? c.gold : c.text }}>{rt.label}</span>
-                          {rt.highlight && <span style={{ fontSize: "7px", color: c.gold, background: dark ? "#2A2210" : "#FDF8ED", padding: "1px 4px", borderRadius: "2px", border: "1px solid " + c.gold + "44" }}>KCT</span>}
+                          {rt.highlight && <span style={{ fontSize: "7px", color: c.gold, background: dark ? "#2A2210" : "#FDF8ED", padding: "1px 4px", borderRadius: "2px", border: "1px solid " + c.gold + "44" }}>Khorfakkan</span>}
                         </div>
                         <div style={{ fontSize: "10px", color: c.dim }}>{rt.transit}</div>
                         <div style={{ fontSize: "10px", color: c.dim }}>${rt.rate}{rt.unit.includes("CBM") ? "/cbm" : rt.unit.includes("ctr") ? "/ctr" : "/kg"}</div>
@@ -2049,12 +2074,22 @@ export default function App() {
             {marginScenario === "B" && <>
               <div style={{ padding: "10px 12px", background: c.surface2, border: "1px solid " + c.gold + "33", borderRadius: "4px", marginBottom: "14px" }}>
                 <div style={{ fontSize: "10px", color: c.gold, fontWeight: 700, marginBottom: "4px" }}>SCENARIO B: Regional Market Price vs Indonesia</div>
-                <div style={{ fontSize: "9px", color: c.dim }}>Compare median/average of similar items from <span style={{ color: c.gold, fontWeight: 600 }}>{dryRunData.source || "Amazon.ae"}</span> against Indonesia prices</div>
+                <div style={{ fontSize: "9px", color: c.dim, marginBottom: "4px" }}>Compare median/average of similar items from <span style={{ color: c.gold, fontWeight: 600 }}>{dryRunData.source || "Amazon.ae"}</span> against Indonesia prices</div>
+                <div style={{ fontSize: "9px", color: c.dimmer }}>Searches for similar products on the same marketplace using the product name, then calculates margins using their market price distribution.</div>
               </div>
+
+              {/* Manual trigger */}
+              {!scenarioBData && !scenarioBLoading && <div style={{ textAlign: "center", padding: "20px" }}>
+                <button onClick={loadScenarioB} style={{ ...btnGreen, padding: "12px 28px", fontSize: "12px" }}>{"\ud83d\udd0d"} Run Market Analysis</button>
+                <div style={{ fontSize: "9px", color: c.dimmer, marginTop: "8px" }}>Finds similar items on {dryRunData.source || "Amazon.ae"} and compares regional pricing vs Indonesia</div>
+              </div>}
 
               {scenarioBLoading && <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "20px", justifyContent: "center" }}><Spinner /><span style={{ fontSize: "12px", color: c.gold }}>Finding similar items...</span></div>}
 
-              {scenarioBData && scenarioBData.count === 0 && <div style={{ padding: "20px", textAlign: "center", color: c.dimmer, fontSize: "11px" }}>No similar items found in {scenarioBData.source}. Try searching from Discover tab first, then come back.</div>}
+              {scenarioBData && scenarioBData.count === 0 && <div style={{ padding: "20px", textAlign: "center" }}>
+                <div style={{ color: c.dimmer, fontSize: "11px", marginBottom: "10px" }}>No similar items found in {scenarioBData.source}. Try searching from Discover tab first, then come back.</div>
+                <button onClick={() => { setScenarioBData(null); loadScenarioB(); }} style={{ ...btnSec, padding: "8px 16px", fontSize: "10px" }}>{"\u21bb"} Try Again</button>
+              </div>}
 
               {scenarioBData && scenarioBData.count > 0 && <>
                 {/* Regional market summary */}
@@ -2114,7 +2149,7 @@ export default function App() {
                   </div>
                 </>}
 
-                {!scenarioBLoading && <button onClick={loadScenarioB} style={{ ...btnSec, padding: "6px 14px", fontSize: "9px", marginTop: "10px" }}>{"\u21bb"} Refresh similar items</button>}
+                {!scenarioBLoading && <button onClick={() => { setScenarioBData(null); loadScenarioB(); }} style={{ ...btnSec, padding: "6px 14px", fontSize: "9px", marginTop: "10px" }}>{"\u21bb"} Re-run Analysis</button>}
               </>}
             </>}
           </SectionToggle>}
