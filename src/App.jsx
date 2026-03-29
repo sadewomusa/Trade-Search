@@ -15,6 +15,13 @@ const FREIGHT_MODES = {
   sea_lcl: { label: "Sea LCL",       icon: "\ud83d\udea2", transit: "14\u201328 days", note: "Small batches, testing (per CBM)" },
   sea_fcl: { label: "Sea FCL (20ft)", icon: "\ud83d\udce6", transit: "18\u201325 days", note: "500+ units, proven products" },
 };
+const ROUTES = [
+  { id: "air_dxb", label: "Air Jakarta\u2192DXB", mode: "air", origin: "Jakarta (CGK)", dest: "Dubai (DXB)", transit: "5\u20137 days", rate: 4.25, unit: "USD/kg", bestFor: "Samples, urgent, <2kg items", icon: "\u2708" },
+  { id: "sea_lcl_jea", label: "Sea LCL\u2192Jebel Ali", mode: "sea_lcl", origin: "Jakarta", dest: "Jebel Ali", transit: "21\u201328 days", rate: 47.5, unit: "USD/CBM", bestFor: "Small batches, testing", icon: "\ud83d\udea2" },
+  { id: "sea_lcl_kct", label: "Sea LCL\u2192KCT \u2605", mode: "sea_lcl", origin: "Surabaya", dest: "Khorfakkan (KCT)", transit: "14\u201320 days", rate: 42, unit: "USD/CBM", bestFor: "Regular shipments, east coast", icon: "\ud83d\udea2", highlight: true },
+  { id: "sea_fcl_jea", label: "Sea FCL 20ft\u2192Jebel Ali", mode: "sea_fcl", origin: "Jakarta", dest: "Jebel Ali", transit: "18\u201325 days", rate: 850, unit: "USD/ctr", bestFor: "500+ units, proven products", icon: "\ud83d\udce6" },
+  { id: "sea_lcl_klf", label: "Sea LCL\u2192Khalifa Port", mode: "sea_lcl", origin: "Jakarta", dest: "Khalifa Port", transit: "20\u201328 days", rate: 46, unit: "USD/CBM", bestFor: "Abu Dhabi destination", icon: "\ud83d\udea2" },
+];
 const TIER_LIMITS = {
   free:       { lookups: 5,   margins: 1,  label: "Free" },
   registered: { lookups: 30,  margins: 5,  label: "Registered" },
@@ -245,6 +252,13 @@ export default function App() {
   const [bsValidationResults, setBsValidationResults] = useState({});
   const bsAbortRef = useRef(false);
 
+  // Admin state
+  const [adminUsers, setAdminUsers] = useState([]);
+  const [adminSearches, setAdminSearches] = useState([]);
+  const [adminRates, setAdminRates] = useState([]);
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [adminSubTab, setAdminSubTab] = useState("users"); // users | searches | rates
+
   // Diagnostic Log
   const [diagLogs, setDiagLogs] = useState([]);
   const [showDiag, setShowDiag] = useState(false);
@@ -314,6 +328,17 @@ export default function App() {
     setAuthLoading(false);
   };
 
+  const handleForgotPassword = async () => {
+    if (!authEmail) { setAuthError("Enter your email first"); return; }
+    setAuthLoading(true); setAuthError("");
+    try {
+      const { ok, data } = await supabaseAuth("recover", { email: authEmail });
+      if (!ok) throw new Error(data.msg || data.error_description || "Failed");
+      setAuthError("Password reset email sent. Check your inbox.");
+    } catch (e) { setAuthError(e.message); }
+    setAuthLoading(false);
+  };
+
   const handleSignOut = async () => {
     try { await fetch(SUPABASE_URL + "/auth/v1/logout", { method: "POST", headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + authToken } }); } catch {}
     localStorage.removeItem("gt_token");
@@ -333,6 +358,49 @@ export default function App() {
 
   const refreshProfile = async () => {
     if (userId && authToken) await loadProfile(userId, authToken);
+  };
+
+  // ── Admin data loaders ──
+  const loadAdminUsers = async () => {
+    if (!authToken || !isAdmin) return;
+    try {
+      const r = await fetch(SUPABASE_URL + "/rest/v1/profiles?select=id,email,display_name,company,role,lookups_used,margins_used,created_at&order=created_at.desc&limit=200", {
+        headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + authToken }
+      });
+      if (r.ok) setAdminUsers(await r.json());
+    } catch (e) { addDiag("error", "admin", "Load users failed: " + e.message); }
+  };
+
+  const loadAdminSearches = async () => {
+    if (!authToken || !isAdmin) return;
+    try {
+      const r = await fetch(SUPABASE_URL + "/rest/v1/searches?select=id,user_id,search_type,product_name,uae_price_aed,indo_median_idr,margin_pct,freight_mode,created_at&order=created_at.desc&limit=200", {
+        headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + authToken }
+      });
+      if (r.ok) setAdminSearches(await r.json());
+    } catch (e) { addDiag("error", "admin", "Load searches failed: " + e.message); }
+  };
+
+  const loadAdminRates = async () => {
+    if (!authToken) return;
+    try {
+      const r = await fetch(SUPABASE_URL + "/rest/v1/logistics_rates?select=*&order=route_name.asc", {
+        headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + authToken }
+      });
+      if (r.ok) setAdminRates(await r.json());
+    } catch (e) { addDiag("error", "admin", "Load rates failed: " + e.message); }
+  };
+
+  const updateUserRole = async (uid, newRole) => {
+    if (!authToken || !isAdmin) return;
+    try {
+      await fetch(SUPABASE_URL + "/rest/v1/profiles?id=eq." + uid, {
+        method: "PATCH",
+        headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + authToken, "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ role: newRole })
+      });
+      await loadAdminUsers();
+    } catch (e) { addDiag("error", "admin", "Update role failed: " + e.message); }
   };
 
   // ── Init: restore session ──
@@ -510,6 +578,25 @@ export default function App() {
     const duty = (indoUSD + fr) * CUSTOMS_DUTY; const lm = LAST_MILE_AED * fx.AEDUSD; const total = indoUSD + fr + duty + lm; const margin = uaeUSD > 0 ? ((uaeUSD - total) / uaeUSD) * 100 : 0;
     return { uaeUSD, uaeAED: uaeUnitAed, uaeIDR: uaeUnitAed * fx.AED_TO_IDR, indoUSD, indoAED: indoUSD / fx.AEDUSD, indoIDR, freightUSD: fr, freightAED: fr / fx.AEDUSD, freightIDR: fr / fx.IDRUSD, dutyUSD: duty, dutyAED: duty / fx.AEDUSD, dutyIDR: duty / fx.IDRUSD, lastMileUSD: lm, lastMileAED: LAST_MILE_AED, lastMileIDR: LAST_MILE_AED * fx.AED_TO_IDR, totalUSD: total, totalAED: total / fx.AEDUSD, totalIDR: total / fx.IDRUSD, margin, freightMode: fMode };
   };
+  // Route-specific margin calc
+  const calcRouteMargin = (uaePriceAed, packQty, indoIDR, weightClass, route) => {
+    const uaeUnitAed = uaePriceAed / (packQty || 1); const uaeUSD = uaeUnitAed * fx.AEDUSD; const indoUSD = indoIDR * fx.IDRUSD;
+    const wkg = WEIGHT_KG[weightClass] || 1.0; const cbm = VOLUME_CBM[weightClass] || 0.005;
+    let fr;
+    if (route.mode === "sea_lcl") { fr = (route.rate || 45) * cbm; }
+    else if (route.mode === "sea_fcl") { const upc = Math.floor(28 / cbm); fr = (route.rate || 800) / Math.max(1, upc); }
+    else { fr = (route.rate || 4) * wkg; }
+    const duty = (indoUSD + fr) * CUSTOMS_DUTY; const lm = LAST_MILE_AED * fx.AEDUSD; const total = indoUSD + fr + duty + lm;
+    const margin = uaeUSD > 0 ? ((uaeUSD - total) / uaeUSD) * 100 : 0;
+    return { margin, freightUSD: fr, totalUSD: total, profitUSD: uaeUSD - total, profitAED: (uaeUSD - total) / fx.AEDUSD };
+  };
+
+  // All-route comparison (for logistics panel)
+  const routeComparisons = marginData ? ROUTES.map(route => ({
+    ...route,
+    ...calcRouteMargin(marginData.uaeProduct?.price_aed||0, marginData.uaeProduct?.pack_quantity||1, marginData.medianPriceIDR||0, marginData.weightClass||"medium", route),
+  })) : [];
+
   // Dynamic display margins (recalc when freight toggle changes)
   const displayMargins = marginData ? {
     median: calcMargin(marginData.uaeProduct?.price_aed||0, marginData.uaeProduct?.pack_quantity||1, marginData.medianPriceIDR||0, marginData.weightClass||"medium", freightMode),
@@ -1167,6 +1254,7 @@ export default function App() {
             <input type="password" value={authPassword} onChange={e => { setAuthPassword(e.target.value); setAuthError(""); }} onKeyDown={e => e.key === "Enter" && (authMode === "login" ? handleSignIn() : handleSignUp())} placeholder="Password" style={{ width: "100%", padding: "10px 14px", background: c.input, border: "1px solid " + (authError ? c.red : c.border2), color: c.text, fontFamily: "monospace", fontSize: "12px", borderRadius: "4px", outline: "none", marginBottom: "12px" }} />
             {authError && <div style={{ fontSize: "11px", color: authError.includes("confirm") || authError.includes("Check") ? c.green : c.red, marginBottom: "12px", lineHeight: 1.5 }}>{authError}</div>}
             <button onClick={authMode === "login" ? handleSignIn : handleSignUp} disabled={authLoading} style={{ width: "100%", padding: "12px", background: authLoading ? c.dimmest : c.gold, color: c.btnText, border: "none", borderRadius: "4px", fontFamily: "monospace", fontWeight: 700, letterSpacing: "1px", cursor: authLoading ? "default" : "pointer", opacity: authLoading ? 0.6 : 1 }}>{authLoading ? "..." : authMode === "login" ? "LOG IN" : "CREATE ACCOUNT"}</button>
+            {authMode === "login" && <button onClick={handleForgotPassword} disabled={authLoading} style={{ width: "100%", marginTop: "8px", padding: "8px", background: "transparent", color: c.dim, border: "none", fontFamily: "monospace", fontSize: "10px", cursor: "pointer", textDecoration: "underline" }}>Forgot password?</button>}
           </div>
         </div>
       ) : !storageReady ? (
@@ -1221,7 +1309,8 @@ export default function App() {
           ...(isAdmin ? [{ id: "brainstorm", label: "\ud83e\udde0 BRAINSTORM" }] : []),
           { id: "discover", label: "\ud83d\udd0d DISCOVER" },
           { id: "auto", label: "\u26a1 LOOKUP" },
-          { id: "history", label: "\ud83d\udccb HISTORY" }
+          { id: "history", label: "\ud83d\udccb HISTORY" },
+          ...(isAdmin ? [{ id: "admin", label: "\u2699 ADMIN" }] : [])
         ].map(m => (
           <button key={m.id} onClick={() => setMode(m.id)} style={{ padding: "10px 16px", background: mode === m.id ? c.surface : "transparent", color: mode === m.id ? c.gold : c.dimmest, border: mode === m.id ? "1px solid " + c.border2 : "1px solid transparent", borderBottom: mode === m.id ? "1px solid " + c.surface : "1px solid " + c.border2, cursor: "pointer", fontFamily: "monospace", fontSize: "11px", position: "relative", top: "1px", borderRadius: "4px 4px 0 0" }}>
             {m.label}
@@ -1597,6 +1686,33 @@ export default function App() {
               </div>
               <div style={{ fontSize: "9px", color: c.dimmer, marginTop: "6px", fontStyle: "italic" }}>{FREIGHT_MODES[freightMode]?.note || ""}</div>
             </div>
+            {/* Route comparison table */}
+            {routeComparisons.length > 0 && <div style={{ marginBottom: "14px" }}>
+              <div style={{ fontSize: "9px", color: c.dimmer, letterSpacing: "1px", marginBottom: "8px", textTransform: "uppercase" }}>ROUTE COMPARISON (MEDIAN PRICE)</div>
+              <div style={{ overflowX: "auto" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1.8fr 0.8fr 0.6fr 0.6fr 0.7fr 0.7fr", gap: "4px", padding: "6px 0", borderBottom: "1px solid " + c.border2, fontSize: "8px", color: c.dimmer, textTransform: "uppercase", minWidth: "550px" }}>
+                  <div>Route</div><div>Transit</div><div>Rate</div><div>Freight</div><div>Margin</div><div>Profit/unit</div>
+                </div>
+                {routeComparisons.map(rt => {
+                  const isActive = freightMode === rt.mode;
+                  const mColor = marginColor(rt.margin);
+                  return (
+                    <div key={rt.id} onClick={() => setFreightMode(rt.mode)} style={{ display: "grid", gridTemplateColumns: "1.8fr 0.8fr 0.6fr 0.6fr 0.7fr 0.7fr", gap: "4px", padding: "7px 0", borderBottom: "1px solid " + c.border, fontSize: "11px", cursor: "pointer", background: isActive ? (dark ? "#1A1A10" : "#FFFBF0") : "transparent", minWidth: "550px", borderLeft: rt.highlight ? "3px solid " + c.gold : "3px solid transparent", paddingLeft: "8px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                        <span>{rt.icon}</span>
+                        <span style={{ fontSize: "10px", fontWeight: rt.highlight ? 600 : 400, color: rt.highlight ? c.gold : c.text }}>{rt.label}</span>
+                        {rt.highlight && <span style={{ fontSize: "7px", color: c.gold, background: dark ? "#2A2210" : "#FDF8ED", padding: "1px 4px", borderRadius: "2px", border: "1px solid " + c.gold + "44" }}>KCT</span>}
+                      </div>
+                      <div style={{ fontSize: "10px", color: c.dim }}>{rt.transit}</div>
+                      <div style={{ fontSize: "10px", color: c.dim }}>${rt.rate}{rt.unit.includes("CBM") ? "/cbm" : rt.unit.includes("ctr") ? "/ctr" : "/kg"}</div>
+                      <div style={{ fontSize: "10px", color: c.dim }}>{fmtUSD(rt.freightUSD)}</div>
+                      <div style={{ fontSize: "11px", fontWeight: 700, color: mColor }}>{rt.margin.toFixed(1)}%</div>
+                      <div style={{ fontSize: "10px", color: rt.profitUSD > 0 ? c.green : c.red }}>{fmtAED(rt.profitAED)}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>}
             <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "14px", flexWrap: "wrap" }}>
               <span style={{ fontSize: "10px", color: c.dim }}>FOR:</span>
               {[{ id: "unit", label: "Per Unit" }, { id: "custom", label: "Custom Qty" }, { id: "container", label: "Container (20ft)" }].map(m => (
@@ -1693,6 +1809,108 @@ export default function App() {
             })}
           </div>
         )}
+      </div>}
+
+
+      {/* ══════════ ADMIN TAB ══════════ */}
+      {mode === "admin" && isAdmin && <div style={secStyle}>
+        {/* Sub-tab bar */}
+        <div style={{ display: "flex", gap: "4px", marginBottom: "16px" }}>
+          {[{ id: "users", label: "\ud83d\udc65 Users" }, { id: "searches", label: "\ud83d\udd0d Harvest" }, { id: "rates", label: "\ud83d\udea2 Rates" }].map(t => (
+            <button key={t.id} onClick={() => { setAdminSubTab(t.id); if (t.id === "users" && !adminUsers.length) loadAdminUsers(); if (t.id === "searches" && !adminSearches.length) loadAdminSearches(); if (t.id === "rates" && !adminRates.length) loadAdminRates(); }} style={{ padding: "8px 14px", background: adminSubTab === t.id ? c.gold : "transparent", color: adminSubTab === t.id ? c.btnText : c.dim, border: "1px solid " + (adminSubTab === t.id ? c.gold : c.border2), borderRadius: "4px", cursor: "pointer", fontFamily: "monospace", fontSize: "11px", fontWeight: adminSubTab === t.id ? 700 : 400 }}>{t.label}</button>
+          ))}
+          <button onClick={() => { loadAdminUsers(); loadAdminSearches(); loadAdminRates(); }} style={{ ...btnSec, padding: "8px 12px", fontSize: "9px", marginLeft: "auto" }}>{"\u21bb"} REFRESH</button>
+        </div>
+
+        {/* Users sub-tab */}
+        {adminSubTab === "users" && <div>
+          <div style={{ fontSize: "10px", color: c.dimmer, marginBottom: "8px" }}>{adminUsers.length} users</div>
+          {adminUsers.length === 0 && <button onClick={loadAdminUsers} style={{ ...btnGreen, padding: "8px 16px", fontSize: "10px" }}>LOAD USERS</button>}
+          {adminUsers.length > 0 && <div style={{ overflowX: "auto" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "2fr 0.8fr 0.6fr 0.6fr 1fr", gap: "6px", padding: "6px 0", borderBottom: "1px solid " + c.border2, fontSize: "9px", color: c.dimmer, textTransform: "uppercase", minWidth: "500px" }}>
+              <div>Email</div><div>Role</div><div>Lookups</div><div>Margins</div><div>Joined</div>
+            </div>
+            {adminUsers.map(u => (
+              <div key={u.id} style={{ display: "grid", gridTemplateColumns: "2fr 0.8fr 0.6fr 0.6fr 1fr", gap: "6px", padding: "8px 0", borderBottom: "1px solid " + c.border, fontSize: "11px", alignItems: "center", minWidth: "500px" }}>
+                <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {u.email}
+                  {u.display_name && <span style={{ color: c.dimmest }}>{" \u00b7 "}{u.display_name}</span>}
+                </div>
+                <div>
+                  <select value={u.role} onChange={e => updateUserRole(u.id, e.target.value)} style={{ background: c.input, color: u.role === "admin" ? c.red : u.role === "paid" ? c.gold : c.text, border: "1px solid " + c.border2, borderRadius: "3px", padding: "2px 4px", fontSize: "10px", fontFamily: "monospace", cursor: "pointer" }}>
+                    <option value="free">Free</option>
+                    <option value="registered">Registered</option>
+                    <option value="paid">Paid</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </div>
+                <div style={{ color: c.gold, fontSize: "10px" }}>{u.lookups_used || 0}</div>
+                <div style={{ color: c.gold, fontSize: "10px" }}>{u.margins_used || 0}</div>
+                <div style={{ color: c.dimmest, fontSize: "9px" }}>{u.created_at ? new Date(u.created_at).toLocaleDateString() : "\u2014"}</div>
+              </div>
+            ))}
+          </div>}
+        </div>}
+
+        {/* Search Harvest sub-tab */}
+        {adminSubTab === "searches" && <div>
+          <div style={{ fontSize: "10px", color: c.dimmer, marginBottom: "8px" }}>{adminSearches.length} searches logged</div>
+          {adminSearches.length === 0 && <div>
+            <button onClick={loadAdminSearches} style={{ ...btnGreen, padding: "8px 16px", fontSize: "10px" }}>LOAD SEARCHES</button>
+            <div style={{ fontSize: "9px", color: c.dimmest, marginTop: "8px" }}>Searches are logged when users perform lookups. The searches table may be empty if no lookups have been done since the table was created.</div>
+          </div>}
+          {adminSearches.length > 0 && <div style={{ overflowX: "auto" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "2fr 0.6fr 0.6fr 0.6fr 1fr", gap: "6px", padding: "6px 0", borderBottom: "1px solid " + c.border2, fontSize: "9px", color: c.dimmer, textTransform: "uppercase", minWidth: "500px" }}>
+              <div>Product</div><div>UAE</div><div>Indo</div><div>Margin</div><div>Date</div>
+            </div>
+            {adminSearches.map(s => (
+              <div key={s.id} style={{ display: "grid", gridTemplateColumns: "2fr 0.6fr 0.6fr 0.6fr 1fr", gap: "6px", padding: "7px 0", borderBottom: "1px solid " + c.border, fontSize: "11px", minWidth: "500px" }}>
+                <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: c.text }}>{s.product_name || "\u2014"}</div>
+                <div style={{ color: c.gold, fontSize: "10px" }}>{s.uae_price_aed ? "AED " + s.uae_price_aed : "\u2014"}</div>
+                <div style={{ color: c.dim, fontSize: "10px" }}>{s.indo_median_idr ? fmtIDR(s.indo_median_idr) : "\u2014"}</div>
+                <div style={{ color: s.margin_pct >= 40 ? c.green : s.margin_pct >= 20 ? c.gold : c.red, fontWeight: 700, fontSize: "10px" }}>{s.margin_pct != null ? s.margin_pct.toFixed(1) + "%" : "\u2014"}</div>
+                <div style={{ color: c.dimmest, fontSize: "9px" }}>{s.created_at ? new Date(s.created_at).toLocaleString() : "\u2014"}</div>
+              </div>
+            ))}
+          </div>}
+          {/* Quick stats */}
+          {adminSearches.length > 0 && <div style={{ marginTop: "14px", display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "8px" }}>
+            {[
+              { l: "TOTAL", v: adminSearches.length, cl: c.gold },
+              { l: "CANDIDATES", v: adminSearches.filter(s => s.margin_pct >= 40).length, cl: c.green },
+              { l: "AVG MARGIN", v: (adminSearches.filter(s => s.margin_pct != null).reduce((a, s) => a + (s.margin_pct || 0), 0) / Math.max(1, adminSearches.filter(s => s.margin_pct != null).length)).toFixed(1) + "%", cl: c.gold },
+            ].map(s => (
+              <div key={s.l} style={{ padding: "10px", background: c.cardBg, border: "1px solid " + c.border, borderRadius: "4px", textAlign: "center" }}>
+                <div style={{ fontSize: "8px", color: c.dimmer, letterSpacing: "1px" }}>{s.l}</div>
+                <div style={{ fontSize: "18px", fontWeight: 700, color: s.cl }}>{s.v}</div>
+              </div>
+            ))}
+          </div>}
+        </div>}
+
+        {/* Rates sub-tab */}
+        {adminSubTab === "rates" && <div>
+          <div style={{ fontSize: "10px", color: c.dimmer, marginBottom: "8px" }}>Logistics rates from database</div>
+          {adminRates.length === 0 && <button onClick={loadAdminRates} style={{ ...btnGreen, padding: "8px 16px", fontSize: "10px" }}>LOAD RATES</button>}
+          {adminRates.length > 0 && <div style={{ overflowX: "auto" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1.5fr 0.6fr 0.6fr 0.7fr 0.6fr 0.7fr", gap: "6px", padding: "6px 0", borderBottom: "1px solid " + c.border2, fontSize: "9px", color: c.dimmer, textTransform: "uppercase", minWidth: "500px" }}>
+              <div>Route</div><div>Mode</div><div>Rate</div><div>Transit</div><div>Congestion</div><div>Valid Until</div>
+            </div>
+            {adminRates.map(r => (
+              <div key={r.id} style={{ display: "grid", gridTemplateColumns: "1.5fr 0.6fr 0.6fr 0.7fr 0.6fr 0.7fr", gap: "6px", padding: "7px 0", borderBottom: "1px solid " + c.border, fontSize: "11px", minWidth: "500px" }}>
+                <div style={{ color: c.text }}>{r.route_name}</div>
+                <div><Badge text={r.freight_mode || ""} color={r.freight_mode === "air" ? c.gold : c.green} bg={r.freight_mode === "air" ? (dark ? "#2A2210" : "#FDF8ED") : (dark ? "#0D2E1A" : "#E8F5EC")} /></div>
+                <div style={{ color: c.gold, fontWeight: 600 }}>{r.rate_amount} {r.rate_unit}</div>
+                <div style={{ color: c.dim, fontSize: "10px" }}>{r.transit_days_min}\u2013{r.transit_days_max}d</div>
+                <div style={{ color: r.congestion_factor > 1 ? c.red : c.green, fontSize: "10px" }}>{r.congestion_factor}x</div>
+                <div style={{ color: c.dimmest, fontSize: "9px" }}>{r.valid_until || "\u2014"}</div>
+              </div>
+            ))}
+          </div>}
+          <div style={{ marginTop: "12px", padding: "10px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px", fontSize: "10px", color: c.dim }}>
+            {"\u2139\ufe0f"} Rate updates are managed directly in Supabase Dashboard {"\u2192"} Table Editor {"\u2192"} logistics_rates. Update rates weekly from GT operational data.
+          </div>
+        </div>}
       </div>}
 
       {/* ══════════ DIAGNOSTIC PANEL ══════════ */}
