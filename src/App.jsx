@@ -1323,7 +1323,17 @@ export default function App() {
 
   const runDryRun = async () => {
     let input = url.trim();
-    if (!input || !input.startsWith("http")) { setAutoError("Invalid URL"); return; }
+    // ── Mobile paste cleanup: extract URL from shared text ──
+    // Amazon app share often includes text like "Check out this product on Amazon https://amzn.to/xxx"
+    if (input && !input.startsWith("http")) {
+      const urlMatch = input.match(/(https?:\/\/[^\s]+)/i);
+      if (urlMatch) {
+        input = urlMatch[1].replace(/[.,;!?)]+$/, ""); // strip trailing punctuation
+        setUrl(input);
+        addDiag("info", "lookup", `Extracted URL from pasted text: ${input}`);
+      }
+    }
+    if (!input || !input.startsWith("http")) { setAutoError("Invalid URL — paste an Amazon product link"); return; }
     if (!isAmazonUrl(input)) { setAutoError("Supported: Amazon (.ae, .com, .co.uk, .de, etc.) and amzn.to/amzn.eu short links"); return; }
     setLoading(true); setAutoError(""); setDryRunData(null); setUaeSimilar(null); setIndoResults(null); setMarginData(null); setEditableQueries([]); setActiveSection(0); setWaveStatus([]);
 
@@ -1331,36 +1341,80 @@ export default function App() {
     if (isShortLink(input)) {
       setStage("Resolving short link...");
       addDiag("info", "lookup", `Short link detected: ${input}`);
+      let resolved = false;
+
+      // Attempt 1: Worker redirect resolver (fastest — just follows redirects server-side)
       try {
-        const sdRes = await workerCall("scrapingdog_scrape", { url: input, dynamic: false, premium: false });
-        const html = sdRes.html || "";
-        // Extract canonical/og:url or any amazon.XX/dp/ASIN pattern from the HTML
-        const canonicalMatch = html.match(/(?:canonical|og:url)[^>]*href=["']([^"']*amazon\.[^"']+)["']/i)
-          || html.match(/(https?:\/\/www\.amazon\.[a-z.]+\/[^"'\s]+\/dp\/[A-Z0-9]{10}[^"'\s]*)/i)
-          || html.match(/(https?:\/\/www\.amazon\.[a-z.]+\/dp\/[A-Z0-9]{10})/i);
-        if (canonicalMatch) {
-          const resolvedUrl = canonicalMatch[1];
-          addDiag("ok", "lookup", `Short link resolved → ${resolvedUrl.slice(0, 80)}`);
-          input = resolvedUrl;
-          setUrl(resolvedUrl); // Update the input field so user sees the real URL
+        addDiag("info", "lookup", "Attempt 1: Worker redirect resolver");
+        const resolveRes = await workerCall("resolve_redirect", { url: input });
+        const finalUrl = resolveRes.url || resolveRes.finalUrl || resolveRes.resolved || "";
+        if (finalUrl && /amazon\.[a-z.]+/i.test(finalUrl)) {
+          addDiag("ok", "lookup", `Worker resolved → ${finalUrl.slice(0, 80)}`);
+          input = finalUrl;
+          setUrl(finalUrl);
+          resolved = true;
         } else {
-          // Try to find ASIN anywhere in HTML
-          const asinInHtml = html.match(/\/dp\/([A-Z0-9]{10})/i);
-          const domainInHtml = html.match(/amazon\.([a-z.]+)/i);
-          if (asinInHtml) {
-            const domain = domainInHtml ? domainInHtml[1] : "ae";
-            const reconstructed = "https://www.amazon." + domain + "/dp/" + asinInHtml[1];
-            addDiag("ok", "lookup", `Reconstructed from HTML: ${reconstructed}`);
-            input = reconstructed;
-            setUrl(reconstructed);
-          } else {
-            addDiag("warn", "lookup", `Could not resolve short link (HTML ${html.length} chars)`);
-            throw new Error("Could not resolve short link. Try pasting the full Amazon URL instead (open the link in browser first, then copy the URL bar).");
-          }
+          addDiag("warn", "lookup", `Worker resolver returned: ${JSON.stringify(resolveRes).slice(0, 200)}`);
         }
-      } catch (e) {
-        addDiag("error", "lookup", `Short link resolve failed: ${e.message}`);
-        setAutoError(e.message.includes("Could not resolve") ? e.message : "Could not resolve short link: " + e.message + ". Try opening the link in your browser first, then copy the full URL.");
+      } catch (e) { addDiag("warn", "lookup", `Worker resolve_redirect not available: ${e.message}`); }
+
+      // Attempt 2: ScrapingDog scrape (non-dynamic)
+      if (!resolved) {
+        try {
+          addDiag("info", "lookup", "Attempt 2: ScrapingDog scrape");
+          setStage("Resolving link (attempt 2)...");
+          const sdRes = await workerCall("scrapingdog_scrape", { url: input, dynamic: false, premium: false });
+          const html = sdRes.html || "";
+          const canonicalMatch = html.match(/(?:canonical|og:url)[^>]*href=["']([^"']*amazon\.[^"']+)["']/i)
+            || html.match(/(https?:\/\/www\.amazon\.[a-z.]+\/[^"'\s]+\/dp\/[A-Z0-9]{10}[^"'\s]*)/i)
+            || html.match(/(https?:\/\/www\.amazon\.[a-z.]+\/dp\/[A-Z0-9]{10})/i);
+          if (canonicalMatch) {
+            addDiag("ok", "lookup", `SD resolved → ${canonicalMatch[1].slice(0, 80)}`);
+            input = canonicalMatch[1]; setUrl(canonicalMatch[1]); resolved = true;
+          } else {
+            const asinInHtml = html.match(/\/dp\/([A-Z0-9]{10})/i);
+            const domainInHtml = html.match(/amazon\.([a-z.]+)/i);
+            if (asinInHtml) {
+              const domain = domainInHtml ? domainInHtml[1] : "ae";
+              const reconstructed = "https://www.amazon." + domain + "/dp/" + asinInHtml[1];
+              addDiag("ok", "lookup", `Reconstructed from HTML: ${reconstructed}`);
+              input = reconstructed; setUrl(reconstructed); resolved = true;
+            } else {
+              addDiag("warn", "lookup", `SD scrape: no ASIN found (HTML ${html.length} chars)`);
+            }
+          }
+        } catch (e) { addDiag("warn", "lookup", `SD scrape failed: ${e.message}`); }
+      }
+
+      // Attempt 3: ScrapingDog scrape (dynamic + premium)
+      if (!resolved) {
+        try {
+          addDiag("info", "lookup", "Attempt 3: ScrapingDog dynamic scrape");
+          setStage("Resolving link (attempt 3)...");
+          const sdRes = await workerCall("scrapingdog_scrape", { url: input, dynamic: true, premium: true });
+          const html = sdRes.html || "";
+          const canonicalMatch = html.match(/(?:canonical|og:url)[^>]*href=["']([^"']*amazon\.[^"']+)["']/i)
+            || html.match(/(https?:\/\/www\.amazon\.[a-z.]+\/[^"'\s]+\/dp\/[A-Z0-9]{10}[^"'\s]*)/i)
+            || html.match(/(https?:\/\/www\.amazon\.[a-z.]+\/dp\/[A-Z0-9]{10})/i);
+          if (canonicalMatch) {
+            addDiag("ok", "lookup", `SD dynamic resolved → ${canonicalMatch[1].slice(0, 80)}`);
+            input = canonicalMatch[1]; setUrl(canonicalMatch[1]); resolved = true;
+          } else {
+            const asinInHtml = html.match(/\/dp\/([A-Z0-9]{10})/i);
+            const domainInHtml = html.match(/amazon\.([a-z.]+)/i);
+            if (asinInHtml) {
+              const domain = domainInHtml ? domainInHtml[1] : "ae";
+              const reconstructed = "https://www.amazon." + domain + "/dp/" + asinInHtml[1];
+              addDiag("ok", "lookup", `Reconstructed from dynamic HTML: ${reconstructed}`);
+              input = reconstructed; setUrl(reconstructed); resolved = true;
+            }
+          }
+        } catch (e) { addDiag("warn", "lookup", `SD dynamic scrape failed: ${e.message}`); }
+      }
+
+      if (!resolved) {
+        addDiag("error", "lookup", "All 3 resolve attempts failed");
+        setAutoError("Couldn't resolve this short link. Try opening it in your browser, wait for the page to load, then copy the URL from the address bar.");
         setLoading(false); setStage(""); return;
       }
     }
