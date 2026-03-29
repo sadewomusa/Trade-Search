@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 // ══════════ SUPABASE CONFIG ══════════
 const SUPABASE_URL = "https://cqpxzxafavqflnrilgjh.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNxcHh6eGFmYXZxZmxucmlsZ2poIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ1MDUyNzEsImV4cCI6MjA5MDA4MTI3MX0.tAK15mxTdofv5eymd9wJOxxA4vjVuS_QkpmKiqA5qCI";
+const SUPABASE_ANON_KEY = "sb_publishable_f4N-v3Gs7qJsPW4jUe_fzw_u81VVIg3";
 // ══════════ CONSTANTS ══════════
 const DEFAULT_FX = { AEDUSD: 0.2723, IDRUSD: 0.0000613, AED_TO_IDR: 0.2723 / 0.0000613, IDR_TO_AED: 0.0000613 / 0.2723 };
 const DEFAULT_FREIGHT = { air: { rate_per_kg: 4, min_kg: 100, transit: { port_port: "3-5 days", port_door: "5-7 days", door_door: "7-10 days" } }, ocean: { rate_20ft: 800, rate_40ft: 1400, rate_per_cbm: 45, transit: { port_port: "14-18 days", port_door: "18-25 days", door_door: "21-30 days" } }, source: "default", updated: null };
@@ -23,9 +23,9 @@ const ROUTES = [
   { id: "sea_lcl_klf", label: "Sea LCL\u2192Khalifa Port", mode: "sea_lcl", origin: "Jakarta", dest: "Khalifa Port", transit: "20\u201328 days", rate: 46, unit: "USD/CBM", bestFor: "Abu Dhabi destination", icon: "\ud83d\udea2" },
 ];
 const TIER_LIMITS = {
-  free:       { lookups: 3,   margins: 1,  label: "Free" },
-  registered: { lookups: 10,  margins: 3,  label: "Registered" },
-  paid:       { lookups: 100, margins: 20, label: "Pro ($20/mo)" },
+  free:       { lookups: 3,   margins: 3,  label: "Free" },
+  registered: { lookups: 10,  margins: 10, label: "Registered" },
+  paid:       { lookups: 100, margins: 100, label: "Pro ($20/mo)" },
   admin:      { lookups: 99999, margins: 99999, label: "Admin" },
 };
 const DISPOSABLE_DOMAINS = ["tempmail.com","guerrillamail.com","mailinator.com","throwaway.email","yopmail.com","sharklasers.com","guerrillamailblock.com","grr.la","guerrillamail.info","guerrillamail.de","tempail.com","dispostable.com","trashmail.com","trashmail.me","trashmail.net","mailnesia.com","maildrop.cc","discard.email","temp-mail.org","fakeinbox.com","emailondeck.com","mohmal.com","tempmailo.com","temp-mail.io","burnermail.io","tmail.ws","tmpmail.net","tmpmail.org","getnada.com","inboxbear.com","mailsac.com","10minutemail.com","20minutemail.com","minutemail.com","tempmailaddress.com","crazymailing.com","mytemp.email","tempr.email","harakirimail.com","bupmail.com","mailcatch.com","mailscrap.com","spamgourmet.com","spamfree24.org","jetable.org","trashymail.com","klzlk.com","emltmp.com","tmpbox.net"];
@@ -671,14 +671,18 @@ export default function App() {
 
   const runApifyActor = async (actorId, input, label) => {
     setStage("Starting " + label + "...");
+    addDiag("info", "apify", label + " input: " + JSON.stringify(input).slice(0, 300));
     const rd = await workerCall("apify_run", { actorId, input });
-    const runId = rd.data?.id; if (!runId) throw new Error(label + " no run ID");
+    addDiag("info", "apify", label + " run response: " + JSON.stringify(rd).slice(0, 300));
+    const runId = rd.data?.id; if (!runId) throw new Error(label + " no run ID — response: " + JSON.stringify(rd).slice(0, 200));
     let status = "RUNNING", pc = 0;
     while (status === "RUNNING" || status === "READY") { if (pc > 60) throw new Error(label + " timeout"); await wait(5000); pc++; setStage(label + " (" + (pc * 5) + "s)"); setProgress(Math.min(90, pc * 3)); try { const pr = await workerCall("apify_status", { runId }); status = pr.data?.status || "RUNNING"; } catch {} }
     if (status !== "SUCCEEDED") throw new Error(label + " status: " + status);
     const dsId = rd.data?.defaultDatasetId; if (!dsId) throw new Error(label + " no dataset");
     const items = await workerCall("apify_dataset", { datasetId: dsId, limit: 50 });
-    return Array.isArray(items) ? items : [];
+    addDiag("info", "apify", label + " dataset: " + (Array.isArray(items) ? items.length + " items" : "NOT array: " + JSON.stringify(items).slice(0, 200)));
+    if (!Array.isArray(items)) { addDiag("warn", "apify", label + " unexpected response type: " + typeof items); return []; }
+    return items;
   };
 
   const normalizeApifyResults = (items, platform) => {
@@ -794,7 +798,7 @@ export default function App() {
     setValidIdx(pk);
     try {
       setStage("Translating...");
-      const fmt = await callClaude('Translate for Indonesian marketplace. JSON only:\n{"clean_name_id":"Bahasa Indonesia","category":"electronics/kitchen/beauty/fashion/home/toys/sports/baby/office/other","weight_class":"light/medium/heavy","search_queries_id":["q1","q2","q3"]}\nProduct: "' + product.name + '" AED ' + product.price_aed + '\nJSON only:', "claude-sonnet-4-20250514", false, 1, 1024);
+      const fmt = await callClaude('What would an Indonesian buyer type on Tokopedia to find this product? Give me 3 SHORT search queries in Bahasa Indonesia (2-3 words each). Strip ALL brand names, sizes, quantities.\n\nExamples:\n"Nielsen-Massey Madagascar Bourbon Vanilla Bean Paste 32oz" → ["pasta vanilla","ekstrak vanilla","vanilla murni"]\n"KitchenAid Artisan Stand Mixer 5Qt" → ["mixer berdiri","mixer kue","mixer adonan"]\n"Coconut Bowl Set of 4 with Spoons" → ["mangkok kelapa","bowl coconut","mangkok kayu"]\n\nProduct: "' + product.name + '"\n\n{"clean_name_id":"2-3 word Bahasa name","category":"electronics/kitchen/beauty/fashion/home/toys/sports/baby/office/other","weight_class":"light/medium/heavy","search_queries_id":["query1","query2","query3"]}\nJSON only:', "claude-sonnet-4-20250514", false, 1, 1024);
       const parsed = parseJSON(fmt);
       const productData = { ...product, clean_name_id: parsed.clean_name_id || product.name, clean_name_en: product.name, category: parsed.category || guessCategory(product.name), weight_class: parsed.weight_class || "medium", pack_quantity: 1 };
       const queries = parsed.search_queries_id || [parsed.clean_name_id || product.name];
@@ -811,7 +815,6 @@ export default function App() {
   // ══════════ DISCOVER: ScrapingDog Amazon Search ══════════
   const searchAmazonSD = async (keyword) => {
     if (!keyword.trim()) return;
-    if (!checkQuota("lookup")) return;
     setDiscSearchingAmazon(true); setDiscError(""); setDiscSelectedIdx(-1);
     addDiag("info", "disc_amazon", `Searching Amazon.ae: "${keyword}" (3 pages)`);
     try {
@@ -860,7 +863,6 @@ export default function App() {
       setDiscHistory(newHistory);
       setDiscAmazonResults(sorted);
       setDiscSelectedIdx(0);
-      await incrementUsage("lookups_used");
     } catch (e) { addDiag("error", "disc_amazon", e.message); setDiscError(e.message); }
     setDiscSearchingAmazon(false); setStage("");
   };
@@ -999,7 +1001,6 @@ export default function App() {
     const input = url.trim();
     if (!input || !input.startsWith("http")) { setAutoError("Invalid URL"); return; }
     if (!input.includes('amazon.ae')) { setAutoError("Only Amazon.ae URLs supported"); return; }
-    if (!checkQuota("lookup")) return;
     setLoading(true); setAutoError(""); setDryRunData(null); setUaeSimilar(null); setIndoResults(null); setMarginData(null); setEditableQueries([]); setActiveSection(0); setWaveStatus([]);
     const marketplace = "Amazon.ae";
     const asinMatch = input.match(/\/dp\/([A-Z0-9]{10})/i) || input.match(/\/([A-Z0-9]{10})(?:[/?]|$)/i);
@@ -1048,7 +1049,7 @@ export default function App() {
         // ── Part B: SD succeeded → only call Haiku for translation + classification ──
         setStage("Translating...");
         addDiag("info", "lookup", "SD path: Haiku translate only");
-        const transPrompt = 'Translate this product name to Bahasa Indonesia for marketplace search. Also classify it.\nProduct: "' + sdParsed.product_name + '"\nBrand: "' + sdParsed.brand + '"\nReturn ONLY valid JSON (no text before/after):\n{"clean_name_en":"short English name","clean_name_id":"Bahasa Indonesia translation","category":"electronics/kitchen/beauty/fashion/home/toys/sports/baby/office/other","weight_class":"light/medium/heavy","search_queries_id":["q1","q2","q3"],"search_queries_en":["q1"]}\nJSON only:';
+        const transPrompt = 'What would an Indonesian buyer type on Tokopedia to find this product? Give me 3 SHORT search queries in Bahasa Indonesia (2-3 words each). Strip ALL brand names, sizes, quantities.\n\nExamples:\n"Nielsen-Massey Madagascar Bourbon Vanilla Bean Paste 32oz" → clean_name_en="vanilla bean paste", queries=["pasta vanilla","ekstrak vanilla","vanilla murni"]\n"KitchenAid Artisan Stand Mixer 5Qt" → clean_name_en="stand mixer", queries=["mixer berdiri","mixer kue","mixer adonan"]\n\nProduct: "' + sdParsed.product_name + '"\nBrand to REMOVE: "' + (sdParsed.brand || "") + '"\n\n{"clean_name_en":"2-3 word generic English name","clean_name_id":"2-3 word Bahasa name","category":"electronics/kitchen/beauty/fashion/home/toys/sports/baby/office/other","weight_class":"light/medium/heavy","search_queries_id":["query1","query2","query3"],"search_queries_en":["short english query"]}\nJSON only:';
         const transModels = ["claude-haiku-4-5-20251001", "claude-sonnet-4-20250514"];
         for (let attempt = 0; attempt < transModels.length && !data; attempt++) {
           const mdl = transModels[attempt];
@@ -1074,7 +1075,7 @@ export default function App() {
         if (!rawInfo) { setStage("Reading product..."); rawInfo = await runWithProgress(() => callClaude("Find product details for " + marketplace + " listing.\nURL: " + input + (asin ? "\nASIN: " + asin : "") + "\nI need: name, price AED, brand, rating, reviews, pack size.", "claude-sonnet-4-20250514", true, 2, 4096), 12); }
         addDiag("info", "lookup", `rawInfo length: ${rawInfo.length}`, rawInfo.slice(0, 200));
         setStage("Formatting...");
-        const fmtPrompt = "Convert:\n" + rawInfo + "\nURL: " + input + "\nMarketplace: " + marketplace + '\n\nReturn ONLY valid JSON (no text before/after):\n{"product_name":"","price_aed":NUMBER,"pack_quantity":NUMBER,"brand":"","rating":NUMBER,"reviews":NUMBER,"source":"' + marketplace + '","clean_name_en":"","clean_name_id":"Bahasa Indonesia translation","category":"electronics/kitchen/beauty/fashion/home/toys/sports/baby/office/other","weight_class":"light/medium/heavy","search_queries_id":["q1","q2","q3"],"search_queries_en":["q1"]}\nJSON only:';
+        const fmtPrompt = "Convert to JSON. For search_queries_id: give 3 SHORT Bahasa Indonesia queries (2-3 words) that a Tokopedia buyer would type. NO brand names, NO sizes. Example: 'Nielsen-Massey Vanilla Paste 32oz' → ['pasta vanilla','ekstrak vanilla','vanilla murni']. clean_name_en = short generic name (e.g. 'vanilla bean paste').\n\n" + rawInfo + "\nURL: " + input + "\nMarketplace: " + marketplace + '\n\nReturn ONLY valid JSON:\n{"product_name":"full original name","price_aed":NUMBER,"pack_quantity":NUMBER,"brand":"","rating":NUMBER,"reviews":NUMBER,"source":"' + marketplace + '","clean_name_en":"short generic English name","clean_name_id":"short Bahasa name","category":"electronics/kitchen/beauty/fashion/home/toys/sports/baby/office/other","weight_class":"light/medium/heavy","search_queries_id":["generic bahasa query","variant query","specific query"],"search_queries_en":["generic english query"]}\nJSON only:';
         const fmtModels = ["claude-sonnet-4-20250514", "claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"];
         for (let attempt = 0; attempt < fmtModels.length && !data; attempt++) {
           const mdl = fmtModels[attempt];
@@ -1344,7 +1345,8 @@ export default function App() {
           <div style={{ display: "flex", gap: "12px", fontSize: "11px", alignItems: "flex-end" }}>
             <div style={{ textAlign: "right" }}><div style={{ color: c.dimmer }}>LOOKUPS</div><div style={{ color: c.gold, fontSize: "16px", fontWeight: 700 }}>{history.length}</div></div>
             <div style={{ textAlign: "right" }}><div style={{ color: c.dimmer }}>CANDIDATES</div><div style={{ color: c.green, fontSize: "16px", fontWeight: 700 }}>{candidates.length}</div></div>
-            {userProfile && !isAdmin && <div style={{ textAlign: "right" }}><div style={{ color: c.dimmer }}>QUOTA</div><div style={{ color: c.gold, fontSize: "11px", fontWeight: 600 }}>{userProfile.lookups_used}/{TIER_LIMITS[userProfile.role]?.lookups || "?"}</div></div>}
+            {userProfile && !isAdmin && <div style={{ textAlign: "right" }}><div style={{ color: c.dimmer }}>SCRAPES</div><div style={{ color: c.gold, fontSize: "11px", fontWeight: 600 }}>{userProfile.lookups_used}/{TIER_LIMITS[userProfile.role]?.lookups || "?"}</div></div>}
+            {userProfile && !isAdmin && <div style={{ textAlign: "right" }}><div style={{ color: c.dimmer }}>ANALYSES</div><div style={{ color: c.gold, fontSize: "11px", fontWeight: 600 }}>{userProfile.margins_used}/{TIER_LIMITS[userProfile.role]?.margins || "?"}</div></div>}
             <button onClick={toggleTheme} style={{ background: c.surface2, border: "1px solid " + c.border2, color: c.dim, fontFamily: "monospace", fontSize: "10px", padding: "6px 10px", borderRadius: "4px", cursor: "pointer" }}>{dark ? "\u2600" : "\ud83c\udf19"}</button>
             {isAdmin && <button onClick={() => setShowDiag(!showDiag)} style={{ background: showDiag ? c.gold : c.surface2, border: "1px solid " + (showDiag ? c.gold : c.border2), color: showDiag ? c.btnText : c.dim, fontFamily: "monospace", fontSize: "10px", padding: "6px 10px", borderRadius: "4px", cursor: "pointer" }}>DIAG</button>}
             <button onClick={handleSignOut} style={{ background: "transparent", border: "1px solid " + c.red + "44", color: c.red, fontFamily: "monospace", fontSize: "9px", padding: "6px 10px", borderRadius: "4px", cursor: "pointer" }}>LOGOUT</button>
@@ -1356,7 +1358,7 @@ export default function App() {
       {quotaError && <div style={{ marginBottom: "12px", padding: "14px 16px", background: dark ? "#2A1A10" : "#FEF3E2", border: "1px solid " + c.darkGold + "66", borderRadius: "6px", display: "flex", alignItems: "center", gap: "12px" }}>
         <span style={{ fontSize: "20px" }}>{"\ud83d\udeab"}</span>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: "12px", color: c.text, fontWeight: 600, marginBottom: "2px" }}>Monthly Limit Reached</div>
+          <div style={{ fontSize: "12px", color: c.text, fontWeight: 600, marginBottom: "2px" }}>Quota Limit Reached</div>
           <div style={{ fontSize: "11px", color: c.dim }}>{quotaError}</div>
         </div>
         <button onClick={() => setQuotaError("")} style={{ background: "transparent", border: "none", color: c.dimmest, fontSize: "14px", cursor: "pointer" }}>{"\u2715"}</button>
