@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 // ══════════ SUPABASE CONFIG ══════════
 const SUPABASE_URL = "https://cqpxzxafavqflnrilgjh.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNxcHh6eGFmYXZxZmxucmlsZ2poIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ1MDUyNzEsImV4cCI6MjA5MDA4MTI3MX0.tAK15mxTdofv5eymd9wJOxxA4vjVuS_QkpmKiqA5qCI";
+const SUPABASE_ANON_KEY = "sb_publishable_f4N-v3Gs7qJsPW4jUe_fzw_u81VVIg3";
 // ══════════ CONSTANTS ══════════
 const DEFAULT_FX = { AEDUSD: 0.2723, IDRUSD: 0.0000613, AED_TO_IDR: 0.2723 / 0.0000613, IDR_TO_AED: 0.0000613 / 0.2723 };
 const DEFAULT_FREIGHT = { air: { rate_per_kg: 4, min_kg: 100, transit: { port_port: "3-5 days", port_door: "5-7 days", door_door: "7-10 days" } }, ocean: { rate_20ft: 800, rate_40ft: 1400, rate_per_cbm: 45, transit: { port_port: "14-18 days", port_door: "18-25 days", door_door: "21-30 days" } }, source: "default", updated: null };
@@ -727,10 +727,7 @@ export default function App() {
   const runShopeeApify = async (allQueries) => {
     const waves = [];
     const mainQ = allQueries[0];
-    const shopeeUrl = "https://shopee.co.id/search?keyword=" + encodeURIComponent(mainQ) + "&price_min=10000&price_max=800000&sort=7";
-    let parsedCookies = [];
-    if (shopeeCookie) { try { parsedCookies = typeof shopeeCookie === "string" ? JSON.parse(shopeeCookie) : shopeeCookie; } catch { addDiag("warn", "shopee_apify", "Cookie parse failed, sending empty"); } }
-    const shopeeInput = { searchUrls: [shopeeUrl], country: "ID", maxProducts: 30, scrapeMode: "fast", shopeeCookies: parsedCookies };
+    const shopeeInput = { searchKeywords: allQueries.slice(0, 3), country: "ID", maxProducts: 30, shopeeCookies: shopeeCookie || "[]" };
     addDiag("info", "shopee_apify", `Query: "${mainQ}"`);
     setStage("Scraping Shopee..."); setProgress(10);
     try {
