@@ -1825,11 +1825,11 @@ export default function App() {
       {/* ══════════ TAB BAR ══════════ */}
       <div className="bandar-tabs" style={{ display: "flex", gap: "2px", borderBottom: "1px solid " + c.border2 }}>
         {[
+          { id: "guide", label: "\ud83d\udcd6 GUIDE" },
           ...(isAdmin ? [{ id: "brainstorm", label: "\ud83e\udde0 BRAINSTORM" }] : []),
           { id: "discover", label: "\ud83d\udd0d DISCOVER" },
           { id: "auto", label: "\u26a1 LOOKUP" },
           { id: "history", label: "\ud83d\udccb HISTORY" },
-          { id: "guide", label: "\ud83d\udcd6 GUIDE" },
           ...(isAdmin ? [{ id: "admin", label: "\u2699 ADMIN" }] : [])
         ].map(m => (
           <button key={m.id} onClick={() => setMode(m.id)} style={{ padding: "10px 16px", background: mode === m.id ? c.surface : "transparent", color: mode === m.id ? c.gold : c.dimmest, border: mode === m.id ? "1px solid " + c.border2 : "1px solid transparent", borderBottom: mode === m.id ? "1px solid " + c.surface : "1px solid " + c.border2, cursor: "pointer", fontFamily: "monospace", fontSize: "11px", position: "relative", top: "1px", borderRadius: "4px 4px 0 0" }}>
