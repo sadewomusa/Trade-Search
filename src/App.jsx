@@ -23,11 +23,12 @@ const ROUTES = [
   { id: "sea_lcl_klf", label: "Sea LCL\u2192Khalifa Port", mode: "sea_lcl", origin: "Jakarta", dest: "Khalifa Port", transit: "20\u201328 days", rate: 46, unit: "USD/CBM", bestFor: "Abu Dhabi destination", icon: "\ud83d\udea2" },
 ];
 const TIER_LIMITS = {
-  free:       { lookups: 5,   margins: 1,  label: "Free" },
-  registered: { lookups: 30,  margins: 5,  label: "Registered" },
+  free:       { lookups: 3,   margins: 1,  label: "Free" },
+  registered: { lookups: 10,  margins: 3,  label: "Registered" },
   paid:       { lookups: 100, margins: 20, label: "Pro ($20/mo)" },
   admin:      { lookups: 99999, margins: 99999, label: "Admin" },
 };
+const DISPOSABLE_DOMAINS = ["tempmail.com","guerrillamail.com","mailinator.com","throwaway.email","yopmail.com","sharklasers.com","guerrillamailblock.com","grr.la","guerrillamail.info","guerrillamail.de","tempail.com","dispostable.com","trashmail.com","trashmail.me","trashmail.net","mailnesia.com","maildrop.cc","discard.email","temp-mail.org","fakeinbox.com","emailondeck.com","mohmal.com","tempmailo.com","temp-mail.io","burnermail.io","tmail.ws","tmpmail.net","tmpmail.org","getnada.com","inboxbear.com","mailsac.com","10minutemail.com","20minutemail.com","minutemail.com","tempmailaddress.com","crazymailing.com","mytemp.email","tempr.email","harakirimail.com","bupmail.com","mailcatch.com","mailscrap.com","spamgourmet.com","spamfree24.org","jetable.org","trashymail.com","klzlk.com","emltmp.com","tmpbox.net"];
 const WORKER_URL = "https://trades-proxy.sadewoahmadm.workers.dev";
 const STATUS_COLORS = { Candidate: { bg: "#0D2E1A", text: "#2EAA5A", border: "#1A5C32" }, Investigated: { bg: "#0D1F15", text: "#5BAD6E", border: "#1A4A2D" }, Rejected: { bg: "#3a1a1a", text: "#f87171", border: "#5a2d2d" }, Active: { bg: "#2A2210", text: "#D4A843", border: "#4A3D18" } };
 const STATUS_COLORS_LIGHT = { Candidate: { bg: "#E8F5EC", text: "#1A7A3A", border: "#B6E2C4" }, Investigated: { bg: "#EDF7F0", text: "#3D8B56", border: "#C4E1CE" }, Rejected: { bg: "#FEF2F2", text: "#DC2626", border: "#FECACA" }, Active: { bg: "#FDF8ED", text: "#9A7A1C", border: "#E8D9A0" } };
@@ -133,8 +134,11 @@ function getIndoSignalScore(name) {
 
 // ══════════ STORAGE LAYER ══════════
 const supabaseReady = SUPABASE_URL !== "https://YOUR-PROJECT-ID.supabase.co" && SUPABASE_ANON_KEY !== "eyJ...your-anon-key-here...";
-async function supabaseGet(key) { if (!supabaseReady) return null; const r = await fetch(SUPABASE_URL + "/rest/v1/kv_store?key=eq." + encodeURIComponent(key) + "&select=value", { headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + SUPABASE_ANON_KEY } }); if (!r.ok) return null; const rows = await r.json(); return rows?.length ? JSON.parse(rows[0].value) : null; }
-async function supabaseSet(key, val) { if (!supabaseReady) return false; const r = await fetch(SUPABASE_URL + "/rest/v1/kv_store", { method: "POST", headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + SUPABASE_ANON_KEY, "Content-Type": "application/json", Prefer: "resolution=merge-duplicates" }, body: JSON.stringify({ key, value: JSON.stringify(val), updated_at: new Date().toISOString() }) }); return r.ok; }
+// Storage uses user auth token when available, falls back to anon key
+let _authTokenForStorage = "";
+function setStorageAuthToken(token) { _authTokenForStorage = token; }
+async function supabaseGet(key) { if (!supabaseReady) return null; const token = _authTokenForStorage || SUPABASE_ANON_KEY; const r = await fetch(SUPABASE_URL + "/rest/v1/kv_store?key=eq." + encodeURIComponent(key) + "&select=value", { headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + token } }); if (!r.ok) return null; const rows = await r.json(); return rows?.length ? JSON.parse(rows[0].value) : null; }
+async function supabaseSet(key, val) { if (!supabaseReady) return false; const token = _authTokenForStorage || SUPABASE_ANON_KEY; const r = await fetch(SUPABASE_URL + "/rest/v1/kv_store", { method: "POST", headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + token, "Content-Type": "application/json", Prefer: "resolution=merge-duplicates" }, body: JSON.stringify({ key, value: JSON.stringify(val), updated_at: new Date().toISOString() }) }); return r.ok; }
 async function storeGet(key) { try { const v = await supabaseGet(key); if (v !== null) { try { localStorage.setItem("gt:" + key, JSON.stringify(v)); } catch {} return v; } } catch {} try { const v = localStorage.getItem("gt:" + key); return v ? JSON.parse(v) : null; } catch { return null; } }
 async function storeSet(key, val) { try { localStorage.setItem("gt:" + key, JSON.stringify(val)); } catch {} try { return await supabaseSet(key, val); } catch { return false; } }
 
@@ -294,6 +298,7 @@ export default function App() {
   const handleSignUp = async () => {
     if (!authEmail || !authPassword) { setAuthError("Email and password required"); return; }
     if (authPassword.length < 6) { setAuthError("Password must be 6+ characters"); return; }
+    if (isDisposableEmail(authEmail)) { setAuthError("Disposable email addresses are not allowed. Please use a real email."); return; }
     setAuthLoading(true); setAuthError("");
     try {
       const { ok, data } = await supabaseAuth("signup", { email: authEmail, password: authPassword });
@@ -346,6 +351,9 @@ export default function App() {
     setAuthUser(null); setAuthToken(""); setUserProfile(null);
     setHistory([]); setStorageReady(false);
   };
+
+  // Keep storage layer in sync with auth token
+  useEffect(() => { setStorageAuthToken(authToken); }, [authToken]);
 
   const loadProfile = async (uid, token) => {
     try {
@@ -448,11 +456,12 @@ export default function App() {
         let cfg = await storeGet(userId + ":config");
         let hist = await loadHistory(userId);
 
-        // ── One-time migration: copy legacy PIN data to UUID ──
-        if (!cfg && !hist.length) {
+        // ── One-time migration: copy legacy PIN data to UUID (ADMIN ONLY) ──
+        const profileForMigration = userProfile;
+        if (!cfg && !hist.length && profileForMigration?.role === "admin") {
           const migrated = await storeGet(userId + ":migrated");
           if (!migrated) {
-            addDiag("info", "migration", "No data under UUID, checking legacy PINs...");
+            addDiag("info", "migration", "Admin account — checking legacy PINs...");
             for (const pin of LEGACY_PINS) {
               const legacyCfg = await storeGet(pin + ":config");
               const legacyHist = await loadHistory(pin);
@@ -605,6 +614,38 @@ export default function App() {
   } : null;
   const displayStatus = displayMargins ? (displayMargins.median.margin >= MARGIN_THRESHOLD.candidate ? "Candidate" : displayMargins.median.margin >= MARGIN_THRESHOLD.borderline ? "Investigated" : "Rejected") : "";
 
+  // ══════════ QUOTA + VALIDATION ══════════
+  const [quotaError, setQuotaError] = useState("");
+
+  const isDisposableEmail = (email) => {
+    const domain = (email || "").split("@")[1]?.toLowerCase();
+    return DISPOSABLE_DOMAINS.includes(domain);
+  };
+
+  const checkQuota = (type) => {
+    if (isAdmin) return true;
+    if (!userProfile) return false;
+    const limits = TIER_LIMITS[userProfile.role] || TIER_LIMITS.free;
+    if (type === "lookup" && userProfile.lookups_used >= limits.lookups) {
+      setQuotaError("You\u2019ve used " + userProfile.lookups_used + "/" + limits.lookups + " lookups this month. Contact sadewoahmadm@gmail.com for more.");
+      return false;
+    }
+    if (type === "margin" && userProfile.margins_used >= limits.margins) {
+      setQuotaError("You\u2019ve used " + userProfile.margins_used + "/" + limits.margins + " margin analyses this month. Contact sadewoahmadm@gmail.com for more.");
+      return false;
+    }
+    setQuotaError("");
+    return true;
+  };
+
+  // ══════════ USAGE TRACKING ══════════
+  const incrementUsage = async (field) => {
+    try {
+      await workerCall("increment_usage", { field });
+      await refreshProfile();
+    } catch (e) { addDiag("warn", "usage", "Increment failed: " + e.message); }
+  };
+
   // ══════════ INDO SEARCH — APIFY ══════════
   const workerCall = async (action, data) => {
     const r = await fetch(WORKER_URL, { method: "POST", headers: { "Content-Type": "application/json", ...(authToken ? { Authorization: "Bearer " + authToken } : {}) }, body: JSON.stringify({ action, authToken, ...data }) });
@@ -733,6 +774,7 @@ export default function App() {
   // ══════════ VALIDATE (shared by Discover + Brainstorm) ══════════
   const validateProduct = async (product, setValidIdx, setResults) => {
     if (!authToken) return;
+    if (!checkQuota("margin")) return;
     const pk = product.asin || product.url || `${product.name}_${product.price_aed}`;
     setValidIdx(pk);
     try {
@@ -746,6 +788,7 @@ export default function App() {
       const newHistory = [mData, ...historyRef.current].slice(0, MAX_HISTORY);
       setHistory(newHistory); await saveHistoryNow(newHistory);
       setResults(prev => ({ ...prev, [pk]: { margin: result.margins.median.margin, status: result.status, confidence: result.indo.confidence } }));
+      await incrementUsage("margins_used");
     } catch (e) { setResults(prev => ({ ...prev, [pk]: { margin: null, status: "Error", error: e.message } })); }
     setValidIdx(null); setStage("");
   };
@@ -753,6 +796,7 @@ export default function App() {
   // ══════════ DISCOVER: ScrapingDog Amazon Search ══════════
   const searchAmazonSD = async (keyword) => {
     if (!keyword.trim()) return;
+    if (!checkQuota("lookup")) return;
     setDiscSearchingAmazon(true); setDiscError(""); setDiscSelectedIdx(-1);
     addDiag("info", "disc_amazon", `Searching Amazon.ae: "${keyword}" (3 pages)`);
     try {
@@ -801,6 +845,7 @@ export default function App() {
       setDiscHistory(newHistory);
       setDiscAmazonResults(sorted);
       setDiscSelectedIdx(0);
+      await incrementUsage("lookups_used");
     } catch (e) { addDiag("error", "disc_amazon", e.message); setDiscError(e.message); }
     setDiscSearchingAmazon(false); setStage("");
   };
@@ -939,7 +984,7 @@ export default function App() {
     const input = url.trim();
     if (!input || !input.startsWith("http")) { setAutoError("Invalid URL"); return; }
     if (!input.includes('amazon.ae')) { setAutoError("Only Amazon.ae URLs supported"); return; }
-    if (!apiKey) { setApiKeyStatus("missing"); return; }
+    if (!checkQuota("lookup")) return;
     setLoading(true); setAutoError(""); setDryRunData(null); setUaeSimilar(null); setIndoResults(null); setMarginData(null); setEditableQueries([]); setActiveSection(0); setWaveStatus([]);
     const marketplace = "Amazon.ae";
     const asinMatch = input.match(/\/dp\/([A-Z0-9]{10})/i) || input.match(/\/([A-Z0-9]{10})(?:[/?]|$)/i);
@@ -1059,6 +1104,7 @@ export default function App() {
 
   const runLookupToko = async () => {
     if (!dryRunData || !authToken) return;
+    if (!checkQuota("lookup")) return;
     setLoading(true); setAutoError("");
     const queries = editableQueries.filter(q => q.trim());
     if (!queries.length) { setAutoError("Add at least one query."); setLoading(false); return; }
@@ -1072,12 +1118,14 @@ export default function App() {
       const nh = [mData, ...historyRef.current].slice(0, MAX_HISTORY);
       setHistory(nh); await saveHistoryNow(nh);
       setLookupView("results");
+      await incrementUsage("lookups_used");
     } catch (err) { setAutoError(err.message); if (err.message.includes("429")) setCooldown(30); }
     setLoading(false); setStage("");
   };
 
   const runLookupShopee = async () => {
     if (!dryRunData || !authToken) return;
+    if (!checkQuota("lookup")) return;
     setLoading(true); setAutoError("");
     const queries = editableQueries.filter(q => q.trim());
     if (!queries.length) { setAutoError("Add at least one query."); setLoading(false); return; }
@@ -1091,12 +1139,14 @@ export default function App() {
       const nh = [mData, ...historyRef.current].slice(0, MAX_HISTORY);
       setHistory(nh); await saveHistoryNow(nh);
       setLookupView("results");
+      await incrementUsage("lookups_used");
     } catch (err) { setAutoError(err.message); if (err.message.includes("429")) setCooldown(30); }
     setLoading(false); setStage("");
   };
 
   const runLookupIndoSearch = async () => {
     if (!dryRunData) return;
+    if (!checkQuota("lookup")) return;
     if (indoMode === "apify") { await runLookupToko(); return; }
     setLoading(true); setAutoError(""); setIndoResults(null); setMarginData(null); setWaveStatus([]);
     const queries = editableQueries.filter(q => q.trim());
@@ -1109,6 +1159,7 @@ export default function App() {
       const nh = [mData, ...historyRef.current].slice(0, MAX_HISTORY);
       setHistory(nh); await saveHistoryNow(nh);
       setLookupView("results");
+      await incrementUsage("lookups_used");
     } catch (err) { setAutoError(err.message); if (err.message.includes("429")) setCooldown(30); }
     setLoading(false); setStage("");
   };
@@ -1278,6 +1329,16 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {/* ══════════ QUOTA WARNING ══════════ */}
+      {quotaError && <div style={{ marginBottom: "12px", padding: "14px 16px", background: dark ? "#2A1A10" : "#FEF3E2", border: "1px solid " + c.darkGold + "66", borderRadius: "6px", display: "flex", alignItems: "center", gap: "12px" }}>
+        <span style={{ fontSize: "20px" }}>{"\ud83d\udeab"}</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: "12px", color: c.text, fontWeight: 600, marginBottom: "2px" }}>Monthly Limit Reached</div>
+          <div style={{ fontSize: "11px", color: c.dim }}>{quotaError}</div>
+        </div>
+        <button onClick={() => setQuotaError("")} style={{ background: "transparent", border: "none", color: c.dimmest, fontSize: "14px", cursor: "pointer" }}>{"\u2715"}</button>
+      </div>}
 
       {/* ══════════ CONFIG (admin only) ══════════ */}
       {isAdmin && <div style={{ marginBottom: "12px", padding: "10px 12px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px" }}>
