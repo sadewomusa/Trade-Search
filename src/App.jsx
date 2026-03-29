@@ -224,6 +224,9 @@ export default function App() {
   const [newQueryInput, setNewQueryInput] = useState("");
   const [cooldown, setCooldown] = useState(0);
   const [activeSection, setActiveSection] = useState(0);
+  const [marginScenario, setMarginScenario] = useState("A"); // "A" = link price vs indo, "B" = regional similar avg/med vs indo
+  const [scenarioBData, setScenarioBData] = useState(null); // { uaeMedian, uaeAverage, source, count }
+  const [scenarioBLoading, setScenarioBLoading] = useState(false);
   const [qty, setQty] = useState(1);
   const [freightMode, setFreightMode] = useState("air");
   const [qtyMode, setQtyMode] = useState("unit");
@@ -258,6 +261,10 @@ export default function App() {
   const [bsValidationResults, setBsValidationResults] = useState({});
   const bsAbortRef = useRef(false);
   const apifyAbortRef = useRef(false);
+  const apifyPauseRef = useRef(false);
+  const [apifyPaused, setApifyPaused] = useState(false);
+  const [streamingResults, setStreamingResults] = useState([]);
+  const streamingResultsRef = useRef([]);
 
   // Admin state
   const [adminUsers, setAdminUsers] = useState([]);
@@ -622,11 +629,65 @@ export default function App() {
     ...calcRouteMargin(marginData.uaeProduct?.price_aed||0, marginData.uaeProduct?.pack_quantity||1, marginData.medianPriceIDR||0, marginData.weightClass||"medium", route),
   })) : [];
 
+  // ══════════ SCENARIO B: Regional similar items ══════════
+  const loadScenarioB = async () => {
+    if (!dryRunData || scenarioBLoading) return;
+    setScenarioBLoading(true);
+    try {
+      // First: check if discover history has relevant results from same region
+      const productKeywords = (dryRunData.clean_name_en || dryRunData.product_name || "").toLowerCase().split(/\s+/).filter(w => w.length > 3).slice(0, 3);
+      const source = dryRunData.source || "Amazon.ae";
+      // Check discover history for matching keyword searches
+      let similarPrices = [];
+      for (const dh of discHistory) {
+        const kwMatch = productKeywords.some(kw => dh.keyword.toLowerCase().includes(kw));
+        if (kwMatch && dh.results?.length) {
+          const sameSrc = dh.results.filter(r => r.source === source && r.price_aed > 0);
+          similarPrices.push(...sameSrc.map(r => r.price_aed));
+        }
+      }
+      // If no discover history match, try a quick ScrapingDog search
+      if (similarPrices.length < 3) {
+        const searchQ = (dryRunData.clean_name_en || dryRunData.product_name || "").replace(/[^a-zA-Z0-9\s]/g, "").trim().split(/\s+/).slice(0, 4).join(" ");
+        if (searchQ.length >= 3) {
+          addDiag("info", "scenarioB", `Searching similar: "${searchQ}" on ${source}`);
+          setStage("Finding similar items...");
+          try {
+            const domainCode = (source.match(/\.([a-z.]+)$/i) || [, "ae"])[1] || "ae";
+            const sdRes = await workerCall("scrapingdog_search", { query: searchQ, domain: domainCode, page: 1 });
+            const products = (sdRes.results || sdRes.organic_results || sdRes.search_results || sdRes || []);
+            const items = (Array.isArray(products) ? products : []).map(p => parseFloat(String(p.price || p.extracted_price || "0").replace(/[^0-9.]/g, "")) || 0).filter(p => p > 0);
+            similarPrices.push(...items);
+            addDiag("info", "scenarioB", `Found ${items.length} similar prices from ${source}`);
+          } catch (e) { addDiag("warn", "scenarioB", `Search failed: ${e.message}`); }
+        }
+      }
+      if (similarPrices.length > 0) {
+        const sorted = similarPrices.sort((a, b) => a - b);
+        const median = sorted[Math.floor(sorted.length / 2)];
+        const average = Math.round((sorted.reduce((s, x) => s + x, 0) / sorted.length) * 100) / 100;
+        setScenarioBData({ uaeMedian: median, uaeAverage: average, source, count: sorted.length, lowest: sorted[0], highest: sorted[sorted.length - 1] });
+      } else {
+        setScenarioBData({ uaeMedian: 0, uaeAverage: 0, source, count: 0 });
+      }
+    } catch (e) { addDiag("error", "scenarioB", e.message); }
+    setScenarioBLoading(false); setStage("");
+  };
+
+  // Scenario B computed margins
+  const scenarioBMargins = (scenarioBData && scenarioBData.uaeMedian > 0 && marginData) ? {
+    medianVsMedIndo: calcMargin(scenarioBData.uaeMedian, 1, marginData.medianPriceIDR || 0, marginData.weightClass || "medium", freightMode),
+    medianVsAvgIndo: calcMargin(scenarioBData.uaeMedian, 1, marginData.indoResults?.price_stats?.average_idr || 0, marginData.weightClass || "medium", freightMode),
+    avgVsMedIndo: calcMargin(scenarioBData.uaeAverage, 1, marginData.medianPriceIDR || 0, marginData.weightClass || "medium", freightMode),
+    avgVsAvgIndo: calcMargin(scenarioBData.uaeAverage, 1, marginData.indoResults?.price_stats?.average_idr || 0, marginData.weightClass || "medium", freightMode),
+  } : null;
+
   // Dynamic display margins (recalc when freight toggle changes)
   const displayMargins = marginData ? {
     median: calcMargin(marginData.uaeProduct?.price_aed||0, marginData.uaeProduct?.pack_quantity||1, marginData.medianPriceIDR||0, marginData.weightClass||"medium", freightMode),
     best: calcMargin(marginData.uaeProduct?.price_aed||0, marginData.uaeProduct?.pack_quantity||1, marginData.lowestPriceIDR||0, marginData.weightClass||"medium", freightMode),
     worst: calcMargin(marginData.uaeProduct?.price_aed||0, marginData.uaeProduct?.pack_quantity||1, marginData.highestPriceIDR||0, marginData.weightClass||"medium", freightMode),
+    average: calcMargin(marginData.uaeProduct?.price_aed||0, marginData.uaeProduct?.pack_quantity||1, marginData.indoResults?.price_stats?.average_idr||marginData.medianPriceIDR||0, marginData.weightClass||"medium", freightMode),
   } : null;
   const displayStatus = displayMargins ? (displayMargins.median.margin >= MARGIN_THRESHOLD.candidate ? "Candidate" : displayMargins.median.margin >= MARGIN_THRESHOLD.borderline ? "Investigated" : "Rejected") : "";
 
@@ -670,16 +731,37 @@ export default function App() {
     return r.json();
   };
 
-  const runApifyActor = async (actorId, input, label) => {
+  const runApifyActor = async (actorId, input, label, onPartialResults) => {
     setStage("Starting " + label + "...");
     addDiag("info", "apify", label + " input: " + JSON.stringify(input).slice(0, 300));
     const rd = await workerCall("apify_run", { actorId, input });
     addDiag("info", "apify", label + " run response: " + JSON.stringify(rd).slice(0, 300));
     const runId = rd.data?.id; if (!runId) throw new Error(label + " no run ID — response: " + JSON.stringify(rd).slice(0, 200));
-    let status = "RUNNING", pc = 0;
-    while (status === "RUNNING" || status === "READY") { if (pc > 60) throw new Error(label + " timeout"); if (apifyAbortRef.current) { apifyAbortRef.current = false; throw new Error("Stopped by user"); } await wait(5000); pc++; setStage(label + " (" + (pc * 5) + "s)"); setProgress(Math.min(90, pc * 3)); try { const pr = await workerCall("apify_status", { runId }); status = pr.data?.status || "RUNNING"; } catch {} }
-    if (status !== "SUCCEEDED") throw new Error(label + " status: " + status);
-    const dsId = rd.data?.defaultDatasetId; if (!dsId) throw new Error(label + " no dataset");
+    const dsId = rd.data?.defaultDatasetId;
+    let status = "RUNNING", pc = 0, lastItemCount = 0;
+    while (status === "RUNNING" || status === "READY") {
+      if (pc > 60) throw new Error(label + " timeout");
+      if (apifyAbortRef.current) { apifyAbortRef.current = false; break; }
+      // Pause loop
+      while (apifyPauseRef.current) {
+        await wait(1000);
+        if (apifyAbortRef.current) { apifyAbortRef.current = false; apifyPauseRef.current = false; break; }
+      }
+      await wait(5000); pc++;
+      setStage(label + " (" + (pc * 5) + "s)"); setProgress(Math.min(90, pc * 3));
+      // Stream partial results every 3 polls
+      if (dsId && onPartialResults && pc % 3 === 0) {
+        try {
+          const partialItems = await workerCall("apify_dataset", { datasetId: dsId, limit: 150 });
+          if (Array.isArray(partialItems) && partialItems.length > lastItemCount) {
+            lastItemCount = partialItems.length;
+            onPartialResults(partialItems);
+          }
+        } catch {}
+      }
+      try { const pr = await workerCall("apify_status", { runId }); status = pr.data?.status || "RUNNING"; } catch {}
+    }
+    if (!dsId) throw new Error(label + " no dataset");
     const items = await workerCall("apify_dataset", { datasetId: dsId, limit: 150 });
     addDiag("info", "apify", label + " dataset: " + (Array.isArray(items) ? items.length + " items" : "NOT array: " + JSON.stringify(items).slice(0, 200)));
     if (!Array.isArray(items)) { addDiag("warn", "apify", label + " unexpected response type: " + typeof items); return []; }
@@ -718,21 +800,31 @@ export default function App() {
 
   const runTokoApify = async (allQueries) => {
     const waves = [];
-    // Filter to Bahasa-only queries (skip English-only strings)
     const bahasaQueries = allQueries.filter(q => /[a-z]/.test(q) && !/^[a-zA-Z0-9\s,.\-()]+$/.test(q) || /kopi|biji|bubuk|kayu|bambu|rotan|kelapa|batu|minyak|sabun|teh|gula|coklat|kain|tas|mangkok/i.test(q));
     const queryArray = bahasaQueries.length > 0 ? bahasaQueries : allQueries;
     const tokoInput = { query: queryArray.slice(0, 5), limit: 30 };
     addDiag("info", "toko_apify", `Sending ${tokoInput.query.length} queries`, JSON.stringify(tokoInput.query));
-    setStage("Scraping Tokopedia..."); setProgress(10);
+    setStage("Exploring Source 1..."); setProgress(10);
     try {
-      const items = await runApifyActor(tokoActorId, tokoInput, "Tokopedia");
+      const onPartial = (partialItems) => {
+        const partial = normalizeApifyResults(partialItems, "Tokopedia");
+        if (partial.length > 0) setStreamingResults(prev => { const merged = [...prev]; partial.forEach(p => { if (!merged.find(m => m.name === p.name && m.price_idr === p.price_idr)) merged.push(p); }); streamingResultsRef.current = merged; return merged; });
+      };
+      const items = await runApifyActor(tokoActorId, tokoInput, "Source 1", onPartial);
       const results = normalizeApifyResults(items, "Tokopedia");
       addDiag(results.length > 0 ? "ok" : "warn", "toko_apify", `${items.length} raw → ${results.length} valid`);
-      waves.push({ name: "Tokopedia", status: results.length > 0 ? "ok" : "empty", count: results.length });
+      waves.push({ name: "Source 1", status: results.length > 0 ? "ok" : "empty", count: results.length });
       return { allResults: results, waves, source: "apify" };
     } catch (e) {
       addDiag("error", "toko_apify", typeof e === "object" ? (e.message || JSON.stringify(e)) : String(e));
-      waves.push({ name: "Tokopedia", status: "fail", count: 0, reason: e.message });
+      // Return streaming results if we have any (stopped early)
+      const currentStreaming = streamingResultsRef.current;
+      if (currentStreaming.length > 0) {
+        const partial = currentStreaming.filter(r => r.source === "Tokopedia");
+        waves.push({ name: "Source 1", status: partial.length > 0 ? "ok" : "fail", count: partial.length, reason: "Stopped early" });
+        return { allResults: partial, waves, source: "apify" };
+      }
+      waves.push({ name: "Source 1", status: "fail", count: 0, reason: e.message });
       return { allResults: [], waves, source: "apify" };
     }
   };
@@ -741,43 +833,57 @@ export default function App() {
     const waves = [];
     const mainQ = allQueries[0];
 
+    const onPartial = (partialItems) => {
+      const partial = normalizeApifyResults(partialItems, "Shopee");
+      if (partial.length > 0) setStreamingResults(prev => { const merged = [...prev]; partial.forEach(p => { if (!merged.find(m => m.name === p.name && m.price_idr === p.price_idr)) merged.push(p); }); streamingResultsRef.current = merged; return merged; });
+    };
+
     // Attempt 1: Apify actor (relevancy sort)
     const shopeeInput = { searchKeywords: allQueries.slice(0, 3), country: "ID", maxProducts: 100, scrapeMode: "fast", sortBy: "relevancy", shopeeCookies: shopeeCookie || "[]", proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ["RESIDENTIAL"], apifyProxyCountry: "ID" } };
     addDiag("info", "shopee_apify", `Query: "${mainQ}" (attempt 1: relevancy)`);
-    setStage("Scraping Shopee..."); setProgress(10);
+    setStage("Exploring Source 2..."); setProgress(10);
     try {
-      const items = await runApifyActor(shopeeActorId, shopeeInput, "Shopee");
+      const items = await runApifyActor(shopeeActorId, shopeeInput, "Source 2", onPartial);
       const results = normalizeApifyResults(items, "Shopee");
       if (results.length > 0) {
         addDiag("ok", "shopee_apify", `Attempt 1: ${items.length} raw → ${results.length} valid`);
-        waves.push({ name: "Shopee", status: "ok", count: results.length });
+        waves.push({ name: "Source 2", status: "ok", count: results.length });
         return { allResults: results, waves, source: "apify" };
       }
       addDiag("warn", "shopee_apify", `Attempt 1: 0 valid, retrying with sales sort...`);
     } catch (e) {
       addDiag("warn", "shopee_apify", `Attempt 1 failed: ${typeof e === "object" ? (e.message || JSON.stringify(e)) : String(e)}`);
+      // Return streaming results if stopped early
+      const currentStreaming = streamingResultsRef.current;
+      if (currentStreaming.length > 0) {
+        const partial = currentStreaming.filter(r => r.source === "Shopee");
+        if (partial.length > 0) {
+          waves.push({ name: "Source 2", status: "ok", count: partial.length, reason: "Stopped early" });
+          return { allResults: partial, waves, source: "apify" };
+        }
+      }
     }
 
-    // Attempt 2: Retry with sales sort (different page, different anti-bot fingerprint)
+    // Attempt 2: Retry with sales sort
     if (!apifyAbortRef.current) {
       const retryInput = { searchKeywords: [mainQ], country: "ID", maxProducts: 100, scrapeMode: "fast", sortBy: "sales", shopeeCookies: shopeeCookie || "[]", proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ["RESIDENTIAL"], apifyProxyCountry: "ID" } };
       addDiag("info", "shopee_apify", `Attempt 2: sortBy=sales`);
-      setStage("Retrying Shopee (best sellers)..."); setProgress(10);
+      setStage("Retrying Source 2 (best sellers)..."); setProgress(10);
       try {
-        const items = await runApifyActor(shopeeActorId, retryInput, "Shopee retry");
+        const items = await runApifyActor(shopeeActorId, retryInput, "Source 2 retry", onPartial);
         const results = normalizeApifyResults(items, "Shopee");
         if (results.length > 0) {
           addDiag("ok", "shopee_apify", `Attempt 2: ${items.length} raw → ${results.length} valid`);
-          waves.push({ name: "Shopee (retry)", status: "ok", count: results.length });
+          waves.push({ name: "Source 2 (retry)", status: "ok", count: results.length });
           return { allResults: results, waves, source: "apify" };
         }
-        addDiag("warn", "shopee_apify", `Attempt 2: still 0. Shopee may be blocking.`);
+        addDiag("warn", "shopee_apify", `Attempt 2: still 0. Source may be blocking.`);
       } catch (e) {
         addDiag("warn", "shopee_apify", `Attempt 2 failed: ${typeof e === "object" ? (e.message || JSON.stringify(e)) : String(e)}`);
       }
     }
 
-    waves.push({ name: "Shopee", status: "fail", count: 0, reason: "Blocked by Shopee anti-bot. Try again in a few minutes." });
+    waves.push({ name: "Source 2", status: "fail", count: 0, reason: "Blocked by anti-bot. Try again in a few minutes." });
     return { allResults: [], waves, source: "apify" };
   };
 
@@ -920,7 +1026,7 @@ export default function App() {
     const blob = new Blob([[h.join(","), ...rows].join("\n")], { type: "text/csv" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = "gt-discover-" + (keyword || "search").replace(/[^a-z0-9]/gi, "-").slice(0, 40) + "-" + new Date().toISOString().slice(0, 10) + ".csv";
+    a.download = "bandar-discover-" + (keyword || "search").replace(/[^a-z0-9]/gi, "-").slice(0, 40) + "-" + new Date().toISOString().slice(0, 10) + ".csv";
     a.click();
   };
   const deleteDiscHistory = (idx) => { const nh = discHistory.filter((_, i) => i !== idx); setDiscHistory(nh); if (discSelectedIdx === idx) { setDiscAmazonResults([]); setDiscSelectedIdx(-1); } else if (discSelectedIdx > idx) { setDiscSelectedIdx(discSelectedIdx - 1); } };
@@ -1033,14 +1139,20 @@ export default function App() {
 
 
   // ══════════ LOOKUP ══════════
+  const AMAZON_URL_PATTERN = /^https?:\/\/(www\.)?(amazon\.(ae|com|co\.uk|de|fr|it|es|ca|com\.au|in|sg|sa|com\.br|co\.jp|nl|pl|se|com\.mx|com\.tr|eg)|amzn\.(to|eu|asia|com))\//i;
+  const extractAmazonDomain = (u) => { const m = u.match(/amazon\.([a-z.]+)/i); return m ? "Amazon." + m[1] : "Amazon"; };
+  const isAmazonUrl = (u) => AMAZON_URL_PATTERN.test(u);
+  const extractAsin = (u) => { const m = u.match(/\/dp\/([A-Z0-9]{10})/i) || u.match(/\/gp\/product\/([A-Z0-9]{10})/i) || u.match(/\/([A-Z0-9]{10})(?:[/?#]|$)/i); return m ? m[1] : ""; };
+  const extractDomainCode = (u) => { const m = u.match(/amazon\.([a-z.]+)/i); if (!m) return "ae"; const d = m[1]; if (d === "ae") return "ae"; if (d === "com") return "com"; if (d === "co.uk") return "co.uk"; if (d === "de") return "de"; if (d === "sa") return "sa"; return d.replace(/^com\./, ""); };
+
   const runDryRun = async () => {
     const input = url.trim();
     if (!input || !input.startsWith("http")) { setAutoError("Invalid URL"); return; }
-    if (!input.includes('amazon.ae')) { setAutoError("Only Amazon.ae URLs supported"); return; }
+    if (!isAmazonUrl(input)) { setAutoError("Supported: Amazon (.ae, .com, .co.uk, .de, etc.) and amzn.to/amzn.eu short links"); return; }
     setLoading(true); setAutoError(""); setDryRunData(null); setUaeSimilar(null); setIndoResults(null); setMarginData(null); setEditableQueries([]); setActiveSection(0); setWaveStatus([]);
-    const marketplace = "Amazon.ae";
-    const asinMatch = input.match(/\/dp\/([A-Z0-9]{10})/i) || input.match(/\/([A-Z0-9]{10})(?:[/?]|$)/i);
-    const asin = asinMatch ? asinMatch[1] : "";
+    const marketplace = extractAmazonDomain(input);
+    const domainCode = extractDomainCode(input);
+    const asin = extractAsin(input);
     try {
       let sdParsed = null;
       let rawInfo = "";
@@ -1049,8 +1161,8 @@ export default function App() {
       if (asin) {
         setStage("ScrapingDog Product API...");
         try {
-          addDiag("info", "lookup", `SD product API: domain=ae, asin=${asin}`);
-          const sdData = await workerCall("scrapingdog_product", { asin, domain: "ae" });
+          addDiag("info", "lookup", `SD product API: domain=${domainCode}, asin=${asin}`);
+          const sdData = await workerCall("scrapingdog_product", { asin, domain: domainCode });
           if (sdData && !sdData.error) {
             addDiag("ok", "lookup", `SD product OK, title: ${(sdData.title || "").slice(0, 60)}`);
             let priceAed = 0;
@@ -1161,12 +1273,12 @@ export default function App() {
   const runLookupToko = async () => {
     if (!dryRunData || !authToken) return;
     if (!checkQuota("lookup")) return;
-    setLoading(true); setAutoError("");
+    setLoading(true); setAutoError(""); setStreamingResults([]); streamingResultsRef.current = []; setApifyPaused(false); apifyPauseRef.current = false; apifyAbortRef.current = false;
     const queries = editableQueries.filter(q => q.trim());
     if (!queries.length) { setAutoError("Add at least one query."); setLoading(false); return; }
     try {
       const { allResults, waves } = await runTokoApify(queries);
-      if (allResults.length === 0) { setAutoError("Tokopedia returned 0 results. Try different queries."); setLoading(false); setStage(""); return; }
+      if (allResults.length === 0) { setAutoError("Source 1 returned 0 results. Try different queries."); setLoading(false); setStage(""); return; }
       const result = buildMarginData(dryRunData, allResults, indoResults, waves);
       setIndoResults(result.indo); setWaveStatus(result.indo.wave_status || []);
       const mData = { uaeProduct: dryRunData, normalized: dryRunData, indoResults: result.indo, margins: result.margins, confidence: result.indo.confidence, medianPriceIDR: result.medianPriceIDR, lowestPriceIDR: result.lowestPriceIDR, highestPriceIDR: result.highestPriceIDR, weightClass: result.weightClass, timestamp: new Date().toISOString(), source: "apify", status: result.status };
@@ -1176,18 +1288,18 @@ export default function App() {
       setLookupView("results");
       await incrementUsage("lookups_used");
     } catch (err) { setAutoError(err.message); if (err.message.includes("429")) setCooldown(30); }
-    setLoading(false); setStage("");
+    setLoading(false); setStage(""); setStreamingResults([]); streamingResultsRef.current = [];
   };
 
   const runLookupShopee = async () => {
     if (!dryRunData || !authToken) return;
     if (!checkQuota("lookup")) return;
-    setLoading(true); setAutoError("");
+    setLoading(true); setAutoError(""); setStreamingResults([]); streamingResultsRef.current = []; setApifyPaused(false); apifyPauseRef.current = false; apifyAbortRef.current = false;
     const queries = editableQueries.filter(q => q.trim());
     if (!queries.length) { setAutoError("Add at least one query."); setLoading(false); return; }
     try {
       const { allResults, waves } = await runShopeeApify(queries);
-      if (allResults.length === 0) { setAutoError("Shopee returned 0 results. Check if actor is rented."); setLoading(false); setStage(""); return; }
+      if (allResults.length === 0) { setAutoError("Source 2 returned 0 results. Check if actor is rented."); setLoading(false); setStage(""); return; }
       const result = buildMarginData(dryRunData, allResults, indoResults, waves);
       setIndoResults(result.indo); setWaveStatus(result.indo.wave_status || []);
       const mData = { uaeProduct: dryRunData, normalized: dryRunData, indoResults: result.indo, margins: result.margins, confidence: result.indo.confidence, medianPriceIDR: result.medianPriceIDR, lowestPriceIDR: result.lowestPriceIDR, highestPriceIDR: result.highestPriceIDR, weightClass: result.weightClass, timestamp: new Date().toISOString(), source: "apify", status: result.status };
@@ -1197,7 +1309,7 @@ export default function App() {
       setLookupView("results");
       await incrementUsage("lookups_used");
     } catch (err) { setAutoError(err.message); if (err.message.includes("429")) setCooldown(30); }
-    setLoading(false); setStage("");
+    setLoading(false); setStage(""); setStreamingResults([]); streamingResultsRef.current = [];
   };
 
   const runLookupIndoSearch = async () => {
@@ -1221,7 +1333,7 @@ export default function App() {
   };
 
   const updateHistoryStatus = (i, s) => setHistory(prev => prev.map((x, idx) => idx === i ? { ...x, status: s } : x));
-  const resetLookup = () => { setDryRunData(null); setUaeSimilar(null); setIndoResults(null); setMarginData(null); setAutoError(""); setUrl(""); setEditableQueries([]); setActiveSection(0); setWaveStatus([]); setLookupView("landing"); };
+  const resetLookup = () => { setDryRunData(null); setUaeSimilar(null); setIndoResults(null); setMarginData(null); setAutoError(""); setUrl(""); setEditableQueries([]); setActiveSection(0); setWaveStatus([]); setLookupView("landing"); setScenarioBData(null); setMarginScenario("A"); setStreamingResults([]); streamingResultsRef.current = []; };
 
   const restoreFromHistory = (entry) => {
     const product = entry.uaeProduct || {};
@@ -1232,11 +1344,12 @@ export default function App() {
     setMarginData(entry.indoResults ? entry : null);
     setWaveStatus(entry.indoResults?.wave_status || []);
     setAutoError("");
-    setLookupView(entry.indoResults ? "results" : "scrape");
+    // Always go to scrape view so user can edit queries and explore missing sources
+    setLookupView("scrape");
   };
 
   // ══════════ EXPORTS ══════════
-  const exportBackup = () => { const b = new Blob([JSON.stringify({ userId, exportedAt: new Date().toISOString(), history: history.map(compressEntry) }, null, 2)], { type: "application/json" }); const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = "gt-backup-" + new Date().toISOString().slice(0, 10) + ".json"; a.click(); };
+  const exportBackup = () => { const b = new Blob([JSON.stringify({ userId, exportedAt: new Date().toISOString(), history: history.map(compressEntry) }, null, 2)], { type: "application/json" }); const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = "bandar-backup-" + new Date().toISOString().slice(0, 10) + ".json"; a.click(); };
   const importBackup = (file) => { const r = new FileReader(); r.onload = async (e) => { try { const b = JSON.parse(e.target.result); if (!b.history?.length) throw new Error("Invalid"); const exp = b.history.map(expandEntry); setHistory(exp); await saveHistory(userId, exp); alert("Restored " + exp.length + " lookups"); } catch (err) { alert("Import failed: " + err.message); } }; r.readAsText(file); };
   const backupFileRef = useRef(null);
 
@@ -1244,8 +1357,8 @@ export default function App() {
     if (!marginData) return;
     const m = marginData.margins.median; const q = getQty(); const conf = marginData.confidence;
     const confLine = conf ? '<div style="padding:8px;background:' + (conf.level === "high" ? "#e8f5ec" : conf.level === "medium" ? "#fdf8ed" : "#fef2f2") + ';border-radius:4px;margin-top:12px;text-align:center;font-size:12px"><strong>Confidence:</strong> ' + conf.score + '/100 (' + conf.level.toUpperCase() + ')' + (conf.flags?.length ? ' — ' + conf.flags.join(', ') : '') + '</div>' : '';
-    const html = '<!DOCTYPE html><html><head><title>GT Cross-Trade Analysis</title><style>body{font-family:Arial,sans-serif;padding:40px;max-width:800px;margin:0 auto;color:#1a1a1a}h1{font-size:20px;border-bottom:2px solid #1a7a3a;padding-bottom:8px}h2{font-size:14px;color:#8B6914;margin-top:24px}table{width:100%;border-collapse:collapse;margin:12px 0}td,th{padding:8px 12px;border:1px solid #ddd;text-align:left;font-size:12px}th{background:#f5f2eb;font-weight:700}.green{color:#1a7a3a}.red{color:#dc2626}.big{font-size:28px;font-weight:700;text-align:center;padding:16px}.verdict{padding:12px;text-align:center;border-radius:4px;font-weight:700;margin-top:16px}@media print{body{padding:20px}}</style></head><body>' +
-      '<h1>GT Cross-Trade Analysis</h1><p><strong>Date:</strong> ' + new Date().toLocaleDateString() + ' | <strong>FX:</strong> 1 AED = ' + Math.round(fx.AED_TO_IDR) + ' IDR</p>' +
+    const html = '<!DOCTYPE html><html><head><title>Bandar Analysis</title><style>body{font-family:Arial,sans-serif;padding:40px;max-width:800px;margin:0 auto;color:#1a1a1a}h1{font-size:20px;border-bottom:2px solid #1a7a3a;padding-bottom:8px}h2{font-size:14px;color:#8B6914;margin-top:24px}table{width:100%;border-collapse:collapse;margin:12px 0}td,th{padding:8px 12px;border:1px solid #ddd;text-align:left;font-size:12px}th{background:#f5f2eb;font-weight:700}.green{color:#1a7a3a}.red{color:#dc2626}.big{font-size:28px;font-weight:700;text-align:center;padding:16px}.verdict{padding:12px;text-align:center;border-radius:4px;font-weight:700;margin-top:16px}@media print{body{padding:20px}}</style></head><body>' +
+      '<h1>Bandar Analysis</h1><p><strong>Date:</strong> ' + new Date().toLocaleDateString() + ' | <strong>FX:</strong> 1 AED = ' + Math.round(fx.AED_TO_IDR) + ' IDR</p>' +
       '<h2>Product</h2><table><tr><th>Name</th><td>' + escapeHtml(marginData.uaeProduct?.product_name) + '</td></tr><tr><th>Bahasa</th><td>' + escapeHtml(marginData.normalized?.clean_name_id) + '</td></tr><tr><th>Source</th><td>' + (marginData.uaeProduct?.source || "") + ' | AED ' + (marginData.uaeProduct?.price_aed || 0) + (marginData.uaeProduct?.pack_quantity > 1 ? ' (' + marginData.uaeProduct.pack_quantity + '-pack)' : '') + '</td></tr></table>' +
       '<h2>Indonesia Market (Median of ' + (marginData.indoResults?.price_stats?.num_results || 0) + ' listings)</h2><table><tr><th></th><th>Lowest</th><th>Median</th><th>Highest</th></tr><tr><th>IDR</th><td>' + fmtIDR(marginData.lowestPriceIDR) + '</td><td>' + fmtIDR(marginData.medianPriceIDR) + '</td><td>' + fmtIDR(marginData.highestPriceIDR) + '</td></tr></table>' + confLine +
       '<h2>Margin (\u00d7' + q + ')</h2><table><tr><th>Item</th><th>USD</th><th>AED</th><th>IDR</th></tr>' +
@@ -1261,16 +1374,16 @@ export default function App() {
       '<script>window.onload=()=>window.print()<\/script></body></html>';
     const w = window.open("", "_blank"); w.document.write(html); w.document.close();
   };
-  const exportQuickCSV = () => { if (!history.length) return; const h = ["Date","Product","AED","Bahasa","Category","Indo Median IDR","Margin %","Status"]; const r = history.map(x => [x.timestamp?.slice(0,10)||"",'"'+(x.uaeProduct?.product_name||"")+'"',x.uaeProduct?.price_aed||0,'"'+(x.normalized?.clean_name_id||"")+'"',x.normalized?.category||"",x.medianPriceIDR||0,(x.margins?.median?.margin||0).toFixed(1),x.status||""].join(",")); const b = new Blob([[h.join(","),...r].join("\n")], { type: "text/csv" }); const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = "gt-quick-" + new Date().toISOString().slice(0, 10) + ".csv"; a.click(); };
-  const exportStructuredCSV = () => { if (!history.length) return; const headers = ["Date","Product EN","Product ID","Brand","Category","Weight","Source","Pack","AED","USD","Indo Med IDR","Indo Low IDR","Indo Hi IDR","Freight USD","Customs USD","Last Mile USD","Total Cost USD","Margin Best%","Margin Med%","Margin Worst%","Conf Score","Status"]; const rows = history.map(h => { const m = h.margins?.median || {}; return [h.timestamp?.slice(0,10)||"",'"'+(h.uaeProduct?.product_name||"").replace(/"/g,'""')+'"','"'+(h.normalized?.clean_name_id||"").replace(/"/g,'""')+'"','"'+(h.uaeProduct?.brand||"")+'"',h.normalized?.category||"",h.weightClass||"",h.uaeProduct?.source||"",h.uaeProduct?.pack_quantity||1,h.uaeProduct?.price_aed||0,(m.uaeUSD||0).toFixed(2),h.medianPriceIDR||0,h.lowestPriceIDR||0,h.highestPriceIDR||0,(m.freightUSD||0).toFixed(2),(m.dutyUSD||0).toFixed(2),(m.lastMileUSD||0).toFixed(2),(m.totalUSD||0).toFixed(2),(h.margins?.best?.margin||0).toFixed(1),(h.margins?.median?.margin||0).toFixed(1),(h.margins?.worst?.margin||0).toFixed(1),h.confidence?.score||0,h.status||""].join(","); }); const blob = new Blob([[headers.join(","), ...rows].join("\n")], { type: "text/csv" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "gt-analysis-" + new Date().toISOString().slice(0, 10) + ".csv"; a.click(); };
-  const exportBrainstormCSV = (products, label) => { if (!products.length) return; const h = ["Name","AED","Rating","Reviews","Brand","Department","Sub-cat","Source","Branded","Indo Signal","Signal Words"]; const rows = products.map(p => ['"'+(p.name||"").replace(/"/g,'""')+'"',p.price_aed||0,p.rating||0,p.reviews||0,'"'+(p.brand||"")+'"','"'+(p.department||"")+'"','"'+(p.subcategory||"")+'"',p.source||"",p.isBranded?"Y":"N",p.indoSignal?.score||0,'"'+(p.indoSignal?.matched||[]).join("; ")+'"'].join(",")); const blob = new Blob([[h.join(","),...rows].join("\n")], { type: "text/csv" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "gt-brainstorm-" + label + "-" + new Date().toISOString().slice(0, 10) + ".csv"; a.click(); };
+  const exportQuickCSV = () => { if (!history.length) return; const h = ["Date","Product","AED","Bahasa","Category","Indo Median IDR","Margin %","Status"]; const r = history.map(x => [x.timestamp?.slice(0,10)||"",'"'+(x.uaeProduct?.product_name||"")+'"',x.uaeProduct?.price_aed||0,'"'+(x.normalized?.clean_name_id||"")+'"',x.normalized?.category||"",x.medianPriceIDR||0,(x.margins?.median?.margin||0).toFixed(1),x.status||""].join(",")); const b = new Blob([[h.join(","),...r].join("\n")], { type: "text/csv" }); const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = "bandar-quick-" + new Date().toISOString().slice(0, 10) + ".csv"; a.click(); };
+  const exportStructuredCSV = () => { if (!history.length) return; const headers = ["Date","Product EN","Product ID","Brand","Category","Weight","Source","Pack","AED","USD","Indo Med IDR","Indo Low IDR","Indo Hi IDR","Freight USD","Customs USD","Last Mile USD","Total Cost USD","Margin Best%","Margin Med%","Margin Worst%","Conf Score","Status"]; const rows = history.map(h => { const m = h.margins?.median || {}; return [h.timestamp?.slice(0,10)||"",'"'+(h.uaeProduct?.product_name||"").replace(/"/g,'""')+'"','"'+(h.normalized?.clean_name_id||"").replace(/"/g,'""')+'"','"'+(h.uaeProduct?.brand||"")+'"',h.normalized?.category||"",h.weightClass||"",h.uaeProduct?.source||"",h.uaeProduct?.pack_quantity||1,h.uaeProduct?.price_aed||0,(m.uaeUSD||0).toFixed(2),h.medianPriceIDR||0,h.lowestPriceIDR||0,h.highestPriceIDR||0,(m.freightUSD||0).toFixed(2),(m.dutyUSD||0).toFixed(2),(m.lastMileUSD||0).toFixed(2),(m.totalUSD||0).toFixed(2),(h.margins?.best?.margin||0).toFixed(1),(h.margins?.median?.margin||0).toFixed(1),(h.margins?.worst?.margin||0).toFixed(1),h.confidence?.score||0,h.status||""].join(","); }); const blob = new Blob([[headers.join(","), ...rows].join("\n")], { type: "text/csv" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "bandar-analysis-" + new Date().toISOString().slice(0, 10) + ".csv"; a.click(); };
+  const exportBrainstormCSV = (products, label) => { if (!products.length) return; const h = ["Name","AED","Rating","Reviews","Brand","Department","Sub-cat","Source","Branded","Indo Signal","Signal Words"]; const rows = products.map(p => ['"'+(p.name||"").replace(/"/g,'""')+'"',p.price_aed||0,p.rating||0,p.reviews||0,'"'+(p.brand||"")+'"','"'+(p.department||"")+'"','"'+(p.subcategory||"")+'"',p.source||"",p.isBranded?"Y":"N",p.indoSignal?.score||0,'"'+(p.indoSignal?.matched||[]).join("; ")+'"'].join(",")); const blob = new Blob([[h.join(","),...rows].join("\n")], { type: "text/csv" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "bandar-brainstorm-" + label + "-" + new Date().toISOString().slice(0, 10) + ".csv"; a.click(); };
 
   // ══════════ STYLES ══════════
   const inputStyle = { width: "100%", padding: "10px 12px", background: c.input, border: "1px solid " + c.border2, color: c.text, fontFamily: "monospace", fontSize: "13px", borderRadius: "3px", outline: "none" };
   const btnStyle = { padding: "10px 24px", background: c.gold, color: c.btnText, border: "none", cursor: "pointer", fontFamily: "'Inconsolata',monospace", fontSize: "12px", fontWeight: 700, letterSpacing: "0.5px", textTransform: "uppercase", borderRadius: "3px" };
   const btnSec = { ...btnStyle, background: "transparent", color: c.gold, border: "1px solid " + c.gold };
   const btnGreen = { ...btnStyle, background: c.green, color: "#fff" };
-  const secStyle = { padding: "24px", background: c.surface, border: "1px solid " + c.border2, borderTop: "none", minHeight: "420px", borderRadius: "0 0 4px 4px" };
+  const secStyle = { padding: "20px", background: c.surface, border: "1px solid " + c.border2, borderTop: "none", minHeight: "420px", borderRadius: "0 0 4px 4px" };
   const candidates = history.filter(h => (h.margins?.median?.margin || 0) >= MARGIN_THRESHOLD.candidate);
 
   // Brainstorm filtered products
@@ -1340,9 +1453,22 @@ export default function App() {
 
   // ══════════ RENDER ══════════
   return (
-    <div style={{ minHeight: "100vh", background: c.bg, color: c.text, fontFamily: "'Inconsolata',monospace", padding: "24px", transition: "background 0.3s" }}>
+    <div className="bandar-root" style={{ minHeight: "100vh", background: c.bg, color: c.text, fontFamily: "'Inconsolata',monospace", padding: "24px", transition: "background 0.3s" }}>
       <link href="https://fonts.googleapis.com/css2?family=Lora:wght@400;500;600;700&family=Inconsolata:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}
+        @media(max-width:640px){
+          .bandar-root{padding:12px !important}
+          .bandar-header{flex-direction:column !important; align-items:flex-start !important; gap:10px !important}
+          .bandar-header-stats{flex-wrap:wrap !important; gap:8px !important}
+          .bandar-tabs{overflow-x:auto !important; -webkit-overflow-scrolling:touch}
+          .bandar-tabs button{font-size:10px !important; padding:8px 10px !important; white-space:nowrap}
+          .bandar-grid4{grid-template-columns:repeat(2,1fr) !important}
+          .bandar-grid3{grid-template-columns:1fr !important}
+          .bandar-price-grid{grid-template-columns:1.5fr 1fr 1fr !important}
+          .bandar-route-grid{grid-template-columns:1.5fr 0.7fr 0.7fr !important; min-width:0 !important}
+        }
+      `}</style>
       {showCookieWizard && <CookieWizard c={c} onClose={() => setShowCookieWizard(false)} onSave={ck => { setShopeeCookie(ck); setShopeeCookieUpdatedAt(Date.now()); }} />}
 
       {!unlocked ? (
@@ -1350,8 +1476,8 @@ export default function App() {
           <button onClick={toggleTheme} style={{ position: "absolute", top: 0, right: 0, background: "transparent", border: "1px solid " + c.border2, color: c.dim, fontFamily: "monospace", fontSize: "11px", padding: "6px 12px", borderRadius: "4px", cursor: "pointer" }}>{dark ? "\u2600" : "\ud83c\udf19"}</button>
           <div style={{ width: "380px", padding: "40px", background: c.surface, border: "1px solid " + c.border, borderRadius: "8px", textAlign: "center" }}>
             <div style={{ fontSize: "32px", marginBottom: "12px", opacity: 0.3 }}>{"\ud83d\udd12"}</div>
-            <h2 style={{ fontFamily: "'Lora',serif", fontSize: "24px", fontWeight: 500, color: c.gold, marginBottom: "4px" }}>GT Cross-Trade</h2>
-            <p style={{ fontSize: "11px", color: c.dimmer, marginBottom: "24px" }}>{authMode === "reset" ? "Set your new password" : "UAE \u2190 Indonesia Trade Intelligence"}</p>
+            <h2 style={{ fontFamily: "'Lora',serif", fontSize: "24px", fontWeight: 500, color: c.gold, marginBottom: "4px" }}>Bandar</h2>
+            <p style={{ fontSize: "11px", color: c.dimmer, marginBottom: "24px" }}>{authMode === "reset" ? "Set your new password" : "Cross-border Trade Intelligence"}</p>
             {authMode === "reset" ? <>
               <input type="password" value={authNewPassword} onChange={e => { setAuthNewPassword(e.target.value); setAuthError(""); }} onKeyDown={e => e.key === "Enter" && handleResetPassword()} placeholder="New password (6+ characters)" autoFocus style={{ width: "100%", padding: "10px 14px", background: c.input, border: "1px solid " + (authError && !authError.includes("updated") ? c.red : c.border2), color: c.text, fontFamily: "monospace", fontSize: "12px", borderRadius: "4px", outline: "none", marginBottom: "12px" }} />
               {authError && <div style={{ fontSize: "11px", color: authError.includes("updated") ? c.green : c.red, marginBottom: "12px", lineHeight: 1.5 }}>{authError}</div>}
@@ -1377,12 +1503,12 @@ export default function App() {
 
       {/* ══════════ HEADER ══════════ */}
       <div style={{ marginBottom: "16px", borderBottom: "1px solid " + c.border, paddingBottom: "12px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+        <div className="bandar-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
           <div>
-            <h1 style={{ fontFamily: "'Lora',serif", fontSize: "28px", fontWeight: 500, color: c.gold, margin: 0 }}>GT Cross-Trade <span style={{ fontSize: "12px", color: c.dimmer, fontFamily: "monospace" }}>v5.1</span></h1>
+            <h1 style={{ fontFamily: "'Lora',serif", fontSize: "28px", fontWeight: 500, color: c.gold, margin: 0 }}>Bandar <span style={{ fontSize: "12px", color: c.dimmer, fontFamily: "monospace" }}>v5.2</span></h1>
             <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "4px", letterSpacing: "2px", textTransform: "uppercase" }}>UAE {"\u2190"} Indonesia {"\u00b7"} {authUser?.email?.split("@")[0]} {isAdmin && <span style={{ color: c.red }}>{"\u00b7 ADMIN"}</span>} {"\u00b7"} {userProfile ? (TIER_LIMITS[userProfile.role]?.label || userProfile.role) : ""}{isAdmin && <>{" \u00b7 "}{fxUpdated ? "FX " + fxUpdated.toLocaleDateString() : "FX: defaults"}{" \u00b7 "}<span style={{ color: supabaseReady ? c.green : c.darkGold }}>{supabaseReady ? "\u25cf DB" : "\u25cb local"}</span></>}</div>
           </div>
-          <div style={{ display: "flex", gap: "12px", fontSize: "11px", alignItems: "flex-end" }}>
+          <div className="bandar-header-stats" style={{ display: "flex", gap: "12px", fontSize: "11px", alignItems: "flex-end" }}>
             <div style={{ textAlign: "right" }}><div style={{ color: c.dimmer }}>LOOKUPS</div><div style={{ color: c.gold, fontSize: "16px", fontWeight: 700 }}>{history.length}</div></div>
             <div style={{ textAlign: "right" }}><div style={{ color: c.dimmer }}>CANDIDATES</div><div style={{ color: c.green, fontSize: "16px", fontWeight: 700 }}>{candidates.length}</div></div>
             {userProfile && !isAdmin && <div style={{ textAlign: "right" }}><div style={{ color: c.dimmer }}>SCRAPES</div><div style={{ color: c.gold, fontSize: "11px", fontWeight: 600 }}>{userProfile.lookups_used}/{TIER_LIMITS[userProfile.role]?.lookups || "?"}</div></div>}
@@ -1429,7 +1555,7 @@ export default function App() {
       </div>}
 
       {/* ══════════ TAB BAR ══════════ */}
-      <div style={{ display: "flex", gap: "2px", borderBottom: "1px solid " + c.border2 }}>
+      <div className="bandar-tabs" style={{ display: "flex", gap: "2px", borderBottom: "1px solid " + c.border2 }}>
         {[
           ...(isAdmin ? [{ id: "brainstorm", label: "\ud83e\udde0 BRAINSTORM" }] : []),
           { id: "discover", label: "\ud83d\udd0d DISCOVER" },
@@ -1623,7 +1749,7 @@ export default function App() {
           return (
             <div style={{ marginBottom: "16px", padding: "12px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px" }}>
               {discSelectedIdx >= 0 && discHistory[discSelectedIdx] && <div style={{ fontSize: "10px", color: c.gold, fontWeight: 700, marginBottom: "10px", letterSpacing: "0.5px" }}>{"\ud83d\udcca"} {discHistory[discSelectedIdx].keyword.toUpperCase()} — {discAllProducts.length} products {discHistory[discSelectedIdx]?.filtered > 0 && <span style={{ color: c.dimmer, fontWeight: 400 }}>({discHistory[discSelectedIdx].filtered} zero-review filtered)</span>}</div>}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "8px", marginBottom: "10px" }}>
+              <div className="bandar-grid4" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "8px", marginBottom: "10px" }}>
                 {[
                   { l: "LOWEST", v: lowest, cl: c.green },
                   { l: "MEDIAN", v: median, cl: c.gold },
@@ -1663,20 +1789,20 @@ export default function App() {
 
       {/* ══════════ LOOKUP TAB ══════════ */}
       {mode === "auto" && <div style={secStyle}>
-        {loading && stage && <div style={{ marginBottom: "12px" }}><div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}><Spinner /><span style={{ fontSize: "12px", color: c.gold, flex: 1 }}>{stage}</span><button onClick={() => { apifyAbortRef.current = true; }} style={{ padding: "4px 12px", background: "transparent", border: "1px solid " + c.red, color: c.red, borderRadius: "3px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", fontWeight: 700 }}>{"\u25a0"} STOP</button></div>{progress > 0 && <div style={{ width: "100%", height: "3px", background: c.border, borderRadius: "2px" }}><div style={{ width: progress + "%", height: "100%", background: c.gold, borderRadius: "2px", transition: "width 0.3s" }} /></div>}</div>}
+        {loading && stage && <div style={{ marginBottom: "12px" }}><div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}><Spinner /><span style={{ fontSize: "12px", color: c.gold, flex: 1 }}>{stage}</span><div style={{ display: "flex", gap: "4px" }}>{!apifyPaused ? <button onClick={() => { apifyPauseRef.current = true; setApifyPaused(true); }} style={{ padding: "4px 10px", background: "transparent", border: "1px solid " + c.darkGold, color: c.darkGold, borderRadius: "3px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", fontWeight: 700 }}>{"\u23f8"} PAUSE</button> : <button onClick={() => { apifyPauseRef.current = false; setApifyPaused(false); }} style={{ padding: "4px 10px", background: c.green, border: "1px solid " + c.green, color: "#fff", borderRadius: "3px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", fontWeight: 700 }}>{"\u25b6"} CONTINUE</button>}<button onClick={() => { apifyAbortRef.current = true; apifyPauseRef.current = false; setApifyPaused(false); }} style={{ padding: "4px 10px", background: "transparent", border: "1px solid " + c.red, color: c.red, borderRadius: "3px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", fontWeight: 700 }}>{"\u25a0"} STOP</button></div></div>{progress > 0 && <div style={{ width: "100%", height: "3px", background: c.border, borderRadius: "2px" }}><div style={{ width: progress + "%", height: "100%", background: apifyPaused ? c.darkGold : c.gold, borderRadius: "2px", transition: "width 0.3s" }} /></div>}{streamingResults.length > 0 && <div style={{ marginTop: "8px", padding: "8px 10px", background: c.surface2, border: "1px solid " + c.green + "44", borderRadius: "4px", fontSize: "10px", color: c.green }}>{"\u26a1"} {streamingResults.length} results found so far{streamingResults.filter(r => r.source === "Tokopedia").length > 0 && " | Source 1: " + streamingResults.filter(r => r.source === "Tokopedia").length}{streamingResults.filter(r => r.source === "Shopee").length > 0 && " | Source 2: " + streamingResults.filter(r => r.source === "Shopee").length}</div>}</div>}
         {autoError && <div style={{ padding: "12px", background: dark ? "#3a1a1a" : "#FEF2F2", border: "1px solid " + c.red + "44", borderRadius: "4px", marginBottom: "12px", fontSize: "12px", color: c.red }}>{autoError}</div>}
 
         {/* ── LANDING VIEW ── */}
         {lookupView === "landing" && <>
           <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
-            <input type="text" value={url} onChange={e => setUrl(e.target.value)} onKeyDown={e => e.key === "Enter" && !loading && runDryRun()} placeholder="Paste Amazon.ae product URL..." style={{ ...inputStyle, flex: 1, padding: "12px 14px" }} />
+            <input type="text" value={url} onChange={e => setUrl(e.target.value)} onKeyDown={e => e.key === "Enter" && !loading && runDryRun()} placeholder="Paste any Amazon or amzn.to product URL..." style={{ ...inputStyle, flex: 1, padding: "12px 14px" }} />
             <button onClick={runDryRun} disabled={loading || !url.trim() || cooldown > 0} style={{ ...btnStyle, padding: "12px 20px", fontSize: "11px", opacity: loading || !url.trim() ? 0.4 : 1, whiteSpace: "nowrap" }}>{cooldown > 0 ? "WAIT " + cooldown + "s" : loading ? "READING..." : "QUICK CHECK"}</button>
           </div>
 
           {!loading && !autoError && <div style={{ textAlign: "center", padding: "30px 20px" }}>
             <div style={{ fontSize: "36px", marginBottom: "10px", opacity: 0.15 }}>{"\u26a1"}</div>
-            <div style={{ fontSize: "12px", color: c.dim }}>Paste an Amazon.ae product URL to analyze trade potential</div>
-            <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "6px" }}>Extracts price, translates to Bahasa, searches Indonesian marketplaces, calculates margins</div>
+            <div style={{ fontSize: "12px", color: c.dim }}>Paste any Amazon product URL to analyze trade potential</div>
+            <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "6px" }}>Supports amazon.ae, .com, .co.uk, .de, .sa, amzn.to short links, and more</div>
           </div>}
 
           {/* ── RECENT SEARCHES ── */}
@@ -1695,13 +1821,15 @@ export default function App() {
                   const m = h.margins?.median?.margin || 0;
                   const tokoCount = (h.indoResults?.results || []).filter(r => r.source === "Tokopedia").length;
                   const shopeeCount = (h.indoResults?.results || []).filter(r => r.source === "Shopee").length;
+                  const missingSource = tokoCount === 0 && shopeeCount > 0 ? "Source 1" : shopeeCount === 0 && tokoCount > 0 ? "Source 2" : null;
                   return <div key={i} onClick={() => restoreFromHistory(h)} style={{ padding: "10px 12px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: "11px", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.uaeProduct?.product_name}</div>
-                      <div style={{ display: "flex", gap: "6px", marginTop: "4px", fontSize: "9px", color: c.dimmer }}>
+                      <div style={{ display: "flex", gap: "6px", marginTop: "4px", fontSize: "9px", color: c.dimmer, flexWrap: "wrap", alignItems: "center" }}>
                         <span style={{ color: c.gold }}>AED {h.uaeProduct?.price_aed}</span>
-                        {tokoCount > 0 && <span style={{ color: c.green }}>T:{tokoCount}</span>}
-                        {shopeeCount > 0 && <span style={{ color: "#EE4D2D" }}>S:{shopeeCount}</span>}
+                        {tokoCount > 0 && <span style={{ color: c.green, background: dark ? "#0D2E1A" : "#E8F5EC", padding: "1px 4px", borderRadius: "2px" }}>S1:{tokoCount}</span>}
+                        {shopeeCount > 0 && <span style={{ color: "#EE4D2D", background: dark ? "#2D1508" : "#FFF0EC", padding: "1px 4px", borderRadius: "2px" }}>S2:{shopeeCount}</span>}
+                        {missingSource && <span style={{ color: c.darkGold, fontSize: "8px", fontStyle: "italic" }}>+ tap to explore {missingSource}</span>}
                         <span>{h.timestamp?.slice(0, 10)}</span>
                       </div>
                     </div>
@@ -1742,14 +1870,29 @@ export default function App() {
             </div>
           </div>
           {!loading && <div style={{ padding: "14px", background: c.surface2, border: "1px solid " + c.green + "44", borderRadius: "4px", marginBottom: "10px" }}>
-            {indoResults?.results?.length > 0 && <div style={{ fontSize: "10px", color: c.green, fontFamily: "monospace", marginBottom: "10px" }}>{"\u2713"} {indoResults.results.length} listings loaded{indoResults.results.filter(r => r.source === "Tokopedia").length > 0 && " | Toko: " + indoResults.results.filter(r => r.source === "Tokopedia").length}{indoResults.results.filter(r => r.source === "Shopee").length > 0 && " | Shopee: " + indoResults.results.filter(r => r.source === "Shopee").length}</div>}
-            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
-              {(isAdmin ? indoMode : "apify") === "apify" ? <>
-                <button onClick={runLookupToko} disabled={editableQueries.filter(q => q.trim()).length === 0 || loading} style={{ ...btnGreen, padding: "12px 24px", fontSize: "12px", opacity: (editableQueries.filter(q => q.trim()).length === 0 || loading) ? 0.4 : 1 }}>{"\ud83d\udd0d"} SCRAPE TOKOPEDIA</button>
-                <button onClick={runLookupShopee} disabled={editableQueries.filter(q => q.trim()).length === 0 || loading} style={{ ...btnGreen, padding: "12px 24px", fontSize: "12px", background: "#EE4D2D", opacity: (editableQueries.filter(q => q.trim()).length === 0 || loading) ? 0.4 : 1 }}>{"\ud83d\udd0d"} SCRAPE SHOPEE</button>
-              </> : <button onClick={runLookupIndoSearch} disabled={editableQueries.filter(q => q.trim()).length === 0 || loading} style={{ ...btnGreen, padding: "12px 36px", fontSize: "12px", opacity: (editableQueries.filter(q => q.trim()).length === 0 || loading) ? 0.4 : 1 }}>{"\ud83d\udd0d"} SEARCH INDONESIA</button>}
-              {indoResults && <button onClick={() => setLookupView("results")} style={{ ...btnStyle, padding: "12px 24px", fontSize: "12px" }}>VIEW RESULTS {"\u2192"}</button>}
-            </div>
+            {indoResults?.results?.length > 0 && <div style={{ fontSize: "10px", color: c.green, fontFamily: "monospace", marginBottom: "10px" }}>{"\u2713"} {indoResults.results.length} listings loaded{indoResults.results.filter(r => r.source === "Tokopedia").length > 0 && " | Source 1: " + indoResults.results.filter(r => r.source === "Tokopedia").length}{indoResults.results.filter(r => r.source === "Shopee").length > 0 && " | Source 2: " + indoResults.results.filter(r => r.source === "Shopee").length}</div>}
+            {(() => {
+              const hasTokoResults = (indoResults?.results || []).filter(r => r.source === "Tokopedia").length > 0;
+              const hasShopeeResults = (indoResults?.results || []).filter(r => r.source === "Shopee").length > 0;
+              const hasBoth = hasTokoResults && hasShopeeResults;
+              const hasOnlyToko = hasTokoResults && !hasShopeeResults;
+              const hasOnlyShopee = hasShopeeResults && !hasTokoResults;
+              const hasNone = !hasTokoResults && !hasShopeeResults;
+              const isApifyMode = (isAdmin ? indoMode : "apify") === "apify";
+              return <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
+                {isApifyMode ? <>
+                  {/* Show primary explore button if nothing scraped or to re-scrape */}
+                  {(hasNone || hasOnlyShopee) && <button onClick={runLookupToko} disabled={editableQueries.filter(q => q.trim()).length === 0 || loading} style={{ ...btnGreen, padding: "12px 24px", fontSize: "12px", opacity: (editableQueries.filter(q => q.trim()).length === 0 || loading) ? 0.4 : 1 }}>{"\ud83d\udd0d"} {hasOnlyShopee ? "Explore Source 1" : "Explore Source 1"}</button>}
+                  {(hasNone || hasOnlyToko) && <button onClick={runLookupShopee} disabled={editableQueries.filter(q => q.trim()).length === 0 || loading} style={{ ...btnGreen, padding: "12px 24px", fontSize: "12px", background: "#EE4D2D", opacity: (editableQueries.filter(q => q.trim()).length === 0 || loading) ? 0.4 : 1 }}>{"\ud83d\udd0d"} {hasOnlyToko ? "Explore Source 2" : "Explore Source 2"}</button>}
+                  {/* If both are scraped, still let them re-explore */}
+                  {hasBoth && <>
+                    <button onClick={runLookupToko} disabled={editableQueries.filter(q => q.trim()).length === 0 || loading} style={{ ...btnSec, padding: "10px 18px", fontSize: "11px", opacity: (editableQueries.filter(q => q.trim()).length === 0 || loading) ? 0.4 : 1 }}>{"\u21bb"} Re-explore Source 1</button>
+                    <button onClick={runLookupShopee} disabled={editableQueries.filter(q => q.trim()).length === 0 || loading} style={{ ...btnSec, padding: "10px 18px", fontSize: "11px", color: "#EE4D2D", borderColor: "#EE4D2D", opacity: (editableQueries.filter(q => q.trim()).length === 0 || loading) ? 0.4 : 1 }}>{"\u21bb"} Re-explore Source 2</button>
+                  </>}
+                </> : <button onClick={runLookupIndoSearch} disabled={editableQueries.filter(q => q.trim()).length === 0 || loading} style={{ ...btnGreen, padding: "12px 36px", fontSize: "12px", opacity: (editableQueries.filter(q => q.trim()).length === 0 || loading) ? 0.4 : 1 }}>{"\ud83d\udd0d"} EXPLORE INDONESIA</button>}
+                {indoResults && <button onClick={() => setLookupView("results")} style={{ ...btnStyle, padding: "12px 24px", fontSize: "12px" }}>VIEW RESULTS {"\u2192"}</button>}
+              </div>;
+            })()}
           </div>}
           <div style={{ display: "flex", justifyContent: "center", marginTop: "8px" }}>
             <button onClick={resetLookup} style={{ ...btnSec, padding: "6px 16px", fontSize: "9px" }}>{"\u2190"} NEW SEARCH</button>
@@ -1775,9 +1918,9 @@ export default function App() {
                 <div style={{ fontSize: "11px", fontWeight: 700, color: c.dim }}>{indoResults.confidence.score}/100</div>
               </div>
             )}
-            {indoResults.price_stats && <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: "8px", marginBottom: "12px" }}>
+            {indoResults.price_stats && <div className="bandar-grid4" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: "8px", marginBottom: "12px" }}>
               {[{ l: "LOWEST", v: indoResults.price_stats.lowest_idr, cl: c.green },{ l: "MEDIAN", v: indoResults.price_stats.median_idr, cl: c.gold },{ l: "AVERAGE", v: indoResults.price_stats.average_idr, cl: c.dim },{ l: "HIGHEST", v: indoResults.price_stats.highest_idr, cl: c.red }].map(s => (
-                <div key={s.l} style={{ padding: "8px", background: c.cardBg, border: "1px solid " + c.border, borderRadius: "4px", textAlign: "center" }}><div style={{ fontSize: "8px", color: c.dimmer, letterSpacing: "1px", marginBottom: "3px" }}>{s.l}</div><div style={{ fontSize: "13px", fontWeight: 700, color: s.cl }}>{fmtIDR(s.v)}</div><div style={{ fontSize: "9px", color: c.dimmest }}>{fmtAED(s.v * fx.IDR_TO_AED)}</div></div>
+                <div key={s.l} style={{ padding: "8px", background: c.cardBg, border: "1px solid " + c.border, borderRadius: "4px", textAlign: "center" }}><div style={{ fontSize: "8px", color: c.dimmer, letterSpacing: "1px", marginBottom: "3px" }}>{s.l}</div><div style={{ fontSize: "13px", fontWeight: 700, color: s.cl }}>{fmtIDR(s.v)}</div><div style={{ fontSize: "11px", color: c.gold, fontWeight: 600, marginTop: "2px" }}>{fmtAED(s.v * fx.IDR_TO_AED)}</div></div>
               ))}
             </div>}
             <div style={{ maxHeight: "400px", overflowY: "auto" }}>
@@ -1791,7 +1934,7 @@ export default function App() {
                     {r.seller && <span style={{ color: c.dimmest }}>{" \u00b7 "}{r.seller}</span>}
                   </div>
                   <div><Badge text={r.source || "Tokopedia"} color={r.source === "Shopee" ? "#EE4D2D" : c.green} bg={r.source === "Shopee" ? (dark ? "#2D1508" : "#FFF0EC") : (dark ? "#0D2E1A" : "#E8F5EC")} /></div>
-                  <div style={{ color: c.gold, fontWeight: 700, textAlign: "right" }}>{fmtIDR(r.price_idr)}</div>
+                  <div style={{ color: c.gold, fontWeight: 700, textAlign: "right" }}>{fmtIDR(r.price_idr)}<div style={{ fontSize: "9px", color: c.dim, fontWeight: 400 }}>{fmtAED(r.price_idr * fx.IDR_TO_AED)}</div></div>
                   <div style={{ color: r.sold ? c.darkGold : c.dimmest, textAlign: "right", fontSize: "10px" }}>{r.sold || "\u2014"}</div>
                 </div>
               ))}
@@ -1799,6 +1942,18 @@ export default function App() {
           </SectionToggle>}
 
           {marginData && displayMargins && <SectionToggle index={2} title="Margin Analysis" icon={"\ud83d\udcca"}>
+            {/* Scenario selector */}
+            <div style={{ marginBottom: "14px", display: "flex", gap: "0", border: "1px solid " + c.border2, borderRadius: "4px", overflow: "hidden" }}>
+              <button onClick={() => setMarginScenario("A")} style={{ flex: 1, padding: "10px 12px", background: marginScenario === "A" ? c.gold : "transparent", color: marginScenario === "A" ? c.btnText : c.dim, border: "none", cursor: "pointer", fontFamily: "monospace", fontSize: "10px", fontWeight: 700, textAlign: "left" }}>
+                <div>SCENARIO A</div>
+                <div style={{ fontSize: "8px", fontWeight: 400, marginTop: "2px", opacity: 0.8 }}>Link price vs Indonesia median/average</div>
+              </button>
+              <button onClick={() => { setMarginScenario("B"); if (!scenarioBData && !scenarioBLoading) loadScenarioB(); }} style={{ flex: 1, padding: "10px 12px", background: marginScenario === "B" ? c.gold : "transparent", color: marginScenario === "B" ? c.btnText : c.dim, border: "none", borderLeft: "1px solid " + c.border2, cursor: "pointer", fontFamily: "monospace", fontSize: "10px", fontWeight: 700, textAlign: "left" }}>
+                <div>SCENARIO B</div>
+                <div style={{ fontSize: "8px", fontWeight: 400, marginTop: "2px", opacity: 0.8 }}>Similar items regional avg vs Indonesia</div>
+              </button>
+            </div>
+
             {/* Freight mode toggle */}
             <div style={{ marginBottom: "14px", padding: "10px 12px", background: c.cardBg, border: "1px solid " + c.border, borderRadius: "4px" }}>
               <div style={{ fontSize: "9px", color: c.dimmer, letterSpacing: "1px", marginBottom: "8px", textTransform: "uppercase" }}>FREIGHT MODE</div>
@@ -1812,61 +1967,156 @@ export default function App() {
               </div>
               <div style={{ fontSize: "9px", color: c.dimmer, marginTop: "6px", fontStyle: "italic" }}>{FREIGHT_MODES[freightMode]?.note || ""}</div>
             </div>
-            {/* Route comparison table */}
-            {routeComparisons.length > 0 && <div style={{ marginBottom: "14px" }}>
-              <div style={{ fontSize: "9px", color: c.dimmer, letterSpacing: "1px", marginBottom: "8px", textTransform: "uppercase" }}>ROUTE COMPARISON (MEDIAN PRICE)</div>
-              <div style={{ overflowX: "auto" }}>
-                <div style={{ display: "grid", gridTemplateColumns: "1.8fr 0.8fr 0.6fr 0.6fr 0.7fr 0.7fr", gap: "4px", padding: "6px 0", borderBottom: "1px solid " + c.border2, fontSize: "8px", color: c.dimmer, textTransform: "uppercase", minWidth: "550px" }}>
-                  <div>Route</div><div>Transit</div><div>Rate</div><div>Freight</div><div>Margin</div><div>Profit/unit</div>
-                </div>
-                {routeComparisons.map(rt => {
-                  const isActive = freightMode === rt.mode;
-                  const mColor = marginColor(rt.margin);
-                  return (
-                    <div key={rt.id} onClick={() => setFreightMode(rt.mode)} style={{ display: "grid", gridTemplateColumns: "1.8fr 0.8fr 0.6fr 0.6fr 0.7fr 0.7fr", gap: "4px", padding: "7px 0", borderBottom: "1px solid " + c.border, fontSize: "11px", cursor: "pointer", background: isActive ? (dark ? "#1A1A10" : "#FFFBF0") : "transparent", minWidth: "550px", borderLeft: rt.highlight ? "3px solid " + c.gold : "3px solid transparent", paddingLeft: "8px" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                        <span>{rt.icon}</span>
-                        <span style={{ fontSize: "10px", fontWeight: rt.highlight ? 600 : 400, color: rt.highlight ? c.gold : c.text }}>{rt.label}</span>
-                        {rt.highlight && <span style={{ fontSize: "7px", color: c.gold, background: dark ? "#2A2210" : "#FDF8ED", padding: "1px 4px", borderRadius: "2px", border: "1px solid " + c.gold + "44" }}>KCT</span>}
+
+            {/* ═══ SCENARIO A: Link price vs Indo ═══ */}
+            {marginScenario === "A" && <>
+              {/* Route comparison table */}
+              {routeComparisons.length > 0 && <div style={{ marginBottom: "14px" }}>
+                <div style={{ fontSize: "9px", color: c.dimmer, letterSpacing: "1px", marginBottom: "8px", textTransform: "uppercase" }}>ROUTE COMPARISON (MEDIAN PRICE)</div>
+                <div style={{ overflowX: "auto" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1.8fr 0.8fr 0.6fr 0.6fr 0.7fr 0.7fr", gap: "4px", padding: "6px 0", borderBottom: "1px solid " + c.border2, fontSize: "8px", color: c.dimmer, textTransform: "uppercase", minWidth: "550px" }}>
+                    <div>Route</div><div>Transit</div><div>Rate</div><div>Freight</div><div>Margin</div><div>Profit/unit</div>
+                  </div>
+                  {routeComparisons.map(rt => {
+                    const isActive = freightMode === rt.mode;
+                    const mColor = marginColor(rt.margin);
+                    return (
+                      <div key={rt.id} onClick={() => setFreightMode(rt.mode)} style={{ display: "grid", gridTemplateColumns: "1.8fr 0.8fr 0.6fr 0.6fr 0.7fr 0.7fr", gap: "4px", padding: "7px 0", borderBottom: "1px solid " + c.border, fontSize: "11px", cursor: "pointer", background: isActive ? (dark ? "#1A1A10" : "#FFFBF0") : "transparent", minWidth: "550px", borderLeft: rt.highlight ? "3px solid " + c.gold : "3px solid transparent", paddingLeft: "8px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                          <span>{rt.icon}</span>
+                          <span style={{ fontSize: "10px", fontWeight: rt.highlight ? 600 : 400, color: rt.highlight ? c.gold : c.text }}>{rt.label}</span>
+                          {rt.highlight && <span style={{ fontSize: "7px", color: c.gold, background: dark ? "#2A2210" : "#FDF8ED", padding: "1px 4px", borderRadius: "2px", border: "1px solid " + c.gold + "44" }}>KCT</span>}
+                        </div>
+                        <div style={{ fontSize: "10px", color: c.dim }}>{rt.transit}</div>
+                        <div style={{ fontSize: "10px", color: c.dim }}>${rt.rate}{rt.unit.includes("CBM") ? "/cbm" : rt.unit.includes("ctr") ? "/ctr" : "/kg"}</div>
+                        <div style={{ fontSize: "10px", color: c.dim }}>{fmtUSD(rt.freightUSD)}</div>
+                        <div style={{ fontSize: "11px", fontWeight: 700, color: mColor }}>{rt.margin.toFixed(1)}%</div>
+                        <div style={{ fontSize: "10px", color: rt.profitUSD > 0 ? c.green : c.red }}>{fmtAED(rt.profitAED)}</div>
                       </div>
-                      <div style={{ fontSize: "10px", color: c.dim }}>{rt.transit}</div>
-                      <div style={{ fontSize: "10px", color: c.dim }}>${rt.rate}{rt.unit.includes("CBM") ? "/cbm" : rt.unit.includes("ctr") ? "/ctr" : "/kg"}</div>
-                      <div style={{ fontSize: "10px", color: c.dim }}>{fmtUSD(rt.freightUSD)}</div>
-                      <div style={{ fontSize: "11px", fontWeight: 700, color: mColor }}>{rt.margin.toFixed(1)}%</div>
-                      <div style={{ fontSize: "10px", color: rt.profitUSD > 0 ? c.green : c.red }}>{fmtAED(rt.profitAED)}</div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
+              </div>}
+
+              {/* Scenario A header */}
+              <div style={{ padding: "10px 12px", background: c.surface2, border: "1px solid " + c.gold + "33", borderRadius: "4px", marginBottom: "14px" }}>
+                <div style={{ fontSize: "10px", color: c.gold, fontWeight: 700, marginBottom: "4px" }}>SCENARIO A: Your Link Price vs Indonesia</div>
+                <div style={{ fontSize: "9px", color: c.dim }}>Sell price: <span style={{ color: c.gold, fontWeight: 700 }}>AED {marginData.uaeProduct?.price_aed}</span> (from linked product) vs Indo median {fmtIDR(marginData.medianPriceIDR)} / average {fmtIDR(marginData.indoResults?.price_stats?.average_idr)}</div>
               </div>
-            </div>}
-            <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "14px", flexWrap: "wrap" }}>
-              <span style={{ fontSize: "10px", color: c.dim }}>FOR:</span>
-              {[{ id: "unit", label: "Per Unit" }, { id: "custom", label: "Custom Qty" }, { id: "container", label: "Container (20ft)" }].map(m => (
-                <button key={m.id} onClick={() => setQtyMode(m.id)} style={{ padding: "4px 10px", background: qtyMode === m.id ? c.gold : "transparent", color: qtyMode === m.id ? c.btnText : c.dim, border: "1px solid " + (qtyMode === m.id ? c.gold : c.border2), borderRadius: "3px", fontSize: "10px", cursor: "pointer", fontFamily: "monospace" }}>{m.label}</button>
-              ))}
-              {qtyMode === "custom" && <input type="number" value={qty} onChange={e => setQty(Math.max(1, parseInt(e.target.value) || 1))} min="1" style={{ ...inputStyle, width: "80px", padding: "4px 8px", fontSize: "11px", textAlign: "center" }} />}
-              <span style={{ fontSize: "10px", color: c.dimmer }}>{"\u00d7 "}{getQty()} units</span>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px", marginBottom: "14px" }}>
-              {[{ l: "BEST", m: displayMargins.best }, { l: "MEDIAN", m: displayMargins.median }, { l: "WORST", m: displayMargins.worst }].map(x => (
-                <div key={x.l} style={{ padding: "12px", background: c.cardBg, border: "1px solid " + c.border, borderRadius: "4px", textAlign: "center" }}><div style={{ fontSize: "8px", color: c.dimmer }}>{x.l}</div><div style={{ fontSize: "24px", fontWeight: 700, color: marginColor(x.m.margin) }}>{x.m.margin.toFixed(1)}%</div></div>
-              ))}
-            </div>
-            <div style={{ background: c.cardBg, border: "1px solid " + c.border, borderRadius: "4px", padding: "12px" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr", gap: "6px", fontSize: "10px", padding: "4px 0", borderBottom: "1px solid " + c.border2, color: c.dimmer, fontWeight: 700 }}><div>COST</div><div>USD</div><div>AED</div><div>IDR</div></div>
-              {(() => { const m = displayMargins.median, q = getQty(); return <>
-                <PriceRow label={"UAE Sell"} usd={m.uaeUSD*q} aed={m.uaeAED*q} idr={m.uaeIDR*q} />
-                <PriceRow label={"Indo"} usd={m.indoUSD*q} aed={m.indoAED*q} idr={m.indoIDR*q} />
-                <PriceRow label={"Freight"} usd={m.freightUSD*q} aed={m.freightAED*q} idr={m.freightIDR*q} />
-                <PriceRow label={"Customs"} usd={m.dutyUSD*q} aed={m.dutyAED*q} idr={m.dutyIDR*q} />
-                <PriceRow label={"Last Mile"} usd={m.lastMileUSD*q} aed={m.lastMileAED*q} idr={m.lastMileIDR*q} />
-                <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr", gap: "6px", fontSize: "11px", padding: "6px 0", fontWeight: 700 }}><div style={{ color: c.red }}>TOTAL</div><div style={{ color: c.red }}>{fmtUSD(m.totalUSD*q)}</div><div style={{ color: c.red }}>{fmtAED(m.totalAED*q)}</div><div style={{ color: c.red }}>{fmtIDR(m.totalIDR*q)}</div></div>
-                <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr", gap: "6px", fontSize: "11px", padding: "6px 0", fontWeight: 700 }}><div style={{ color: c.green }}>PROFIT</div><div style={{ color: c.green }}>{fmtUSD((m.uaeUSD-m.totalUSD)*q)}</div><div style={{ color: c.green }}>{fmtAED((m.uaeAED-m.totalAED)*q)}</div><div style={{ color: c.green }}>{fmtIDR((m.uaeIDR-m.totalIDR)*q)}</div></div>
-              </>; })()}
-            </div>
-            <div style={{ marginTop: "10px", padding: "8px", borderRadius: "4px", textAlign: "center", fontSize: "12px", fontWeight: 600, background: displayStatus === "Candidate" ? (dark ? STATUS_COLORS : STATUS_COLORS_LIGHT).Candidate.bg : displayStatus === "Investigated" ? (dark ? STATUS_COLORS : STATUS_COLORS_LIGHT).Active.bg : (dark ? STATUS_COLORS : STATUS_COLORS_LIGHT).Rejected.bg, color: marginColor(displayMargins.median.margin), border: "1px solid " + (displayStatus === "Candidate" ? STATUS_COLORS.Candidate.border : STATUS_COLORS.Rejected.border) }}>
-              {displayMargins.median.margin >= MARGIN_THRESHOLD.candidate ? "\u2713 CANDIDATE" : displayMargins.median.margin >= MARGIN_THRESHOLD.borderline ? "\u25cb BORDERLINE" : "\u2717 LOW MARGIN"} {"\u2014"} {displayMargins.median.margin.toFixed(1)}%
-            </div>
+
+              <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "14px", flexWrap: "wrap" }}>
+                <span style={{ fontSize: "10px", color: c.dim }}>FOR:</span>
+                {[{ id: "unit", label: "Per Unit" }, { id: "custom", label: "Custom Qty" }, { id: "container", label: "Container (20ft)" }].map(m => (
+                  <button key={m.id} onClick={() => setQtyMode(m.id)} style={{ padding: "4px 10px", background: qtyMode === m.id ? c.gold : "transparent", color: qtyMode === m.id ? c.btnText : c.dim, border: "1px solid " + (qtyMode === m.id ? c.gold : c.border2), borderRadius: "3px", fontSize: "10px", cursor: "pointer", fontFamily: "monospace" }}>{m.label}</button>
+                ))}
+                {qtyMode === "custom" && <input type="number" value={qty} onChange={e => setQty(Math.max(1, parseInt(e.target.value) || 1))} min="1" style={{ ...inputStyle, width: "80px", padding: "4px 8px", fontSize: "11px", textAlign: "center" }} />}
+                <span style={{ fontSize: "10px", color: c.dimmer }}>{"\u00d7 "}{getQty()} units</span>
+              </div>
+              {/* Margin cards: vs median and vs average */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "14px" }}>
+                <div style={{ padding: "12px", background: c.cardBg, border: "1px solid " + c.border, borderRadius: "4px", textAlign: "center" }}>
+                  <div style={{ fontSize: "8px", color: c.dimmer, letterSpacing: "1px" }}>VS MEDIAN INDO</div>
+                  <div style={{ fontSize: "28px", fontWeight: 700, color: marginColor(displayMargins.median.margin) }}>{displayMargins.median.margin.toFixed(1)}%</div>
+                </div>
+                <div style={{ padding: "12px", background: c.cardBg, border: "1px solid " + c.border, borderRadius: "4px", textAlign: "center" }}>
+                  <div style={{ fontSize: "8px", color: c.dimmer, letterSpacing: "1px" }}>VS AVERAGE INDO</div>
+                  <div style={{ fontSize: "28px", fontWeight: 700, color: marginColor(displayMargins.average.margin) }}>{displayMargins.average.margin.toFixed(1)}%</div>
+                </div>
+              </div>
+              <div className="bandar-grid3" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "8px", marginBottom: "14px" }}>
+                {[{ l: "BEST", m: displayMargins.best }, { l: "MEDIAN", m: displayMargins.median }, { l: "WORST", m: displayMargins.worst }].map(x => (
+                  <div key={x.l} style={{ padding: "10px", background: c.cardBg, border: "1px solid " + c.border, borderRadius: "4px", textAlign: "center" }}><div style={{ fontSize: "8px", color: c.dimmer }}>{x.l}</div><div style={{ fontSize: "18px", fontWeight: 700, color: marginColor(x.m.margin) }}>{x.m.margin.toFixed(1)}%</div></div>
+                ))}
+              </div>
+              <div style={{ background: c.cardBg, border: "1px solid " + c.border, borderRadius: "4px", padding: "12px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr", gap: "6px", fontSize: "10px", padding: "4px 0", borderBottom: "1px solid " + c.border2, color: c.dimmer, fontWeight: 700 }}><div>COST</div><div>USD</div><div>AED</div><div>IDR</div></div>
+                {(() => { const m = displayMargins.median, q = getQty(); return <>
+                  <PriceRow label={"UAE Sell"} usd={m.uaeUSD*q} aed={m.uaeAED*q} idr={m.uaeIDR*q} />
+                  <PriceRow label={"Indo"} usd={m.indoUSD*q} aed={m.indoAED*q} idr={m.indoIDR*q} />
+                  <PriceRow label={"Freight"} usd={m.freightUSD*q} aed={m.freightAED*q} idr={m.freightIDR*q} />
+                  <PriceRow label={"Customs"} usd={m.dutyUSD*q} aed={m.dutyAED*q} idr={m.dutyIDR*q} />
+                  <PriceRow label={"Last Mile"} usd={m.lastMileUSD*q} aed={m.lastMileAED*q} idr={m.lastMileIDR*q} />
+                  <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr", gap: "6px", fontSize: "11px", padding: "6px 0", fontWeight: 700 }}><div style={{ color: c.red }}>TOTAL</div><div style={{ color: c.red }}>{fmtUSD(m.totalUSD*q)}</div><div style={{ color: c.red }}>{fmtAED(m.totalAED*q)}</div><div style={{ color: c.red }}>{fmtIDR(m.totalIDR*q)}</div></div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr", gap: "6px", fontSize: "11px", padding: "6px 0", fontWeight: 700 }}><div style={{ color: c.green }}>PROFIT</div><div style={{ color: c.green }}>{fmtUSD((m.uaeUSD-m.totalUSD)*q)}</div><div style={{ color: c.green }}>{fmtAED((m.uaeAED-m.totalAED)*q)}</div><div style={{ color: c.green }}>{fmtIDR((m.uaeIDR-m.totalIDR)*q)}</div></div>
+                </>; })()}
+              </div>
+              <div style={{ marginTop: "10px", padding: "8px", borderRadius: "4px", textAlign: "center", fontSize: "12px", fontWeight: 600, background: displayStatus === "Candidate" ? (dark ? STATUS_COLORS : STATUS_COLORS_LIGHT).Candidate.bg : displayStatus === "Investigated" ? (dark ? STATUS_COLORS : STATUS_COLORS_LIGHT).Active.bg : (dark ? STATUS_COLORS : STATUS_COLORS_LIGHT).Rejected.bg, color: marginColor(displayMargins.median.margin), border: "1px solid " + (displayStatus === "Candidate" ? STATUS_COLORS.Candidate.border : STATUS_COLORS.Rejected.border) }}>
+                {displayMargins.median.margin >= MARGIN_THRESHOLD.candidate ? "\u2713 CANDIDATE" : displayMargins.median.margin >= MARGIN_THRESHOLD.borderline ? "\u25cb BORDERLINE" : "\u2717 LOW MARGIN"} {"\u2014"} {displayMargins.median.margin.toFixed(1)}%
+              </div>
+            </>}
+
+            {/* ═══ SCENARIO B: Regional similar items vs Indo ═══ */}
+            {marginScenario === "B" && <>
+              <div style={{ padding: "10px 12px", background: c.surface2, border: "1px solid " + c.gold + "33", borderRadius: "4px", marginBottom: "14px" }}>
+                <div style={{ fontSize: "10px", color: c.gold, fontWeight: 700, marginBottom: "4px" }}>SCENARIO B: Regional Market Price vs Indonesia</div>
+                <div style={{ fontSize: "9px", color: c.dim }}>Compare median/average of similar items from <span style={{ color: c.gold, fontWeight: 600 }}>{dryRunData.source || "Amazon.ae"}</span> against Indonesia prices</div>
+              </div>
+
+              {scenarioBLoading && <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "20px", justifyContent: "center" }}><Spinner /><span style={{ fontSize: "12px", color: c.gold }}>Finding similar items...</span></div>}
+
+              {scenarioBData && scenarioBData.count === 0 && <div style={{ padding: "20px", textAlign: "center", color: c.dimmer, fontSize: "11px" }}>No similar items found in {scenarioBData.source}. Try searching from Discover tab first, then come back.</div>}
+
+              {scenarioBData && scenarioBData.count > 0 && <>
+                {/* Regional market summary */}
+                <div className="bandar-grid4" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "8px", marginBottom: "14px" }}>
+                  {[
+                    { l: "LOWEST", v: scenarioBData.lowest, cl: c.green },
+                    { l: "MEDIAN", v: scenarioBData.uaeMedian, cl: c.gold },
+                    { l: "AVERAGE", v: scenarioBData.uaeAverage, cl: c.dim },
+                    { l: "HIGHEST", v: scenarioBData.highest, cl: c.red }
+                  ].map(s => (
+                    <div key={s.l} style={{ padding: "8px", background: c.cardBg, border: "1px solid " + c.border, borderRadius: "4px", textAlign: "center" }}>
+                      <div style={{ fontSize: "8px", color: c.dimmer, letterSpacing: "1px", marginBottom: "3px" }}>{s.l} ({scenarioBData.source?.split(".")[1]?.toUpperCase() || "AE"})</div>
+                      <div style={{ fontSize: "13px", fontWeight: 700, color: s.cl }}>{fmtAED(s.v)}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ fontSize: "9px", color: c.dimmer, marginBottom: "12px", textAlign: "center" }}>Based on {scenarioBData.count} similar items from {scenarioBData.source}</div>
+
+                {scenarioBMargins && <>
+                  {/* 2x2 margin grid */}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "14px" }}>
+                    <div style={{ padding: "12px", background: c.cardBg, border: "1px solid " + c.border, borderRadius: "4px", textAlign: "center" }}>
+                      <div style={{ fontSize: "8px", color: c.dimmer, letterSpacing: "0.5px" }}>MEDIAN SELL vs MEDIAN INDO</div>
+                      <div style={{ fontSize: "28px", fontWeight: 700, color: marginColor(scenarioBMargins.medianVsMedIndo.margin) }}>{scenarioBMargins.medianVsMedIndo.margin.toFixed(1)}%</div>
+                      <div style={{ fontSize: "9px", color: c.dim }}>Sell {fmtAED(scenarioBData.uaeMedian)} | Source {fmtAED(scenarioBMargins.medianVsMedIndo.indoAED)}</div>
+                    </div>
+                    <div style={{ padding: "12px", background: c.cardBg, border: "1px solid " + c.border, borderRadius: "4px", textAlign: "center" }}>
+                      <div style={{ fontSize: "8px", color: c.dimmer, letterSpacing: "0.5px" }}>MEDIAN SELL vs AVG INDO</div>
+                      <div style={{ fontSize: "28px", fontWeight: 700, color: marginColor(scenarioBMargins.medianVsAvgIndo.margin) }}>{scenarioBMargins.medianVsAvgIndo.margin.toFixed(1)}%</div>
+                      <div style={{ fontSize: "9px", color: c.dim }}>Sell {fmtAED(scenarioBData.uaeMedian)} | Source {fmtAED(scenarioBMargins.medianVsAvgIndo.indoAED)}</div>
+                    </div>
+                    <div style={{ padding: "12px", background: c.cardBg, border: "1px solid " + c.border, borderRadius: "4px", textAlign: "center" }}>
+                      <div style={{ fontSize: "8px", color: c.dimmer, letterSpacing: "0.5px" }}>AVG SELL vs MEDIAN INDO</div>
+                      <div style={{ fontSize: "28px", fontWeight: 700, color: marginColor(scenarioBMargins.avgVsMedIndo.margin) }}>{scenarioBMargins.avgVsMedIndo.margin.toFixed(1)}%</div>
+                      <div style={{ fontSize: "9px", color: c.dim }}>Sell {fmtAED(scenarioBData.uaeAverage)} | Source {fmtAED(scenarioBMargins.avgVsMedIndo.indoAED)}</div>
+                    </div>
+                    <div style={{ padding: "12px", background: c.cardBg, border: "1px solid " + c.border, borderRadius: "4px", textAlign: "center" }}>
+                      <div style={{ fontSize: "8px", color: c.dimmer, letterSpacing: "0.5px" }}>AVG SELL vs AVG INDO</div>
+                      <div style={{ fontSize: "28px", fontWeight: 700, color: marginColor(scenarioBMargins.avgVsAvgIndo.margin) }}>{scenarioBMargins.avgVsAvgIndo.margin.toFixed(1)}%</div>
+                      <div style={{ fontSize: "9px", color: c.dim }}>Sell {fmtAED(scenarioBData.uaeAverage)} | Source {fmtAED(scenarioBMargins.avgVsAvgIndo.indoAED)}</div>
+                    </div>
+                  </div>
+
+                  {/* Detailed breakdown for median vs median */}
+                  <div style={{ background: c.cardBg, border: "1px solid " + c.border, borderRadius: "4px", padding: "12px" }}>
+                    <div style={{ fontSize: "9px", color: c.dimmer, letterSpacing: "1px", marginBottom: "6px" }}>DETAILED BREAKDOWN (MEDIAN vs MEDIAN)</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr", gap: "6px", fontSize: "10px", padding: "4px 0", borderBottom: "1px solid " + c.border2, color: c.dimmer, fontWeight: 700 }}><div>COST</div><div>USD</div><div>AED</div><div>IDR</div></div>
+                    {(() => { const m = scenarioBMargins.medianVsMedIndo; return <>
+                      <PriceRow label={"Regional Sell"} usd={m.uaeUSD} aed={m.uaeAED} idr={m.uaeIDR} />
+                      <PriceRow label={"Indo Source"} usd={m.indoUSD} aed={m.indoAED} idr={m.indoIDR} />
+                      <PriceRow label={"Freight"} usd={m.freightUSD} aed={m.freightAED} idr={m.freightIDR} />
+                      <PriceRow label={"Customs"} usd={m.dutyUSD} aed={m.dutyAED} idr={m.dutyIDR} />
+                      <PriceRow label={"Last Mile"} usd={m.lastMileUSD} aed={m.lastMileAED} idr={m.lastMileIDR} />
+                      <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr", gap: "6px", fontSize: "11px", padding: "6px 0", fontWeight: 700 }}><div style={{ color: c.red }}>TOTAL</div><div style={{ color: c.red }}>{fmtUSD(m.totalUSD)}</div><div style={{ color: c.red }}>{fmtAED(m.totalAED)}</div><div style={{ color: c.red }}>{fmtIDR(m.totalIDR)}</div></div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr", gap: "6px", fontSize: "11px", padding: "6px 0", fontWeight: 700 }}><div style={{ color: c.green }}>PROFIT</div><div style={{ color: c.green }}>{fmtUSD(m.uaeUSD-m.totalUSD)}</div><div style={{ color: c.green }}>{fmtAED(m.uaeAED-m.totalAED)}</div><div style={{ color: c.green }}>{fmtIDR(m.uaeIDR-m.totalIDR)}</div></div>
+                    </>; })()}
+                  </div>
+                </>}
+
+                {!scenarioBLoading && <button onClick={loadScenarioB} style={{ ...btnSec, padding: "6px 14px", fontSize: "9px", marginTop: "10px" }}>{"\u21bb"} Refresh similar items</button>}
+              </>}
+            </>}
           </SectionToggle>}
 
           {!loading && <div style={{ display: "flex", justifyContent: "center", gap: "8px", marginTop: "12px" }}>
@@ -2051,7 +2301,7 @@ export default function App() {
           <div style={{ display: "flex", gap: "4px" }}>
             {["all", "error", "warn", "ok"].map(f => <button key={f} onClick={() => setDiagFilter(f)} style={{ padding: "2px 6px", fontSize: "8px", fontFamily: "monospace", cursor: "pointer", background: diagFilter === f ? c.gold : "transparent", color: diagFilter === f ? "#0a0a0a" : "#888", border: "1px solid " + (diagFilter === f ? c.gold : "#333"), borderRadius: "3px", textTransform: "uppercase" }}>{f}</button>)}
             <button onClick={clearDiag} style={{ padding: "2px 6px", fontSize: "8px", fontFamily: "monospace", cursor: "pointer", background: "transparent", color: "#f87171", border: "1px solid #5a2d2d", borderRadius: "3px" }}>CLR</button>
-            <button onClick={() => { const lines = diagRef.current.map(l => `${l.ts} [${l.level}] ${l.label}: ${l.message}${l.data ? "\n  " + l.data : ""}`).join("\n"); const blob = new Blob([lines], { type: "text/plain" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "gt-diag-" + new Date().toISOString().slice(0, 19).replace(/:/g, "") + ".txt"; a.click(); }} style={{ padding: "2px 6px", fontSize: "8px", fontFamily: "monospace", cursor: "pointer", background: "transparent", color: "#C9A84C", border: "1px solid #C9A84C66", borderRadius: "3px" }}>EXPORT</button>
+            <button onClick={() => { const lines = diagRef.current.map(l => `${l.ts} [${l.level}] ${l.label}: ${l.message}${l.data ? "\n  " + l.data : ""}`).join("\n"); const blob = new Blob([lines], { type: "text/plain" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "bandar-diag-" + new Date().toISOString().slice(0, 19).replace(/:/g, "") + ".txt"; a.click(); }} style={{ padding: "2px 6px", fontSize: "8px", fontFamily: "monospace", cursor: "pointer", background: "transparent", color: "#C9A84C", border: "1px solid #C9A84C66", borderRadius: "3px" }}>EXPORT</button>
             <button onClick={() => setShowDiag(false)} style={{ padding: "2px 6px", fontSize: "8px", fontFamily: "monospace", cursor: "pointer", background: "transparent", color: "#888", border: "1px solid #333", borderRadius: "3px" }}>{"\u2715"}</button>
           </div>
         </div>
