@@ -26,6 +26,7 @@ const ROUTES = [
 const TIER_LIMITS = {
   free:       { lookups: 3,   margins: 3,  label: "Free" },
   registered: { lookups: 10,  margins: 10, label: "Registered" },
+  vip:        { lookups: 30,  margins: 30, label: "VIP" },
   paid:       { lookups: 100, margins: 100, label: "Pro ($20/mo)" },
   admin:      { lookups: 99999, margins: 99999, label: "Admin" },
 };
@@ -275,6 +276,10 @@ export default function App() {
   const [adminRates, setAdminRates] = useState([]);
   const [adminLoading, setAdminLoading] = useState(false);
   const [adminSubTab, setAdminSubTab] = useState("users"); // users | searches | rates
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [invitePassword, setInvitePassword] = useState("");
+  const [inviteRole, setInviteRole] = useState("vip");
+  const [inviteMsg, setInviteMsg] = useState("");
 
   // Diagnostic Log
   const [diagLogs, setDiagLogs] = useState([]);
@@ -449,6 +454,28 @@ export default function App() {
       });
       await loadAdminUsers();
     } catch (e) { addDiag("error", "admin", "Update role failed: " + e.message); }
+  };
+
+  const createInviteAccount = async () => {
+    if (!inviteEmail || !invitePassword) { setInviteMsg("Email and password required"); return; }
+    if (invitePassword.length < 6) { setInviteMsg("Password must be 6+ characters"); return; }
+    setInviteMsg("Creating...");
+    try {
+      // Step 1: Create account via Supabase signup
+      const { ok, data } = await supabaseAuth("signup", { email: inviteEmail, password: invitePassword });
+      if (!ok) throw new Error(data.msg || data.error_description || data.message || "Signup failed");
+      const newUserId = data.user?.id || data.id;
+      if (!newUserId) throw new Error("Account created but no user ID returned. User may need to confirm email first.");
+      // Step 2: Set role
+      await fetch(SUPABASE_URL + "/rest/v1/profiles?id=eq." + newUserId, {
+        method: "PATCH",
+        headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + authToken, "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ role: inviteRole })
+      });
+      setInviteMsg("Account created: " + inviteEmail + " (" + inviteRole + "). Share the credentials.");
+      setInviteEmail(""); setInvitePassword("");
+      await loadAdminUsers();
+    } catch (e) { setInviteMsg("Error: " + e.message); }
   };
 
   // ── Init: no auto-login, user must log in each visit ──
@@ -2237,6 +2264,24 @@ export default function App() {
 
         {/* Users sub-tab */}
         {adminSubTab === "users" && <div>
+          {/* ── Create Account ── */}
+          <div style={{ marginBottom: "16px", padding: "12px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px" }}>
+            <div style={{ fontSize: "9px", color: c.gold, letterSpacing: "1px", fontWeight: 700, marginBottom: "8px" }}>{"\ud83d\udc64"} CREATE ACCOUNT</div>
+            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center", marginBottom: "8px" }}>
+              <input type="email" value={inviteEmail} onChange={e => { setInviteEmail(e.target.value); setInviteMsg(""); }} placeholder="Email" style={{ ...inputStyle, flex: "1 1 140px", padding: "6px 8px", fontSize: "11px" }} />
+              <input type="text" value={invitePassword} onChange={e => { setInvitePassword(e.target.value); setInviteMsg(""); }} placeholder="Password (6+)" style={{ ...inputStyle, flex: "1 1 100px", padding: "6px 8px", fontSize: "11px" }} />
+              <select value={inviteRole} onChange={e => setInviteRole(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "6px 8px", fontSize: "11px" }}>
+                <option value="free">Free</option>
+                <option value="registered">Registered</option>
+                <option value="vip">VIP (30/30)</option>
+                <option value="paid">Paid</option>
+              </select>
+              <button onClick={createInviteAccount} style={{ ...btnGreen, padding: "6px 14px", fontSize: "10px" }}>CREATE</button>
+            </div>
+            {inviteMsg && <div style={{ fontSize: "10px", color: inviteMsg.startsWith("Error") || inviteMsg.startsWith("Email") || inviteMsg.startsWith("Password") ? c.red : inviteMsg.startsWith("Creating") ? c.gold : c.green, lineHeight: 1.5 }}>{inviteMsg}</div>}
+            <div style={{ fontSize: "8px", color: c.dimmest, marginTop: "4px" }}>Create an account for someone — share the email/password with them. You can change or revoke their role anytime.</div>
+          </div>
+
           <div style={{ fontSize: "10px", color: c.dimmer, marginBottom: "8px" }}>{adminUsers.length} users</div>
           {adminUsers.length === 0 && <button onClick={loadAdminUsers} style={{ ...btnGreen, padding: "8px 16px", fontSize: "10px" }}>LOAD USERS</button>}
           {adminUsers.length > 0 && <div style={{ overflowX: "auto" }}>
@@ -2250,9 +2295,10 @@ export default function App() {
                   {u.display_name && <span style={{ color: c.dimmest }}>{" \u00b7 "}{u.display_name}</span>}
                 </div>
                 <div>
-                  <select value={u.role} onChange={e => updateUserRole(u.id, e.target.value)} style={{ background: c.input, color: u.role === "admin" ? c.red : u.role === "paid" ? c.gold : c.text, border: "1px solid " + c.border2, borderRadius: "3px", padding: "2px 4px", fontSize: "10px", fontFamily: "monospace", cursor: "pointer" }}>
+                  <select value={u.role} onChange={e => updateUserRole(u.id, e.target.value)} style={{ background: c.input, color: u.role === "admin" ? c.red : u.role === "paid" ? c.gold : u.role === "vip" ? "#9333EA" : c.text, border: "1px solid " + c.border2, borderRadius: "3px", padding: "2px 4px", fontSize: "10px", fontFamily: "monospace", cursor: "pointer" }}>
                     <option value="free">Free</option>
                     <option value="registered">Registered</option>
+                    <option value="vip">VIP</option>
                     <option value="paid">Paid</option>
                     <option value="admin">Admin</option>
                   </select>
