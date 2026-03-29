@@ -1180,11 +1180,52 @@ export default function App() {
   const extractAsin = (u) => { const m = u.match(/\/dp\/([A-Z0-9]{10})/i) || u.match(/\/gp\/product\/([A-Z0-9]{10})/i) || u.match(/\/([A-Z0-9]{10})(?:[/?#]|$)/i); return m ? m[1] : ""; };
   const extractDomainCode = (u) => { const m = u.match(/amazon\.([a-z.]+)/i); if (!m) return "ae"; const d = m[1]; if (d === "ae") return "ae"; if (d === "com") return "com"; if (d === "co.uk") return "co.uk"; if (d === "de") return "de"; if (d === "sa") return "sa"; return d.replace(/^com\./, ""); };
 
+  const isShortLink = (u) => /^https?:\/\/(amzn\.(to|eu|asia|com))\//i.test(u);
+
   const runDryRun = async () => {
-    const input = url.trim();
+    let input = url.trim();
     if (!input || !input.startsWith("http")) { setAutoError("Invalid URL"); return; }
     if (!isAmazonUrl(input)) { setAutoError("Supported: Amazon (.ae, .com, .co.uk, .de, etc.) and amzn.to/amzn.eu short links"); return; }
     setLoading(true); setAutoError(""); setDryRunData(null); setUaeSimilar(null); setIndoResults(null); setMarginData(null); setEditableQueries([]); setActiveSection(0); setWaveStatus([]);
+
+    // ── Resolve short links (amzn.to, amzn.eu) → real Amazon URL ──
+    if (isShortLink(input)) {
+      setStage("Resolving short link...");
+      addDiag("info", "lookup", `Short link detected: ${input}`);
+      try {
+        const sdRes = await workerCall("scrapingdog_scrape", { url: input, dynamic: false, premium: false });
+        const html = sdRes.html || "";
+        // Extract canonical/og:url or any amazon.XX/dp/ASIN pattern from the HTML
+        const canonicalMatch = html.match(/(?:canonical|og:url)[^>]*href=["']([^"']*amazon\.[^"']+)["']/i)
+          || html.match(/(https?:\/\/www\.amazon\.[a-z.]+\/[^"'\s]+\/dp\/[A-Z0-9]{10}[^"'\s]*)/i)
+          || html.match(/(https?:\/\/www\.amazon\.[a-z.]+\/dp\/[A-Z0-9]{10})/i);
+        if (canonicalMatch) {
+          const resolvedUrl = canonicalMatch[1];
+          addDiag("ok", "lookup", `Short link resolved → ${resolvedUrl.slice(0, 80)}`);
+          input = resolvedUrl;
+          setUrl(resolvedUrl); // Update the input field so user sees the real URL
+        } else {
+          // Try to find ASIN anywhere in HTML
+          const asinInHtml = html.match(/\/dp\/([A-Z0-9]{10})/i);
+          const domainInHtml = html.match(/amazon\.([a-z.]+)/i);
+          if (asinInHtml) {
+            const domain = domainInHtml ? domainInHtml[1] : "ae";
+            const reconstructed = "https://www.amazon." + domain + "/dp/" + asinInHtml[1];
+            addDiag("ok", "lookup", `Reconstructed from HTML: ${reconstructed}`);
+            input = reconstructed;
+            setUrl(reconstructed);
+          } else {
+            addDiag("warn", "lookup", `Could not resolve short link (HTML ${html.length} chars)`);
+            throw new Error("Could not resolve short link. Try pasting the full Amazon URL instead (open the link in browser first, then copy the URL bar).");
+          }
+        }
+      } catch (e) {
+        addDiag("error", "lookup", `Short link resolve failed: ${e.message}`);
+        setAutoError(e.message.includes("Could not resolve") ? e.message : "Could not resolve short link: " + e.message + ". Try opening the link in your browser first, then copy the full URL.");
+        setLoading(false); setStage(""); return;
+      }
+    }
+
     const marketplace = extractAmazonDomain(input);
     const domainCode = extractDomainCode(input);
     const asin = extractAsin(input);
