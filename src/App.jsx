@@ -257,6 +257,7 @@ export default function App() {
   const [bsValidatingIdx, setBsValidatingIdx] = useState(null);
   const [bsValidationResults, setBsValidationResults] = useState({});
   const bsAbortRef = useRef(false);
+  const apifyAbortRef = useRef(false);
 
   // Admin state
   const [adminUsers, setAdminUsers] = useState([]);
@@ -676,10 +677,10 @@ export default function App() {
     addDiag("info", "apify", label + " run response: " + JSON.stringify(rd).slice(0, 300));
     const runId = rd.data?.id; if (!runId) throw new Error(label + " no run ID — response: " + JSON.stringify(rd).slice(0, 200));
     let status = "RUNNING", pc = 0;
-    while (status === "RUNNING" || status === "READY") { if (pc > 60) throw new Error(label + " timeout"); await wait(5000); pc++; setStage(label + " (" + (pc * 5) + "s)"); setProgress(Math.min(90, pc * 3)); try { const pr = await workerCall("apify_status", { runId }); status = pr.data?.status || "RUNNING"; } catch {} }
+    while (status === "RUNNING" || status === "READY") { if (pc > 60) throw new Error(label + " timeout"); if (apifyAbortRef.current) { apifyAbortRef.current = false; throw new Error("Stopped by user"); } await wait(5000); pc++; setStage(label + " (" + (pc * 5) + "s)"); setProgress(Math.min(90, pc * 3)); try { const pr = await workerCall("apify_status", { runId }); status = pr.data?.status || "RUNNING"; } catch {} }
     if (status !== "SUCCEEDED") throw new Error(label + " status: " + status);
     const dsId = rd.data?.defaultDatasetId; if (!dsId) throw new Error(label + " no dataset");
-    const items = await workerCall("apify_dataset", { datasetId: dsId, limit: 50 });
+    const items = await workerCall("apify_dataset", { datasetId: dsId, limit: 150 });
     addDiag("info", "apify", label + " dataset: " + (Array.isArray(items) ? items.length + " items" : "NOT array: " + JSON.stringify(items).slice(0, 200)));
     if (!Array.isArray(items)) { addDiag("warn", "apify", label + " unexpected response type: " + typeof items); return []; }
     return items;
@@ -698,9 +699,21 @@ export default function App() {
       if (typeof price === "string") price = sanitizeIDR(price);
       if (typeof price === "number" && price > 0 && price < 500) price = Math.round(price * 1000);
       if (typeof price === "number" && price > 1000000000) price = Math.round(price / 100000);
-      const soldRaw = i.stock?.sold || i.sold || i.totalSold || i.historicalSold || i.item_basic?.sold || "";
-      return { name: i.title || i.name || i.productName || i.item_name || "", price_idr: Math.round(price), source: platform, seller: i.shopName || i.sellerName || i.seller || i.shop?.name || "", sold: String(soldRaw), url: i.url || i.link || i.productUrl || "", rating: i.rating || i.star || "" };
-    }).filter(r => r.price_idr >= 1000 && r.name);
+      // Sold: Shopee actor uses salesCount, Toko uses stock.sold
+      const soldRaw = i.salesCount || i.stock?.sold || i.sold || i.totalSold || i.historicalSold || i.item_basic?.sold || "";
+      // Rating: Shopee actor uses rating directly
+      const ratingRaw = i.rating || i.ratingAverage || i.star || i.item_rating?.rating_star || "";
+      // Name: Shopee actor uses name, Toko uses title
+      const nameRaw = i.name || i.title || i.productName || i.item_name || "";
+      // Seller: Shopee actor uses location, Toko uses shopName
+      const sellerRaw = i.shopName || i.sellerName || i.seller || i.shop?.name || i.location || "";
+      // URL: both use url/link
+      const urlRaw = i.url || i.link || i.productUrl || i.itemUrl || "";
+      return { name: nameRaw, price_idr: Math.round(price), source: platform, seller: sellerRaw, sold: String(soldRaw), url: urlRaw, rating: ratingRaw };
+    }).filter(r => r.price_idr >= 1000 && r.name)
+      .filter(r => { const s = parseInt(r.sold) || 0; const rt = parseFloat(r.rating) || 0; return s > 0 || rt > 0; }) // Quality: must have sold OR rating
+      .sort((a, b) => (parseInt(b.sold) || 0) - (parseInt(a.sold) || 0)) // Best sellers first
+      .slice(0, 100); // Cap at 100 quality results
   };
 
   const runTokoApify = async (allQueries) => {
@@ -727,7 +740,7 @@ export default function App() {
   const runShopeeApify = async (allQueries) => {
     const waves = [];
     const mainQ = allQueries[0];
-    const shopeeInput = { searchKeywords: allQueries.slice(0, 3), country: "ID", maxProducts: 30, shopeeCookies: shopeeCookie || "[]" };
+    const shopeeInput = { searchKeywords: allQueries.slice(0, 3), country: "ID", maxProducts: 100, shopeeCookies: shopeeCookie || "[]" };
     addDiag("info", "shopee_apify", `Query: "${mainQ}"`);
     setStage("Scraping Shopee..."); setProgress(10);
     try {
@@ -1621,7 +1634,7 @@ export default function App() {
 
       {/* ══════════ LOOKUP TAB ══════════ */}
       {mode === "auto" && <div style={secStyle}>
-        {loading && stage && <div style={{ marginBottom: "12px" }}><div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}><Spinner /><span style={{ fontSize: "12px", color: c.gold }}>{stage}</span></div>{progress > 0 && <div style={{ width: "100%", height: "3px", background: c.border, borderRadius: "2px" }}><div style={{ width: progress + "%", height: "100%", background: c.gold, borderRadius: "2px", transition: "width 0.3s" }} /></div>}</div>}
+        {loading && stage && <div style={{ marginBottom: "12px" }}><div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}><Spinner /><span style={{ fontSize: "12px", color: c.gold, flex: 1 }}>{stage}</span><button onClick={() => { apifyAbortRef.current = true; }} style={{ padding: "4px 12px", background: "transparent", border: "1px solid " + c.red, color: c.red, borderRadius: "3px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", fontWeight: 700 }}>{"\u25a0"} STOP</button></div>{progress > 0 && <div style={{ width: "100%", height: "3px", background: c.border, borderRadius: "2px" }}><div style={{ width: progress + "%", height: "100%", background: c.gold, borderRadius: "2px", transition: "width 0.3s" }} /></div>}</div>}
         {autoError && <div style={{ padding: "12px", background: dark ? "#3a1a1a" : "#FEF2F2", border: "1px solid " + c.red + "44", borderRadius: "4px", marginBottom: "12px", fontSize: "12px", color: c.red }}>{autoError}</div>}
 
         {/* ── LANDING VIEW ── */}
