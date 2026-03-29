@@ -162,9 +162,9 @@ function CookieWizard({ c, onSave, onClose }) { const [step, setStep] = useState
 const GUIDE_STEPS = [
   { id: "welcome", icon: "\ud83c\udfea", badge: "START HERE", title: "Welcome to Bandar", subtitle: "Your trade opportunity finder", body: "Bandar helps you find products selling at high prices in the UAE \u2014 that can be sourced cheaply from Indonesia.", tip: "Think of it as your personal trade scout. It does the price comparison legwork for you.", visual: "flow" },
   { id: "discover", icon: "\ud83d\udd0d", badge: "TAB 1", title: "Discover", subtitle: "Search for products on Amazon UAE", body: "Type any product keyword \u2014 like \"coconut bowl\" or \"rattan basket\" \u2014 and hit Search. Bandar fetches real Amazon.ae listings with prices and reviews.", steps: ["Type a product keyword in the search box", "Tap SEARCH AMAZON", "Browse results \u2014 sorted by popularity", "Tap VALIDATE on any product to check its Indonesia margin"], tip: "High review count = proven demand. Start there!", visual: "discover" },
-  { id: "lookup", icon: "\u26a1", badge: "TAB 2", title: "Lookup", subtitle: "Deep-dive any specific product", body: "Found a product link on Amazon? Paste it here. Bandar reads the product, translates it to Indonesian, and searches Tokopedia & Shopee for you.", steps: ["Paste any Amazon product URL", "Tap QUICK CHECK \u2014 Bandar reads the product", "Review the auto-generated search queries", "Tap Explore Source 1 and/or Source 2", "View Indonesia prices + margin breakdown"], tip: "You can edit the search queries before exploring \u2014 add your own keywords for better results.", visual: "lookup" },
+  { id: "lookup", icon: "\u26a1", badge: "TAB 2", title: "Lookup", subtitle: "Deep-dive any specific product", body: "Found a product link on Amazon? Paste it here. Bandar reads the product, translates it to Indonesian, and searches Tokopedia & Shopee for you.", steps: ["Paste any Amazon product URL", "Tap QUICK CHECK \u2014 Bandar reads the product", "Review the auto-generated search queries", "Tap Explore Source 1 and/or Source 2", "Tap RUN MARGIN ANALYSIS to calculate profitability (A + B)"], tip: "You can edit the search queries before exploring \u2014 add your own keywords for better results.", visual: "lookup" },
   { id: "margins", icon: "\ud83d\udcca", badge: "THE GOOD STUFF", title: "Reading Your Margins", subtitle: "Is this product worth trading?", body: "After exploring Indonesian prices, Bandar calculates your profit margin \u2014 including freight, customs, and last-mile delivery costs.", highlights: [{ color: "#2EAA5A", label: "40%+", desc: "Strong candidate \u2014 worth pursuing" }, { color: "#D4A843", label: "20\u201340%", desc: "Borderline \u2014 needs volume or negotiation" }, { color: "#f87171", label: "Below 20%", desc: "Likely not profitable after costs" }], tip: "Compare routes! Khorfakkan (Sharjah) routes are often cheaper and faster than Dubai.", visual: "margins" },
-  { id: "scenarios", icon: "\ud83c\udfaf", badge: "PRO MOVE", title: "Scenario A vs B", subtitle: "Two ways to check viability", body: "Scenario A uses the exact product link price. Scenario B finds similar products on Amazon and uses their average \u2014 giving you a market-wide view.", highlights: [{ color: "#C9A84C", label: "Scenario A", desc: "Your link price vs Indonesia median" }, { color: "#2EAA5A", label: "Scenario B", desc: "Market average vs Indonesia \u2014 broader view" }], tip: "Use Scenario A for a specific deal. Use Scenario B to validate the whole category.", visual: "scenarios" },
+  { id: "scenarios", icon: "\ud83c\udfaf", badge: "PRO MOVE", title: "Scenario A vs B", subtitle: "Two ways to check viability", body: "One click runs both scenarios. Scenario A uses the exact product link price. Scenario B finds similar products on Amazon and uses their average \u2014 giving you a market-wide view. Each run costs 1 margin analysis quota.", highlights: [{ color: "#C9A84C", label: "Scenario A", desc: "Your link price vs Indonesia median" }, { color: "#2EAA5A", label: "Scenario B", desc: "Market average vs Indonesia \u2014 broader view" }], tip: "Use Scenario A for a specific deal. Use Scenario B to validate the whole category.", visual: "scenarios" },
   { id: "history", icon: "\ud83d\udccb", badge: "TAB 3", title: "History", subtitle: "Track everything you\u2019ve researched", body: "Every product you look up is saved automatically. Come back anytime to review, compare, or export your findings.", steps: ["All lookups are saved with margins and status", "Set status: Candidate \u2192 Investigated \u2192 Active or Rejected", "Export to CSV for spreadsheets and reporting", "Tap any entry to see full Indonesia listings"], tip: "Use the status labels to build your pipeline \u2014 from research to action.", visual: "history" },
   { id: "freight", icon: "\ud83d\udea2", badge: "LOGISTICS", title: "Freight Modes", subtitle: "How your goods get here", routes: [{ icon: "\u2708", name: "Air Freight", time: "5\u20137 days", best: "Samples, urgent, light items (<2kg)" }, { icon: "\ud83d\udea2", name: "Sea LCL", time: "14\u201328 days", best: "Small batches, testing the market" }, { icon: "\ud83d\udce6", name: "Sea FCL (20ft)", time: "18\u201325 days", best: "500+ units, proven products" }], tip: "Start with Air for samples. Scale to Sea once you\u2019ve validated demand.", visual: "freight" },
   { id: "tips", icon: "\u2728", badge: "VOIL\u00c0!", title: "You\u2019re Ready", subtitle: "Quick tips before you go", quickTips: [{ emoji: "\ud83c\udfaf", text: "Search for natural, handmade, or artisan products \u2014 Indonesia excels here" }, { emoji: "\ud83d\udcc8", text: "High reviews on Amazon = proven demand = lower risk" }, { emoji: "\ud83d\udca1", text: "Look for 40%+ margins \u2014 gives you room for unexpected costs" }, { emoji: "\ud83d\udd04", text: "Validate on both Source 1 (Tokopedia) and Source 2 (Shopee)" }, { emoji: "\ud83d\udcca", text: "Export your best candidates to CSV and track them" }, { emoji: "\ud83d\udea2", text: "Khorfakkan routes (marked with \u2605) are often best value" }], tip: null, visual: "tips" },
@@ -395,6 +395,7 @@ export default function App() {
   const [qtyMode, setQtyMode] = useState("unit");
   const [waveStatus, setWaveStatus] = useState([]);
   const [lookupView, setLookupView] = useState("landing"); // "landing" | "scrape" | "results"
+  const [marginAnalysisLoading, setMarginAnalysisLoading] = useState(false);
 
   // Discover state
   const [discSearchInput, setDiscSearchInput] = useState("");
@@ -846,50 +847,6 @@ export default function App() {
     ...calcRouteMargin(marginData.uaeProduct?.price_aed||0, marginData.uaeProduct?.pack_quantity||1, marginData.medianPriceIDR||0, marginData.weightClass||"medium", route),
   })) : [];
 
-  // ══════════ SCENARIO B: Regional similar items ══════════
-  const loadScenarioB = async () => {
-    if (!dryRunData || scenarioBLoading) return;
-    setScenarioBLoading(true);
-    try {
-      // First: check if discover history has relevant results from same region
-      const productKeywords = (dryRunData.clean_name_en || dryRunData.product_name || "").toLowerCase().split(/\s+/).filter(w => w.length > 3).slice(0, 3);
-      const source = dryRunData.source || "Amazon.ae";
-      // Check discover history for matching keyword searches
-      let similarPrices = [];
-      for (const dh of discHistory) {
-        const kwMatch = productKeywords.some(kw => dh.keyword.toLowerCase().includes(kw));
-        if (kwMatch && dh.results?.length) {
-          const sameSrc = dh.results.filter(r => r.source === source && r.price_aed > 0);
-          similarPrices.push(...sameSrc.map(r => r.price_aed));
-        }
-      }
-      // If no discover history match, try a quick ScrapingDog search
-      if (similarPrices.length < 3) {
-        const searchQ = (dryRunData.clean_name_en || dryRunData.product_name || "").replace(/[^a-zA-Z0-9\s]/g, "").trim().split(/\s+/).slice(0, 4).join(" ");
-        if (searchQ.length >= 3) {
-          addDiag("info", "scenarioB", `Searching similar: "${searchQ}" on ${source}`);
-          setStage("Finding similar items...");
-          try {
-            const domainCode = (source.match(/\.([a-z.]+)$/i) || [, "ae"])[1] || "ae";
-            const sdRes = await workerCall("scrapingdog_search", { query: searchQ, domain: domainCode, page: 1 });
-            const products = (sdRes.results || sdRes.organic_results || sdRes.search_results || sdRes || []);
-            const items = (Array.isArray(products) ? products : []).map(p => parseFloat(String(p.price || p.extracted_price || "0").replace(/[^0-9.]/g, "")) || 0).filter(p => p > 0);
-            similarPrices.push(...items);
-            addDiag("info", "scenarioB", `Found ${items.length} similar prices from ${source}`);
-          } catch (e) { addDiag("warn", "scenarioB", `Search failed: ${e.message}`); }
-        }
-      }
-      if (similarPrices.length > 0) {
-        const sorted = similarPrices.sort((a, b) => a - b);
-        const median = sorted[Math.floor(sorted.length / 2)];
-        const average = Math.round((sorted.reduce((s, x) => s + x, 0) / sorted.length) * 100) / 100;
-        setScenarioBData({ uaeMedian: median, uaeAverage: average, source, count: sorted.length, lowest: sorted[0], highest: sorted[sorted.length - 1] });
-      } else {
-        setScenarioBData({ uaeMedian: 0, uaeAverage: 0, source, count: 0 });
-      }
-    } catch (e) { addDiag("error", "scenarioB", e.message); }
-    setScenarioBLoading(false); setStage("");
-  };
 
   // Scenario B computed margins
   const scenarioBMargins = (scenarioBData && scenarioBData.uaeMedian > 0 && marginData) ? {
@@ -1549,10 +1506,8 @@ export default function App() {
       if (allResults.length === 0) { setAutoError("Source 1 returned 0 results. Try different queries."); setLoading(false); setStage(""); return; }
       const result = buildMarginData(dryRunData, allResults, indoResults, waves);
       setIndoResults(result.indo); setWaveStatus(result.indo.wave_status || []);
-      const mData = { uaeProduct: dryRunData, normalized: dryRunData, indoResults: result.indo, margins: result.margins, confidence: result.indo.confidence, medianPriceIDR: result.medianPriceIDR, lowestPriceIDR: result.lowestPriceIDR, highestPriceIDR: result.highestPriceIDR, weightClass: result.weightClass, timestamp: new Date().toISOString(), source: "apify", status: result.status };
-      setMarginData(mData);
-      const nh = [mData, ...historyRef.current].slice(0, MAX_HISTORY);
-      setHistory(nh); await saveHistoryNow(nh);
+      // Don't auto-calculate margins — user triggers separately
+      setMarginData(null); setScenarioBData(null);
       setLookupView("results");
       await incrementUsage("lookups_used");
     } catch (err) { setAutoError(err.message); if (err.message.includes("429")) setCooldown(30); }
@@ -1570,10 +1525,8 @@ export default function App() {
       if (allResults.length === 0) { setAutoError("Source 2 returned 0 results. Check if actor is rented."); setLoading(false); setStage(""); return; }
       const result = buildMarginData(dryRunData, allResults, indoResults, waves);
       setIndoResults(result.indo); setWaveStatus(result.indo.wave_status || []);
-      const mData = { uaeProduct: dryRunData, normalized: dryRunData, indoResults: result.indo, margins: result.margins, confidence: result.indo.confidence, medianPriceIDR: result.medianPriceIDR, lowestPriceIDR: result.lowestPriceIDR, highestPriceIDR: result.highestPriceIDR, weightClass: result.weightClass, timestamp: new Date().toISOString(), source: "apify", status: result.status };
-      setMarginData(mData);
-      const nh = [mData, ...historyRef.current].slice(0, MAX_HISTORY);
-      setHistory(nh); await saveHistoryNow(nh);
+      // Don't auto-calculate margins — user triggers separately
+      setMarginData(null); setScenarioBData(null);
       setLookupView("results");
       await incrementUsage("lookups_used");
     } catch (err) { setAutoError(err.message); if (err.message.includes("429")) setCooldown(30); }
@@ -1590,10 +1543,8 @@ export default function App() {
     try {
       const result = await runFullIndoSearch(dryRunData, queries);
       setIndoResults(result.indo); setWaveStatus(result.indo.wave_status || []);
-      const mData = { uaeProduct: dryRunData, normalized: dryRunData, indoResults: result.indo, margins: result.margins, confidence: result.indo.confidence, medianPriceIDR: result.medianPriceIDR, lowestPriceIDR: result.lowestPriceIDR, highestPriceIDR: result.highestPriceIDR, weightClass: result.weightClass, timestamp: new Date().toISOString(), source: result.indo.source, status: result.status };
-      setMarginData(mData);
-      const nh = [mData, ...historyRef.current].slice(0, MAX_HISTORY);
-      setHistory(nh); await saveHistoryNow(nh);
+      // Don't auto-calculate margins — user triggers separately
+      setMarginData(null); setScenarioBData(null);
       setLookupView("results");
       await incrementUsage("lookups_used");
     } catch (err) { setAutoError(err.message); if (err.message.includes("429")) setCooldown(30); }
@@ -1601,7 +1552,74 @@ export default function App() {
   };
 
   const updateHistoryStatus = (i, s) => setHistory(prev => prev.map((x, idx) => idx === i ? { ...x, status: s } : x));
-  const resetLookup = () => { setDryRunData(null); setUaeSimilar(null); setIndoResults(null); setMarginData(null); setAutoError(""); setUrl(""); setEditableQueries([]); setActiveSection(0); setWaveStatus([]); setLookupView("landing"); setScenarioBData(null); setMarginScenario("A"); setStreamingResults([]); streamingResultsRef.current = []; };
+  const resetLookup = () => { setDryRunData(null); setUaeSimilar(null); setIndoResults(null); setMarginData(null); setAutoError(""); setUrl(""); setEditableQueries([]); setActiveSection(0); setWaveStatus([]); setLookupView("landing"); setScenarioBData(null); setMarginScenario("A"); setStreamingResults([]); streamingResultsRef.current = []; setMarginAnalysisLoading(false); };
+
+  // ══════════ RUN MARGIN ANALYSIS (manual trigger, 1 quota) ══════════
+  const runMarginAnalysis = async () => {
+    if (!dryRunData || !indoResults?.results?.length || !authToken) return;
+    if (!checkQuota("margin")) return;
+    setMarginAnalysisLoading(true); setAutoError("");
+    try {
+      // ── Scenario A: Link price vs Indo ──
+      const wc = dryRunData.weight_class || "medium";
+      const med = indoResults.price_stats.median_idr;
+      const low = indoResults.price_stats.lowest_idr;
+      const high = indoResults.price_stats.highest_idr;
+      const margins = {
+        median: calcMargin(dryRunData.price_aed, dryRunData.pack_quantity || 1, med, wc),
+        best: calcMargin(dryRunData.price_aed, dryRunData.pack_quantity || 1, low, wc),
+        worst: calcMargin(dryRunData.price_aed, dryRunData.pack_quantity || 1, high, wc),
+      };
+      const status = margins.median.margin >= MARGIN_THRESHOLD.candidate ? "Candidate" : margins.median.margin >= MARGIN_THRESHOLD.borderline ? "Investigated" : "Rejected";
+      const mData = { uaeProduct: dryRunData, normalized: dryRunData, indoResults, margins, confidence: indoResults.confidence, medianPriceIDR: med, lowestPriceIDR: low, highestPriceIDR: high, weightClass: wc, timestamp: new Date().toISOString(), source: indoResults.source || "apify", status };
+      setMarginData(mData);
+      const nh = [mData, ...historyRef.current].slice(0, MAX_HISTORY);
+      setHistory(nh); await saveHistoryNow(nh);
+
+      // ── Scenario B: Auto-trigger similar item search ──
+      setScenarioBData(null); setScenarioBLoading(true);
+      try {
+        const productKeywords = (dryRunData.clean_name_en || dryRunData.product_name || "").toLowerCase().split(/\s+/).filter(w => w.length > 3).slice(0, 3);
+        const source = dryRunData.source || "Amazon.ae";
+        let similarPrices = [];
+        for (const dh of discHistory) {
+          const kwMatch = productKeywords.some(kw => dh.keyword.toLowerCase().includes(kw));
+          if (kwMatch && dh.results?.length) {
+            const sameSrc = dh.results.filter(r => r.source === source && r.price_aed > 0);
+            similarPrices.push(...sameSrc.map(r => r.price_aed));
+          }
+        }
+        if (similarPrices.length < 3) {
+          const searchQ = (dryRunData.clean_name_en || dryRunData.product_name || "").replace(/[^a-zA-Z0-9\s]/g, "").trim().split(/\s+/).slice(0, 4).join(" ");
+          if (searchQ.length >= 3) {
+            addDiag("info", "marginAnalysis", `Scenario B: Searching similar "${searchQ}" on ${source}`);
+            setStage("Finding similar items for Scenario B...");
+            try {
+              const domainCode = (source.match(/\.([a-z.]+)$/i) || [, "ae"])[1] || "ae";
+              const sdRes = await workerCall("scrapingdog_search", { query: searchQ, domain: domainCode, page: 1 });
+              const products = (sdRes.results || sdRes.organic_results || sdRes.search_results || sdRes || []);
+              const items = (Array.isArray(products) ? products : []).map(p => parseFloat(String(p.price || p.extracted_price || "0").replace(/[^0-9.]/g, "")) || 0).filter(p => p > 0);
+              similarPrices.push(...items);
+              addDiag("info", "marginAnalysis", `Scenario B: ${items.length} similar prices found`);
+            } catch (e) { addDiag("warn", "marginAnalysis", `Scenario B search failed: ${e.message}`); }
+          }
+        }
+        if (similarPrices.length > 0) {
+          const sorted = similarPrices.sort((a, b) => a - b);
+          const median = sorted[Math.floor(sorted.length / 2)];
+          const average = Math.round((sorted.reduce((s, x) => s + x, 0) / sorted.length) * 100) / 100;
+          setScenarioBData({ uaeMedian: median, uaeAverage: average, source, count: sorted.length, lowest: sorted[0], highest: sorted[sorted.length - 1] });
+        } else {
+          setScenarioBData({ uaeMedian: 0, uaeAverage: 0, source: dryRunData.source || "Amazon.ae", count: 0 });
+        }
+      } catch (e) { addDiag("warn", "marginAnalysis", `Scenario B error: ${e.message}`); }
+      setScenarioBLoading(false);
+
+      await incrementUsage("margins_used");
+      addDiag("ok", "marginAnalysis", `Margin analysis complete: A=${margins.median.margin.toFixed(1)}%`);
+    } catch (err) { setAutoError("Margin analysis failed: " + err.message); }
+    setMarginAnalysisLoading(false); setStage("");
+  };
 
   const restoreFromHistory = (entry) => {
     const product = entry.uaeProduct || {};
@@ -1773,7 +1791,7 @@ export default function App() {
       <div style={{ marginBottom: "16px", borderBottom: "1px solid " + c.border, paddingBottom: "12px" }}>
         <div className="bandar-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
           <div>
-            <h1 style={{ fontFamily: "'Lora',serif", fontSize: "28px", fontWeight: 500, color: c.gold, margin: 0 }}>Bandar <span style={{ fontSize: "12px", color: c.dimmer, fontFamily: "monospace" }}>v5.2</span></h1>
+            <h1 style={{ fontFamily: "'Lora',serif", fontSize: "28px", fontWeight: 500, color: c.gold, margin: 0 }}>Bandar <span style={{ fontSize: "12px", color: c.dimmer, fontFamily: "monospace" }}>v5.3</span></h1>
             <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "4px", letterSpacing: "2px", textTransform: "uppercase" }}>World {"\u2192"} Indonesia {"\u00b7"} {authUser?.email?.split("@")[0]} {isAdmin && <span style={{ color: c.red }}>{"\u00b7 ADMIN"}</span>} {"\u00b7"} {userProfile ? (TIER_LIMITS[userProfile.role]?.label || userProfile.role) : ""}{isAdmin && <>{" \u00b7 "}{fxUpdated ? "FX " + fxUpdated.toLocaleDateString() : "FX: defaults"}{" \u00b7 "}<span style={{ color: supabaseReady ? c.green : c.darkGold }}>{supabaseReady ? "\u25cf DB" : "\u25cb local"}</span></>}</div>
           </div>
           <div className="bandar-header-stats" style={{ display: "flex", gap: "12px", fontSize: "11px", alignItems: "flex-end" }}>
@@ -2217,6 +2235,18 @@ export default function App() {
             </div>
           </SectionToggle>}
 
+          {/* ── RUN MARGIN ANALYSIS BUTTON (when indo results exist but margin not yet run) ── */}
+          {indoResults?.results?.length > 0 && !marginData && !marginAnalysisLoading && <div style={{ padding: "20px", background: c.surface2, border: "2px dashed " + c.gold + "66", borderRadius: "8px", textAlign: "center", marginBottom: "8px" }}>
+            <div style={{ fontSize: "11px", color: c.dim, marginBottom: "10px" }}>Indonesia data loaded ({indoResults.results.length} listings). Run margin analysis to calculate profitability.</div>
+            <button onClick={runMarginAnalysis} style={{ ...btnGreen, padding: "14px 36px", fontSize: "13px", fontWeight: 700, letterSpacing: "1px" }}>{"\ud83d\udcca"} RUN MARGIN ANALYSIS</button>
+            <div style={{ fontSize: "9px", color: c.dimmer, marginTop: "8px" }}>Runs Scenario A (link price) + Scenario B (similar items) {"\u00b7"} Uses 1 margin analysis quota</div>
+          </div>}
+
+          {marginAnalysisLoading && <div style={{ padding: "20px", background: c.surface2, border: "1px solid " + c.gold + "44", borderRadius: "8px", textAlign: "center", marginBottom: "8px" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "10px" }}><Spinner /><span style={{ fontSize: "12px", color: c.gold }}>Running margin analysis (A + B)...</span></div>
+            {stage && <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "6px" }}>{stage}</div>}
+          </div>}
+
           {marginData && displayMargins && <SectionToggle index={2} title="Margin Analysis" icon={"\ud83d\udcca"}>
             {/* Scenario selector */}
             <div style={{ marginBottom: "14px", display: "flex", gap: "0", border: "1px solid " + c.border2, borderRadius: "4px", overflow: "hidden" }}>
@@ -2329,17 +2359,18 @@ export default function App() {
                 <div style={{ fontSize: "9px", color: c.dimmer }}>Searches for similar products on the same marketplace using the product name, then calculates margins using their market price distribution.</div>
               </div>
 
-              {/* Manual trigger */}
+              {/* Manual trigger — only if B wasn't loaded yet (e.g. restored from history) */}
               {!scenarioBData && !scenarioBLoading && <div style={{ textAlign: "center", padding: "20px" }}>
-                <button onClick={loadScenarioB} style={{ ...btnGreen, padding: "12px 28px", fontSize: "12px" }}>{"\ud83d\udd0d"} Run Market Analysis</button>
-                <div style={{ fontSize: "9px", color: c.dimmer, marginTop: "8px" }}>Finds similar items on {dryRunData.source || "Amazon.ae"} and compares regional pricing vs Indonesia</div>
+                <div style={{ fontSize: "10px", color: c.dimmer, marginBottom: "10px" }}>Scenario B data not available. Re-run margin analysis to load it.</div>
+                <button onClick={runMarginAnalysis} disabled={!indoResults?.results?.length} style={{ ...btnGreen, padding: "12px 28px", fontSize: "12px", opacity: !indoResults?.results?.length ? 0.4 : 1 }}>{"\ud83d\udcca"} Re-run Margin Analysis</button>
+                <div style={{ fontSize: "9px", color: c.dimmer, marginTop: "6px" }}>Uses 1 margin analysis quota</div>
               </div>}
 
               {scenarioBLoading && <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "20px", justifyContent: "center" }}><Spinner /><span style={{ fontSize: "12px", color: c.gold }}>Finding similar items...</span></div>}
 
               {scenarioBData && scenarioBData.count === 0 && <div style={{ padding: "20px", textAlign: "center" }}>
-                <div style={{ color: c.dimmer, fontSize: "11px", marginBottom: "10px" }}>No similar items found in {scenarioBData.source}. Try searching from Discover tab first, then come back.</div>
-                <button onClick={() => { setScenarioBData(null); loadScenarioB(); }} style={{ ...btnSec, padding: "8px 16px", fontSize: "10px" }}>{"\u21bb"} Try Again</button>
+                <div style={{ color: c.dimmer, fontSize: "11px", marginBottom: "10px" }}>No similar items found in {scenarioBData.source}. Try searching from Discover tab first, then re-run.</div>
+                <button onClick={runMarginAnalysis} disabled={!indoResults?.results?.length} style={{ ...btnSec, padding: "8px 16px", fontSize: "10px" }}>{"\u21bb"} Re-run Analysis (1 quota)</button>
               </div>}
 
               {scenarioBData && scenarioBData.count > 0 && <>
@@ -2400,14 +2431,15 @@ export default function App() {
                   </div>
                 </>}
 
-                {!scenarioBLoading && <button onClick={() => { setScenarioBData(null); loadScenarioB(); }} style={{ ...btnSec, padding: "6px 14px", fontSize: "9px", marginTop: "10px" }}>{"\u21bb"} Re-run Analysis</button>}
+                {!scenarioBLoading && <button onClick={runMarginAnalysis} disabled={!indoResults?.results?.length} style={{ ...btnSec, padding: "6px 14px", fontSize: "9px", marginTop: "10px", opacity: !indoResults?.results?.length ? 0.4 : 1 }}>{"\u21bb"} Re-run Analysis (1 quota)</button>}
               </>}
             </>}
           </SectionToggle>}
 
-          {!loading && <div style={{ display: "flex", justifyContent: "center", gap: "8px", marginTop: "12px" }}>
+          {!loading && <div style={{ display: "flex", justifyContent: "center", gap: "8px", marginTop: "12px", flexWrap: "wrap" }}>
             <button onClick={() => setLookupView("scrape")} style={{ ...btnSec, padding: "8px 20px", fontSize: "10px" }}>{"\u2190"} EDIT QUERIES</button>
             <button onClick={resetLookup} style={{ ...btnSec, padding: "8px 20px", fontSize: "10px" }}>{"\u2190"} NEW SEARCH</button>
+            {marginData && indoResults?.results?.length > 0 && <button onClick={runMarginAnalysis} disabled={marginAnalysisLoading} style={{ ...btnSec, padding: "8px 20px", fontSize: "10px", borderColor: c.gold + "66", color: c.gold }}>{"\u21bb"} RE-RUN MARGINS (1 quota)</button>}
             {marginData && <button onClick={exportPDF} style={{ ...btnSec, padding: "8px 16px", fontSize: "10px" }}>{"\ud83d\udcc4"} PDF</button>}
           </div>}
         </div>}
