@@ -487,6 +487,20 @@ export default function App() {
     } catch (e) { setInviteMsg("Error: " + e.message); }
   };
 
+  const deleteUser = async (uid, email) => {
+    if (!authToken || !isAdmin) return;
+    if (uid === userId) { alert("You cannot delete your own account."); return; }
+    if (!confirm("Permanently delete " + email + "?\n\nThis removes their account, profile, and all stored data. This cannot be undone.")) return;
+    try {
+      await workerCall("admin_delete_user", { userId: uid });
+      addDiag("ok", "admin", "Deleted user: " + email);
+      await loadAdminUsers();
+    } catch (e) {
+      addDiag("error", "admin", "Delete user failed: " + e.message);
+      alert("Delete failed: " + e.message);
+    }
+  };
+
   // ── Init: no auto-login, user must log in each visit ──
   useEffect(() => { (async () => {
     const t = await storeGet("global:theme"); if (t === "light") setDark(false);
@@ -2335,11 +2349,11 @@ export default function App() {
           <div style={{ fontSize: "10px", color: c.dimmer, marginBottom: "8px" }}>{adminUsers.length} users</div>
           {adminUsers.length === 0 && <button onClick={loadAdminUsers} style={{ ...btnGreen, padding: "8px 16px", fontSize: "10px" }}>LOAD USERS</button>}
           {adminUsers.length > 0 && <div style={{ overflowX: "auto" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 0.8fr 0.6fr 0.6fr 1fr", gap: "6px", padding: "6px 0", borderBottom: "1px solid " + c.border2, fontSize: "9px", color: c.dimmer, textTransform: "uppercase", minWidth: "500px" }}>
-              <div>Email</div><div>Role</div><div>Lookups</div><div>Margins</div><div>Joined</div>
+            <div style={{ display: "grid", gridTemplateColumns: "2fr 0.8fr 0.6fr 0.6fr 0.8fr 0.4fr", gap: "6px", padding: "6px 0", borderBottom: "1px solid " + c.border2, fontSize: "9px", color: c.dimmer, textTransform: "uppercase", minWidth: "550px" }}>
+              <div>Email</div><div>Role</div><div>Lookups</div><div>Margins</div><div>Joined</div><div></div>
             </div>
             {adminUsers.map(u => (
-              <div key={u.id} style={{ display: "grid", gridTemplateColumns: "2fr 0.8fr 0.6fr 0.6fr 1fr", gap: "6px", padding: "8px 0", borderBottom: "1px solid " + c.border, fontSize: "11px", alignItems: "center", minWidth: "500px" }}>
+              <div key={u.id} style={{ display: "grid", gridTemplateColumns: "2fr 0.8fr 0.6fr 0.6fr 0.8fr 0.4fr", gap: "6px", padding: "8px 0", borderBottom: "1px solid " + c.border, fontSize: "11px", alignItems: "center", minWidth: "550px" }}>
                 <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {u.email}
                   {u.display_name && <span style={{ color: c.dimmest }}>{" \u00b7 "}{u.display_name}</span>}
@@ -2356,6 +2370,7 @@ export default function App() {
                 <div style={{ color: c.gold, fontSize: "10px" }}>{u.lookups_used || 0}</div>
                 <div style={{ color: c.gold, fontSize: "10px" }}>{u.margins_used || 0}</div>
                 <div style={{ color: c.dimmest, fontSize: "9px" }}>{u.created_at ? new Date(u.created_at).toLocaleDateString() : "\u2014"}</div>
+                <div>{u.role !== "admin" && <button onClick={() => deleteUser(u.id, u.email)} style={{ padding: "2px 6px", fontSize: "8px", fontFamily: "monospace", cursor: "pointer", background: "transparent", color: c.red, border: "1px solid " + c.red + "44", borderRadius: "2px" }}>{"\u2715"}</button>}</div>
               </div>
             ))}
           </div>}
