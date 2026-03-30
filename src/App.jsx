@@ -112,7 +112,34 @@ function fmtUSD(n) { return n != null && !isNaN(n) ? "$" + n.toFixed(2) : "\u201
 function escapeHtml(s) { return !s ? "" : String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
 function sanitizeIDR(price) { if (typeof price === "string") { price = parseInt(price.replace(/^[Rr]p.?\s*/, "").replace(/\./g, "").replace(/,/g, "").trim(), 10) || 0; } if (typeof price !== "number" || isNaN(price)) return 0; if (price > 0 && price < 500) price = Math.round(price * 1000); if (price > 0 && price < 1000) price = Math.round(price * 1000); return Math.round(price); }
 function computeConfidence(results, priceStats) { const vp = results.filter(r => (r.price_idr || 0) >= 1000); const ws = results.filter(r => r.sold && r.sold.trim() && !/^-|^\u2014/.test(r.sold)).length; const spread = priceStats.highest_idr && priceStats.lowest_idr > 0 ? priceStats.highest_idr / priceStats.lowest_idr : 999; let score = 0, flags = []; if (vp.length >= 10) score += 40; else if (vp.length >= 5) score += 30; else if (vp.length >= 3) score += 20; else { score += 5; flags.push("Few valid prices"); } if (spread <= 3) score += 30; else if (spread <= 5) score += 20; else if (spread <= 10) score += 10; else flags.push("Wide spread (" + spread.toFixed(0) + "\u00d7)"); if (ws >= 5) score += 20; else if (ws >= 2) score += 10; else flags.push("No sold data"); const dr = results.length > 0 ? (results.length - vp.length) / results.length : 1; if (dr <= 0.1) score += 10; else if (dr <= 0.3) score += 5; else flags.push(Math.round(dr * 100) + "% discarded"); return { score, level: score >= 70 ? "high" : score >= 40 ? "medium" : "low", flags, validCount: vp.length, totalCount: results.length, withSold: ws, spread: spread < 999 ? spread : null }; }
-function guessCategory(n) { const l = (n || "").toLowerCase(); if (/phone|charger|cable|headphone|speaker|power bank|usb|bluetooth|watch/i.test(l)) return "electronics"; if (/pan|pot|kitchen|cook|bake|knife|blender|mixer|plate/i.test(l)) return "kitchen"; if (/cream|serum|lotion|shampoo|perfume|makeup|lipstick|skincare/i.test(l)) return "beauty"; if (/shirt|dress|shoe|bag|wallet|belt|hat|socks|jacket/i.test(l)) return "fashion"; if (/pillow|curtain|lamp|rug|mat|towel|organizer|shelf/i.test(l)) return "home"; if (/toy|game|puzzle|doll|lego|figure/i.test(l)) return "toys"; if (/ball|fitness|gym|yoga|exercise|bottle/i.test(l)) return "sports"; if (/baby|diaper|pacifier|stroller/i.test(l)) return "baby"; if (/pen|notebook|stapler|tape|folder|desk/i.test(l)) return "office"; return "other"; }
+function guessCategory(n) { const l = (n || "").toLowerCase(); if (/phone|charger|cable|headphone|speaker|power bank|usb|bluetooth|watch/i.test(l)) return "electronics"; if (/pan|pot|kitchen|cook|bake|knife|blender|mixer|plate|cutting.?board|talenan|chopping|peeler|grater|spatula|whisk|ladle|tong/i.test(l)) return "kitchen"; if (/cream|serum|lotion|shampoo|perfume|makeup|lipstick|skincare/i.test(l)) return "beauty"; if (/shirt|dress|shoe|bag|wallet|belt|hat|socks|jacket/i.test(l)) return "fashion"; if (/pillow|curtain|lamp|rug|mat|towel|organizer|shelf/i.test(l)) return "home"; if (/toy|game|puzzle|doll|lego|figure/i.test(l)) return "toys"; if (/ball|fitness|gym|yoga|exercise|bottle/i.test(l)) return "sports"; if (/baby|diaper|pacifier|stroller/i.test(l)) return "baby"; if (/pen|notebook|stapler|tape|folder|desk/i.test(l)) return "office"; return "other"; }
+// Local fallback search queries when Claude API is unavailable
+const EN_TO_ID = { "cutting board":"talenan", "chopping board":"talenan", "wood":"kayu", "wooden":"kayu", "teak":"jati", "bamboo":"bambu", "coconut":"kelapa", "bowl":"mangkok", "spoon":"sendok", "fork":"garpu", "plate":"piring", "knife":"pisau", "mat":"alas", "rug":"karpet", "towel":"handuk", "candle":"lilin", "soap":"sabun", "oil":"minyak", "essential oil":"minyak atsiri", "basket":"keranjang", "box":"kotak", "bag":"tas", "cup":"gelas", "mug":"gelas", "jar":"toples", "tray":"nampan", "rack":"rak", "shelf":"rak", "organizer":"organizer", "holder":"tempat", "stand":"dudukan", "lamp":"lampu", "mirror":"cermin", "pillow":"bantal", "cushion":"bantal", "blanket":"selimut", "large":"besar", "small":"kecil", "set":"set" };
+function fallbackSearchQueries(productName, brand) {
+  let clean = (productName || "").replace(/,.*$/, "");
+  if (brand) clean = clean.replace(new RegExp(brand.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), "");
+  clean = clean.replace(/\b(for|with|and|the|a|an|in|of|by|from|on|to|is|it)\b/gi, "").replace(/\s{2,}/g, " ").trim();
+  const specs = clean.match(/\d+(?:\.\d+)?\s*(?:ml|g|kg|oz|cm|mm|inch|qt|liter|litre|pc|pcs|pack|set|count)/gi) || [];
+  const specStr = specs.join(" ");
+  // Apply compound translations on full name (before truncating), handle plurals
+  let idFull = clean.toLowerCase().replace(/(\w)s\b/g, "$1");
+  Object.entries(EN_TO_ID).sort((a, b) => b[0].length - a[0].length).forEach(([en, id]) => { idFull = idFull.replace(new RegExp(en, "gi"), id); });
+  const idWords = idFull.split(/\s+/).filter(w => w.length > 1);
+  const enWords = clean.split(/\s+/).filter(w => w.length > 1);
+  const idCore = idWords.slice(0, 8).join(" ");
+  const enCore = enWords.slice(0, 6).join(" ");
+  // Add specs only if not already in the core string
+  const addSpec = specStr && !idCore.includes(specStr.split(" ")[0]) ? " " + specStr : "";
+  // Short Bahasa-only query (max 3 meaningful translated words)
+  const idShort = idWords.filter(w => !enWords.map(e => e.toLowerCase().replace(/s$/, "")).includes(w)).slice(0, 3);
+  if (idShort.length < 2) idShort.push(...idWords.slice(0, 3 - idShort.length));
+  const queries = [];
+  if (idCore !== enCore.toLowerCase()) queries.push((idCore + addSpec).trim());
+  queries.push((enCore + addSpec).trim());
+  if (idShort.length >= 2) queries.push(([...new Set(idShort)].join(" ") + addSpec).trim());
+  queries.push(enCore);
+  return { queries: [...new Set(queries)].filter(Boolean).slice(0, 4), cleanId: idCore !== enCore.toLowerCase() ? idCore : idWords.slice(0, 4).join(" "), cleanEn: enCore };
+}
 
 // ══════════ BRAND FILTER ══════════
 function isBrandBlocked(productName, brandName, blocklist) {
@@ -144,8 +171,8 @@ async function supabaseSet(key, val) { if (!supabaseReady) return false; const t
 async function storeGet(key) { try { const v = await supabaseGet(key); if (v !== null) { try { localStorage.setItem("gt:" + key, JSON.stringify(v)); } catch {} return v; } } catch {} try { const v = localStorage.getItem("gt:" + key); return v ? JSON.parse(v) : null; } catch { return null; } }
 async function storeSet(key, val) { try { localStorage.setItem("gt:" + key, JSON.stringify(val)); } catch {} try { return await supabaseSet(key, val); } catch { return false; } }
 
-function compressEntry(h) { const mm = h.margins?.median || {}; return { pn: h.uaeProduct?.product_name || "", pid: h.normalized?.clean_name_id || h.uaeProduct?.clean_name_id || "", pen: h.uaeProduct?.clean_name_en || h.normalized?.clean_name_en || "", br: h.uaeProduct?.brand || "", cat: h.normalized?.category || h.uaeProduct?.category || "", wc: h.weightClass || "medium", src: h.uaeProduct?.source || "", url: h.uaeProduct?.url || "", pa: h.uaeProduct?.price_aed || 0, pq: h.uaeProduct?.pack_quantity || 1, ir: (h.indoResults?.results || []).slice(0, 50).map(r => ({ n: r.name || "", p: r.price_idr || 0, s: r.source === "Shopee" ? "S" : "T", sl: r.seller || "", sd: r.sold || "" })), lo: h.lowestPriceIDR || 0, md: h.medianPriceIDR || 0, hi: h.highestPriceIDR || 0, nr: h.indoResults?.price_stats?.num_results || 0, mb: h.margins?.best?.margin || 0, mm: h.margins?.median?.margin || 0, mw: h.margins?.worst?.margin || 0, mc: { uU: mm.uaeUSD||0, uA: mm.uaeAED||0, uI: mm.uaeIDR||0, iU: mm.indoUSD||0, iA: mm.indoAED||0, iI: mm.indoIDR||0, fU: mm.freightUSD||0, fA: mm.freightAED||0, fI: mm.freightIDR||0, dU: mm.dutyUSD||0, dA: mm.dutyAED||0, dI: mm.dutyIDR||0, lU: mm.lastMileUSD||0, lA: mm.lastMileAED||0, lI: mm.lastMileIDR||0, tU: mm.totalUSD||0, tA: mm.totalAED||0, tI: mm.totalIDR||0 }, cs: h.confidence?.score || 0, cl: h.confidence?.level || "low", cf: h.confidence?.flags || [], st: h.status || "", ts: h.timestamp || "", ap: h.source === "apify" ? 1 : 0 }; }
-function expandEntry(c) { if (c.uaeProduct) return c; const mc = c.mc || {}; return { uaeProduct: { product_name: c.pn, clean_name_en: c.pen, clean_name_id: c.pid, brand: c.br, category: c.cat, weight_class: c.wc, source: c.src, url: c.url, price_aed: c.pa, pack_quantity: c.pq || 1 }, normalized: { clean_name_id: c.pid, clean_name_en: c.pen, category: c.cat, weight_class: c.wc }, indoResults: { results: (c.ir || []).map(r => ({ name: r.n, price_idr: r.p, source: r.s === "S" ? "Shopee" : "Tokopedia", seller: r.sl, sold: r.sd, url: "" })), price_stats: { lowest_idr: c.lo, median_idr: c.md, highest_idr: c.hi, num_results: c.nr }, confidence: { score: c.cs, level: c.cl, flags: c.cf } }, margins: { best: { margin: c.mb }, median: { margin: c.mm, uaeUSD: mc.uU, uaeAED: mc.uA, uaeIDR: mc.uI, indoUSD: mc.iU, indoAED: mc.iA, indoIDR: mc.iI, freightUSD: mc.fU, freightAED: mc.fA, freightIDR: mc.fI, dutyUSD: mc.dU, dutyAED: mc.dA, dutyIDR: mc.dI, lastMileUSD: mc.lU, lastMileAED: mc.lA, lastMileIDR: mc.lI, totalUSD: mc.tU, totalAED: mc.tA, totalIDR: mc.tI }, worst: { margin: c.mw } }, confidence: { score: c.cs, level: c.cl, flags: c.cf }, medianPriceIDR: c.md, lowestPriceIDR: c.lo, highestPriceIDR: c.hi, weightClass: c.wc, status: c.st, timestamp: c.ts, source: c.ap ? "apify" : "legacy" }; }
+function compressEntry(h) { const mm = h.margins?.median || {}; return { pn: h.uaeProduct?.product_name || "", pnid: h.uaeProduct?.product_name_id || "", pid: h.normalized?.clean_name_id || h.uaeProduct?.clean_name_id || "", pen: h.uaeProduct?.clean_name_en || h.normalized?.clean_name_en || "", br: h.uaeProduct?.brand || "", cat: h.normalized?.category || h.uaeProduct?.category || "", wc: h.weightClass || "medium", src: h.uaeProduct?.source || "", url: h.uaeProduct?.url || "", pa: h.uaeProduct?.price_aed || 0, pq: h.uaeProduct?.pack_quantity || 1, ir: (h.indoResults?.results || []).slice(0, 50).map(r => ({ n: r.name || "", p: r.price_idr || 0, s: r.source === "Shopee" ? "S" : "T", sl: r.seller || "", sd: r.sold || "" })), lo: h.lowestPriceIDR || 0, md: h.medianPriceIDR || 0, hi: h.highestPriceIDR || 0, nr: h.indoResults?.price_stats?.num_results || 0, mb: h.margins?.best?.margin || 0, mm: h.margins?.median?.margin || 0, mw: h.margins?.worst?.margin || 0, mc: { uU: mm.uaeUSD||0, uA: mm.uaeAED||0, uI: mm.uaeIDR||0, iU: mm.indoUSD||0, iA: mm.indoAED||0, iI: mm.indoIDR||0, fU: mm.freightUSD||0, fA: mm.freightAED||0, fI: mm.freightIDR||0, dU: mm.dutyUSD||0, dA: mm.dutyAED||0, dI: mm.dutyIDR||0, lU: mm.lastMileUSD||0, lA: mm.lastMileAED||0, lI: mm.lastMileIDR||0, tU: mm.totalUSD||0, tA: mm.totalAED||0, tI: mm.totalIDR||0 }, cs: h.confidence?.score || 0, cl: h.confidence?.level || "low", cf: h.confidence?.flags || [], st: h.status || "", ts: h.timestamp || "", ap: h.source === "apify" ? 1 : 0 }; }
+function expandEntry(c) { if (c.uaeProduct) return c; const mc = c.mc || {}; return { uaeProduct: { product_name: c.pn, product_name_id: c.pnid || "", clean_name_en: c.pen, clean_name_id: c.pid, brand: c.br, category: c.cat, weight_class: c.wc, source: c.src, url: c.url, price_aed: c.pa, pack_quantity: c.pq || 1 }, normalized: { clean_name_id: c.pid, clean_name_en: c.pen, category: c.cat, weight_class: c.wc }, indoResults: { results: (c.ir || []).map(r => ({ name: r.n, price_idr: r.p, source: r.s === "S" ? "Shopee" : "Tokopedia", seller: r.sl, sold: r.sd, url: "" })), price_stats: { lowest_idr: c.lo, median_idr: c.md, highest_idr: c.hi, num_results: c.nr }, confidence: { score: c.cs, level: c.cl, flags: c.cf } }, margins: { best: { margin: c.mb }, median: { margin: c.mm, uaeUSD: mc.uU, uaeAED: mc.uA, uaeIDR: mc.uI, indoUSD: mc.iU, indoAED: mc.iA, indoIDR: mc.iI, freightUSD: mc.fU, freightAED: mc.fA, freightIDR: mc.fI, dutyUSD: mc.dU, dutyAED: mc.dA, dutyIDR: mc.dI, lastMileUSD: mc.lU, lastMileAED: mc.lA, lastMileIDR: mc.lI, totalUSD: mc.tU, totalAED: mc.tA, totalIDR: mc.tI }, worst: { margin: c.mw } }, confidence: { score: c.cs, level: c.cl, flags: c.cf }, medianPriceIDR: c.md, lowestPriceIDR: c.lo, highestPriceIDR: c.hi, weightClass: c.wc, status: c.st, timestamp: c.ts, source: c.ap ? "apify" : "legacy" }; }
 async function loadHistory(pin) { try { const d = await storeGet(pin + ":history"); return d?.length ? d.map(expandEntry) : []; } catch { return []; } }
 async function saveHistory(pin, h) { try { return await storeSet(pin + ":history", h.map(compressEntry)); } catch { return false; } }
 // hashPin removed — replaced by Supabase Auth
@@ -160,9 +187,9 @@ function CookieWizard({ c, onSave, onClose }) { const [step, setStep] = useState
 
 // ══════════ BANDAR USER GUIDE ══════════
 const GUIDE_STEPS = [
-  { id: "welcome", icon: "\ud83c\udfea", badge: "START HERE", title: "Welcome to Bandar", subtitle: "Your trade opportunity finder", body: "Bandar helps you find products in the UAE \u2014 that can be sourced from Indonesia.", tip: "Think of it as your personal trade scout. It does the price comparison legwork for you.", visual: "flow" },
+  { id: "welcome", icon: "\ud83c\udfea", badge: "START HERE", title: "Welcome to Bandar", subtitle: "Your trade opportunity finder", body: "Bandar helps you find products selling at high prices in the UAE \u2014 that can be sourced cheaply from Indonesia.", tip: "Think of it as your personal trade scout. It does the price comparison legwork for you.", visual: "flow" },
   { id: "discover", icon: "\ud83d\udd0d", badge: "TAB 1", title: "Discover", subtitle: "Search for products on Amazon UAE", body: "Type any product keyword \u2014 like \"coconut bowl\" or \"rattan basket\" \u2014 and hit Search. Bandar fetches real Amazon.ae listings with prices and reviews.", steps: ["Type a product keyword in the search box", "Tap SEARCH AMAZON", "Browse results \u2014 sorted by popularity", "Tap VALIDATE on any product to check its Indonesia margin"], tip: "High review count = proven demand. Start there!", visual: "discover" },
-  { id: "lookup", icon: "\u26a1", badge: "TAB 2", title: "Lookup", subtitle: "Deep-dive any specific product", body: "Found a product link on Amazon? Paste it here. Bandar reads the product, translates it to Indonesian, and searches Indonesian source for you.", steps: ["Paste any Amazon product URL", "Tap QUICK CHECK \u2014 Bandar reads the product", "Review the auto-generated search queries", "Tap Explore Source 1 and/or Source 2", "Tap RUN MARGIN ANALYSIS to calculate profitability (A + B)"], tip: "You can edit the search queries before exploring \u2014 add your own keywords for better results.", visual: "lookup" },
+  { id: "lookup", icon: "\u26a1", badge: "TAB 2", title: "Lookup", subtitle: "Deep-dive any specific product", body: "Found a product link on Amazon? Paste it here. Bandar reads the product, translates it to Indonesian, and searches Tokopedia & Shopee for you.", steps: ["Paste any Amazon product URL", "Tap QUICK CHECK \u2014 Bandar reads the product", "Review the auto-generated search queries", "Tap Explore Source 1 and/or Source 2", "Tap RUN MARGIN ANALYSIS to calculate profitability (A + B)"], tip: "You can edit the search queries before exploring \u2014 add your own keywords for better results.", visual: "lookup" },
   { id: "margins", icon: "\ud83d\udcca", badge: "THE GOOD STUFF", title: "Reading Your Margins", subtitle: "Is this product worth trading?", body: "After exploring Indonesian prices, Bandar calculates your profit margin \u2014 including freight, customs, and last-mile delivery costs.", highlights: [{ color: "#2EAA5A", label: "40%+", desc: "Strong candidate \u2014 worth pursuing" }, { color: "#D4A843", label: "20\u201340%", desc: "Borderline \u2014 needs volume or negotiation" }, { color: "#f87171", label: "Below 20%", desc: "Likely not profitable after costs" }], tip: "Compare routes! Khorfakkan (Sharjah) routes are often cheaper and faster than Dubai.", visual: "margins" },
   { id: "scenarios", icon: "\ud83c\udfaf", badge: "PRO MOVE", title: "Scenario A vs B", subtitle: "Two ways to check viability", body: "One click runs both scenarios. Scenario A uses the exact product link price. Scenario B finds similar products on Amazon and uses their average \u2014 giving you a market-wide view. Each run costs 1 margin analysis quota.", highlights: [{ color: "#C9A84C", label: "Scenario A", desc: "Your link price vs Indonesia median" }, { color: "#2EAA5A", label: "Scenario B", desc: "Market average vs Indonesia \u2014 broader view" }], tip: "Use Scenario A for a specific deal. Use Scenario B to validate the whole category.", visual: "scenarios" },
   { id: "history", icon: "\ud83d\udccb", badge: "TAB 3", title: "History", subtitle: "Track everything you\u2019ve researched", body: "Every product you look up is saved automatically. Come back anytime to review, compare, or export your findings.", steps: ["All lookups are saved with margins and status", "Set status: Candidate \u2192 Investigated \u2192 Active or Rejected", "Export to CSV for spreadsheets and reporting", "Tap any entry to see full Indonesia listings"], tip: "Use the status labels to build your pipeline \u2014 from research to action.", visual: "history" },
@@ -817,6 +844,28 @@ export default function App() {
     throw new Error("No valid JSON");
   };
 
+  // ══════════ GOOGLE TRANSLATE (via Worker) ══════════
+  const translateProduct = async (productName, brand) => {
+    try {
+      // Strip brand from name for cleaner translation
+      let cleanName = productName;
+      if (brand) cleanName = cleanName.replace(new RegExp(brand.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), "").trim();
+      // Remove filler words but keep specs
+      cleanName = cleanName.replace(/\b(for|with|and|the|a|an|in|of|by|from|on|to|is|it)\b/gi, "").replace(/\s{2,}/g, " ").replace(/,\s*$/, "").trim();
+      addDiag("info", "translate", `Google Translate: "${cleanName.slice(0, 80)}"`);
+      const res = await workerCall("translate", { text: cleanName, from: "en", to: "id" });
+      if (res.translated) {
+        addDiag("ok", "translate", `Result: "${res.translated.slice(0, 80)}"${res.source ? " (via " + res.source + ")" : ""}`);
+        return res.translated;
+      }
+      addDiag("warn", "translate", "Empty translation result");
+      return null;
+    } catch (e) {
+      addDiag("warn", "translate", `Google Translate failed: ${e.message}`);
+      return null;
+    }
+  };
+
   // ══════════ MARGIN CALCULATOR ══════════
   const calcMargin = (uaePriceAed, packQty, indoIDR, weightClass, fMode = "air") => {
     const uaeUnitAed = uaePriceAed / (packQty || 1); const uaeUSD = uaeUnitAed * fx.AEDUSD; const indoUSD = indoIDR * fx.IDRUSD;
@@ -1012,9 +1061,9 @@ export default function App() {
       if (partial.length > 0) setStreamingResults(prev => { const merged = [...prev]; partial.forEach(p => { if (!merged.find(m => m.name === p.name && m.price_idr === p.price_idr)) merged.push(p); }); streamingResultsRef.current = merged; return merged; });
     };
 
-    // Attempt 1: Apify actor (relevancy sort)
-    const shopeeInput = { searchKeywords: allQueries.slice(0, 3), country: "ID", maxProducts: 100, scrapeMode: "fast", sortBy: "relevancy", shopeeCookies: shopeeCookie || "[]", proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ["RESIDENTIAL"], apifyProxyCountry: "ID" } };
-    addDiag("info", "shopee_apify", `Query: "${mainQ}" (attempt 1: relevancy)`);
+    // Attempt 1: Apify actor (relevancy sort, moderate batch)
+    const shopeeInput = { searchKeywords: allQueries.slice(0, 2), country: "ID", maxProducts: 30, scrapeMode: "fast", sortBy: "relevancy", shopeeCookies: shopeeCookie || "[]", proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ["RESIDENTIAL"], apifyProxyCountry: "ID" } };
+    addDiag("info", "shopee_apify", `Query: "${mainQ}" (attempt 1: relevancy, max30)`);
     setStage("Exploring Source 2..."); setProgress(10);
     try {
       const items = await runApifyActor(shopeeActorId, shopeeInput, "Source 2", onPartial);
@@ -1024,7 +1073,7 @@ export default function App() {
         waves.push({ name: "Source 2", status: "ok", count: results.length });
         return { allResults: results, waves, source: "apify" };
       }
-      addDiag("warn", "shopee_apify", `Attempt 1: 0 valid, retrying with sales sort...`);
+      addDiag("warn", "shopee_apify", `Attempt 1: 0 valid, retrying with sales sort + full mode...`);
     } catch (e) {
       addDiag("warn", "shopee_apify", `Attempt 1 failed: ${typeof e === "object" ? (e.message || JSON.stringify(e)) : String(e)}`);
       // Return streaming results if stopped early
@@ -1038,10 +1087,11 @@ export default function App() {
       }
     }
 
-    // Attempt 2: Retry with sales sort
+    // Attempt 2: Retry with sales sort, full scrape mode, simplified query
     if (!apifyAbortRef.current) {
-      const retryInput = { searchKeywords: [mainQ], country: "ID", maxProducts: 100, scrapeMode: "fast", sortBy: "sales", shopeeCookies: shopeeCookie || "[]", proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ["RESIDENTIAL"], apifyProxyCountry: "ID" } };
-      addDiag("info", "shopee_apify", `Attempt 2: sortBy=sales`);
+      const simpleQ = mainQ.split(/\s+/).slice(0, 3).join(" ");
+      const retryInput = { searchKeywords: [simpleQ], country: "ID", maxProducts: 20, scrapeMode: "full", sortBy: "sales", shopeeCookies: shopeeCookie || "[]", proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ["RESIDENTIAL"], apifyProxyCountry: "ID" } };
+      addDiag("info", "shopee_apify", `Attempt 2: sortBy=sales, mode=full, q="${simpleQ}"`);
       setStage("Retrying Source 2 (best sellers)..."); setProgress(10);
       try {
         const items = await runApifyActor(shopeeActorId, retryInput, "Source 2 retry", onPartial);
@@ -1476,10 +1526,15 @@ export default function App() {
       let data = null;
 
       if (sdParsed) {
-        // ── Part B: SD succeeded → only call Haiku for translation + classification ──
+        // ── Part B: SD succeeded → Google Translate + Claude for classification ──
         setStage("Translating...");
-        addDiag("info", "lookup", "SD path: Haiku translate only");
+        addDiag("info", "lookup", "SD path: Google Translate + Haiku classify");
         const specInfo = sdParsed.spec_summary ? "\nProduct specs: " + sdParsed.spec_summary : "";
+
+        // Layer 1: Google Translate (fast, guaranteed) — runs in parallel with Claude
+        const gTranslateP = translateProduct(sdParsed.product_name, sdParsed.brand);
+
+        // Layer 2: Claude for smart search queries + classification
         const transPrompt = 'Generate search queries for finding this product on Indonesian marketplaces (Tokopedia/Shopee).\n\nRULES:\n1. Strip ALL brand names but KEEP product specs (size, volume, weight, ml, gram, count)\n2. Mix of Bahasa Indonesia AND English queries — Indonesian buyers often search in English too\n3. Include the specific size/volume in at least 2 queries (e.g. "10ml", "500g", "1 liter")\n4. Each query 2-5 words, specific enough to find THIS product, not just the category\n\nExamples:\n"Gya Labs Vanilla Roller On Essential Oil 10ml" → queries=["roller oil vanilla 10ml","minyak vanilla roll on 10ml","essential oil vanilla roller","minyak atsiri vanilla 10ml"]\n"Nielsen-Massey Madagascar Bourbon Vanilla Bean Paste 32oz" → queries=["vanilla bean paste 32oz","pasta vanilla 900ml","vanilla extract pure"]\n"KitchenAid Artisan Stand Mixer 5Qt" → queries=["stand mixer 5 quart","mixer berdiri adonan","mixer kue besar"]\n\nProduct: "' + sdParsed.product_name + '"' + specInfo + '\nBrand to REMOVE: "' + (sdParsed.brand || "") + '"\n\n{"clean_name_en":"2-4 word generic English name with size if applicable","clean_name_id":"2-4 word Bahasa name","product_summary":"one-line: what it is + size/volume + key feature (max 15 words)","category":"electronics/kitchen/beauty/fashion/home/toys/sports/baby/office/other","weight_class":"light/medium/heavy","search_queries_id":["mixed lang query with specs","bahasa query with specs","english query with specs","variant query"],"search_queries_en":["short english query with specs"]}\nJSON only:';
         const transModels = ["claude-haiku-4-5-20251001", "claude-sonnet-4-20250514"];
         for (let attempt = 0; attempt < transModels.length && !data; attempt++) {
@@ -1495,12 +1550,23 @@ export default function App() {
             if (attempt < transModels.length - 1) await wait(1500);
           }
         }
-        // If translation completely fails, still use SD data with basic defaults
+
+        // Await Google Translate result (should be done by now — it's ~200ms)
+        const gTranslated = await gTranslateP;
+
+        // If Claude completely fails, use Google Translate for everything
         if (!data) {
-          addDiag("warn", "lookup", "All translate attempts failed, using SD data with defaults");
-          const fallbackId = sdParsed.product_name;
-          data = { ...sdParsed, clean_name_en: sdParsed.product_name, clean_name_id: fallbackId, category: guessCategory(sdParsed.product_name), weight_class: "medium", search_queries_id: [fallbackId], search_queries_en: [sdParsed.product_name], specs: sdParsed.specs, spec_summary: sdParsed.spec_summary, product_summary: sdParsed.spec_summary || "" };
+          addDiag("warn", "lookup", "All Claude attempts failed, using Google Translate + local fallback");
+          const fb = fallbackSearchQueries(sdParsed.product_name, sdParsed.brand);
+          // Build queries from Google-translated name if available
+          const gtQueries = gTranslated ? gTranslated.split(/\s+/).filter(w => w.length > 1).slice(0, 6).join(" ") : null;
+          const queries = gtQueries ? [gtQueries, ...fb.queries].slice(0, 5) : fb.queries;
+          addDiag("info", "lookup", `Fallback queries: ${JSON.stringify(queries)}`);
+          data = { ...sdParsed, clean_name_en: fb.cleanEn, clean_name_id: gTranslated || fb.cleanId, category: guessCategory(sdParsed.product_name), weight_class: "medium", search_queries_id: [...new Set(queries)], search_queries_en: [fb.cleanEn], specs: sdParsed.specs, spec_summary: sdParsed.spec_summary, product_summary: sdParsed.spec_summary || "" };
         }
+
+        // Always attach Google-translated full product name (independent of Claude)
+        if (gTranslated) data.product_name_id = gTranslated;
       } else {
         // ── Legacy path: No SD data → full Claude format (existing flow) ──
         if (!rawInfo) { setStage("Reading product..."); rawInfo = await runWithProgress(() => callClaude("Find product details for " + marketplace + " listing.\nURL: " + input + (asin ? "\nASIN: " + asin : "") + "\nI need: name, price AED, brand, rating, reviews, pack size.", "claude-sonnet-4-20250514", true, 2, 4096), 12); }
@@ -1519,9 +1585,16 @@ export default function App() {
           }
         }
         if (!data) throw new Error("Format failed — check DIAG log for details.");
+        // Legacy path: also get Google Translate for the product name
+        if (data.product_name && !data.product_name_id) {
+          const gt = await translateProduct(data.product_name, data.brand);
+          if (gt) data.product_name_id = gt;
+        }
       }
       if (!data.product_name) throw new Error("Product not found.");
       if (!data.price_aed) { const pm = rawInfo.match(/AED\s*(\d+(?:[.,]\d+)?)/i); if (pm) data.price_aed = parseFloat(pm[1].replace(/,/g, "")); }
+      // Ensure product_name_id exists (fallback to clean_name_id if Google Translate wasn't available)
+      if (!data.product_name_id) data.product_name_id = data.clean_name_id || "";
       data.source = data.source || marketplace; data.url = input;
       setDryRunData(data);
       setEditableQueries([...(data.search_queries_id || [data.clean_name_id]), ...(data.search_queries_en || [])].filter(Boolean));
@@ -1699,7 +1772,7 @@ export default function App() {
     const confLine = conf ? '<div style="padding:8px;background:' + (conf.level === "high" ? "#e8f5ec" : conf.level === "medium" ? "#fdf8ed" : "#fef2f2") + ';border-radius:4px;margin-top:12px;text-align:center;font-size:12px"><strong>Confidence:</strong> ' + conf.score + '/100 (' + conf.level.toUpperCase() + ')' + (conf.flags?.length ? ' — ' + conf.flags.join(', ') : '') + '</div>' : '';
     const html = '<!DOCTYPE html><html><head><title>Bandar Analysis</title><style>body{font-family:Arial,sans-serif;padding:40px;max-width:800px;margin:0 auto;color:#1a1a1a}h1{font-size:20px;border-bottom:2px solid #1a7a3a;padding-bottom:8px}h2{font-size:14px;color:#8B6914;margin-top:24px}table{width:100%;border-collapse:collapse;margin:12px 0}td,th{padding:8px 12px;border:1px solid #ddd;text-align:left;font-size:12px}th{background:#f5f2eb;font-weight:700}.green{color:#1a7a3a}.red{color:#dc2626}.big{font-size:28px;font-weight:700;text-align:center;padding:16px}.verdict{padding:12px;text-align:center;border-radius:4px;font-weight:700;margin-top:16px}@media print{body{padding:20px}}</style></head><body>' +
       '<h1>Bandar Analysis</h1><p><strong>Date:</strong> ' + new Date().toLocaleDateString() + ' | <strong>FX:</strong> 1 AED = ' + Math.round(fx.AED_TO_IDR) + ' IDR</p>' +
-      '<h2>Product</h2><table><tr><th>Name</th><td>' + escapeHtml(marginData.uaeProduct?.product_name) + '</td></tr><tr><th>Bahasa</th><td>' + escapeHtml(marginData.normalized?.clean_name_id) + '</td></tr><tr><th>Source</th><td>' + (marginData.uaeProduct?.source || "") + ' | AED ' + (marginData.uaeProduct?.price_aed || 0) + (marginData.uaeProduct?.pack_quantity > 1 ? ' (' + marginData.uaeProduct.pack_quantity + '-pack)' : '') + '</td></tr></table>' +
+      '<h2>Product</h2><table><tr><th>Name</th><td>' + escapeHtml(marginData.uaeProduct?.product_name) + '</td></tr>' + (marginData.uaeProduct?.product_name_id ? '<tr><th>Nama (ID)</th><td>' + escapeHtml(marginData.uaeProduct.product_name_id) + '</td></tr>' : '') + '<tr><th>Bahasa</th><td>' + escapeHtml(marginData.normalized?.clean_name_id) + '</td></tr><tr><th>Source</th><td>' + (marginData.uaeProduct?.source || "") + ' | AED ' + (marginData.uaeProduct?.price_aed || 0) + (marginData.uaeProduct?.pack_quantity > 1 ? ' (' + marginData.uaeProduct.pack_quantity + '-pack)' : '') + '</td></tr></table>' +
       '<h2>Indonesia Market (Median of ' + (marginData.indoResults?.price_stats?.num_results || 0) + ' listings)</h2><table><tr><th></th><th>Lowest</th><th>Median</th><th>Highest</th></tr><tr><th>IDR</th><td>' + fmtIDR(marginData.lowestPriceIDR) + '</td><td>' + fmtIDR(marginData.medianPriceIDR) + '</td><td>' + fmtIDR(marginData.highestPriceIDR) + '</td></tr></table>' + confLine +
       '<h2>Margin (\u00d7' + q + ')</h2><table><tr><th>Item</th><th>USD</th><th>AED</th><th>IDR</th></tr>' +
       '<tr><th>UAE Sell</th><td>' + fmtUSD(m.uaeUSD*q) + '</td><td>' + fmtAED(m.uaeAED*q) + '</td><td>' + fmtIDR(m.uaeIDR*q) + '</td></tr>' +
@@ -1715,7 +1788,7 @@ export default function App() {
     const w = window.open("", "_blank"); w.document.write(html); w.document.close();
   };
   const exportQuickCSV = () => { if (!history.length) return; const h = ["Date","Product","AED","Bahasa","Category","Indo Median IDR","Margin %","Status"]; const r = history.map(x => [x.timestamp?.slice(0,10)||"",'"'+(x.uaeProduct?.product_name||"")+'"',x.uaeProduct?.price_aed||0,'"'+(x.normalized?.clean_name_id||"")+'"',x.normalized?.category||"",x.medianPriceIDR||0,(x.margins?.median?.margin||0).toFixed(1),x.status||""].join(",")); const b = new Blob([[h.join(","),...r].join("\n")], { type: "text/csv" }); const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = "bandar-quick-" + new Date().toISOString().slice(0, 10) + ".csv"; a.click(); };
-  const exportStructuredCSV = () => { if (!history.length) return; const headers = ["Date","Product EN","Product ID","Brand","Category","Weight","Source","Pack","AED","USD","Indo Med IDR","Indo Low IDR","Indo Hi IDR","Freight USD","Customs USD","Last Mile USD","Total Cost USD","Margin Best%","Margin Med%","Margin Worst%","Conf Score","Status"]; const rows = history.map(h => { const m = h.margins?.median || {}; return [h.timestamp?.slice(0,10)||"",'"'+(h.uaeProduct?.product_name||"").replace(/"/g,'""')+'"','"'+(h.normalized?.clean_name_id||"").replace(/"/g,'""')+'"','"'+(h.uaeProduct?.brand||"")+'"',h.normalized?.category||"",h.weightClass||"",h.uaeProduct?.source||"",h.uaeProduct?.pack_quantity||1,h.uaeProduct?.price_aed||0,(m.uaeUSD||0).toFixed(2),h.medianPriceIDR||0,h.lowestPriceIDR||0,h.highestPriceIDR||0,(m.freightUSD||0).toFixed(2),(m.dutyUSD||0).toFixed(2),(m.lastMileUSD||0).toFixed(2),(m.totalUSD||0).toFixed(2),(h.margins?.best?.margin||0).toFixed(1),(h.margins?.median?.margin||0).toFixed(1),(h.margins?.worst?.margin||0).toFixed(1),h.confidence?.score||0,h.status||""].join(","); }); const blob = new Blob([[headers.join(","), ...rows].join("\n")], { type: "text/csv" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "bandar-analysis-" + new Date().toISOString().slice(0, 10) + ".csv"; a.click(); };
+  const exportStructuredCSV = () => { if (!history.length) return; const headers = ["Date","Product EN","Product ID (Full)","Product ID (Short)","Brand","Category","Weight","Source","Pack","AED","USD","Indo Med IDR","Indo Low IDR","Indo Hi IDR","Freight USD","Customs USD","Last Mile USD","Total Cost USD","Margin Best%","Margin Med%","Margin Worst%","Conf Score","Status"]; const rows = history.map(h => { const m = h.margins?.median || {}; return [h.timestamp?.slice(0,10)||"",'"'+(h.uaeProduct?.product_name||"").replace(/"/g,'""')+'"','"'+(h.uaeProduct?.product_name_id||"").replace(/"/g,'""')+'"','"'+(h.normalized?.clean_name_id||"").replace(/"/g,'""')+'"','"'+(h.uaeProduct?.brand||"")+'"',h.normalized?.category||"",h.weightClass||"",h.uaeProduct?.source||"",h.uaeProduct?.pack_quantity||1,h.uaeProduct?.price_aed||0,(m.uaeUSD||0).toFixed(2),h.medianPriceIDR||0,h.lowestPriceIDR||0,h.highestPriceIDR||0,(m.freightUSD||0).toFixed(2),(m.dutyUSD||0).toFixed(2),(m.lastMileUSD||0).toFixed(2),(m.totalUSD||0).toFixed(2),(h.margins?.best?.margin||0).toFixed(1),(h.margins?.median?.margin||0).toFixed(1),(h.margins?.worst?.margin||0).toFixed(1),h.confidence?.score||0,h.status||""].join(","); }); const blob = new Blob([[headers.join(","), ...rows].join("\n")], { type: "text/csv" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "bandar-analysis-" + new Date().toISOString().slice(0, 10) + ".csv"; a.click(); };
   const exportBrainstormCSV = (products, label) => { if (!products.length) return; const h = ["Name","AED","Rating","Reviews","Brand","Department","Sub-cat","Source","Branded","Indo Signal","Signal Words"]; const rows = products.map(p => ['"'+(p.name||"").replace(/"/g,'""')+'"',p.price_aed||0,p.rating||0,p.reviews||0,'"'+(p.brand||"")+'"','"'+(p.department||"")+'"','"'+(p.subcategory||"")+'"',p.source||"",p.isBranded?"Y":"N",p.indoSignal?.score||0,'"'+(p.indoSignal?.matched||[]).join("; ")+'"'].join(",")); const blob = new Blob([[h.join(","),...rows].join("\n")], { type: "text/csv" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "bandar-brainstorm-" + label + "-" + new Date().toISOString().slice(0, 10) + ".csv"; a.click(); };
 
   // ══════════ STYLES ══════════
@@ -2203,7 +2276,8 @@ export default function App() {
         {lookupView === "scrape" && dryRunData && <div>
           <div style={{ padding: "14px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px", marginBottom: "10px" }}>
             <div style={{ fontSize: "9px", color: c.dimmer, letterSpacing: "1.5px", textTransform: "uppercase", marginBottom: "6px" }}>PRODUCT {dryRunData.url && <a href={dryRunData.url} target="_blank" rel="noopener" style={{ color: c.dim, fontSize: "9px", marginLeft: "8px" }}>open {"\u2197"}</a>}</div>
-            <div style={{ fontSize: "13px", fontWeight: 500, marginBottom: "4px" }}>{dryRunData.product_name}</div>
+            <div style={{ fontSize: "13px", fontWeight: 500, marginBottom: "2px" }}>{"\ud83c\uddec\ud83c\udde7"} {dryRunData.product_name}</div>
+            {dryRunData.product_name_id && <div style={{ fontSize: "12px", fontWeight: 600, color: c.gold, marginBottom: "6px", padding: "5px 10px", background: dark ? "#2A2210" : "#FDF8ED", borderRadius: "4px", borderLeft: "3px solid " + c.gold }}>{"\ud83c\uddee\ud83c\udde9"} {dryRunData.product_name_id}</div>}
             {(dryRunData.product_summary || dryRunData.spec_summary) && <div style={{ fontSize: "10px", color: c.dim, marginBottom: "6px", padding: "4px 8px", background: c.cardBg, borderRadius: "3px", borderLeft: "2px solid " + c.gold }}>{dryRunData.product_summary || dryRunData.spec_summary}</div>}
             <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center", fontSize: "12px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
@@ -2253,7 +2327,7 @@ export default function App() {
           <div style={{ padding: "10px 12px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px", marginBottom: "10px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: "12px", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{dryRunData.product_name}</div>
-              <div style={{ fontSize: "10px", color: c.dim, marginTop: "2px" }}>{dryRunData.clean_name_id} {"\u00b7"} <span style={{ color: c.gold }}>AED {dryRunData.price_aed}</span></div>
+              <div style={{ fontSize: "10px", color: c.gold, marginTop: "2px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>{dryRunData.product_name_id || dryRunData.clean_name_id} {"\u00b7"} <span style={{ color: c.dim, fontWeight: 400 }}>AED {dryRunData.price_aed}</span></div>
             </div>
           </div>
 
@@ -2526,7 +2600,7 @@ export default function App() {
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: "12px", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: "3px" }}>{h.uaeProduct?.product_name}</div>
-                        <div style={{ fontSize: "10px", color: c.dim, marginBottom: "3px" }}>{h.normalized?.clean_name_id}</div>
+                        <div style={{ fontSize: "10px", color: h.uaeProduct?.product_name_id ? c.gold : c.dim, marginBottom: "3px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: h.uaeProduct?.product_name_id ? 500 : 400 }}>{h.uaeProduct?.product_name_id || h.normalized?.clean_name_id}</div>
                         <div style={{ display: "flex", gap: "4px", flexWrap: "wrap", alignItems: "center" }}>
                           <Badge text={"AED " + (h.uaeProduct?.price_aed || 0)} color={c.gold} bg={c.surface} />
                           <Badge text={fmtIDR(h.medianPriceIDR)} color={c.green} bg={c.surface} />
