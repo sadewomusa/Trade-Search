@@ -436,7 +436,6 @@ export default function App() {
       }
     }
   })(); }, []);
-  })(); }, []);
 
   // ── Load data on unlock (with legacy PIN migration) ──
   const LEGACY_PINS = ["766911", "240996"];
