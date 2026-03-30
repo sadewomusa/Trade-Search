@@ -29,11 +29,12 @@ export default function App() {
   const [authUser, setAuthUser] = useState(null); // { id, email }
   const [authToken, setAuthToken] = useState("");
   const [authMode, setAuthMode] = useState("login"); // "login" | "register" | "reset"
-  const [authEmail, setAuthEmail] = useState("");
+  const [authEmail, setAuthEmail] = useState(() => localStorage.getItem("gt_remember_email") || "");
   const [authPassword, setAuthPassword] = useState("");
   const [authDisplayName, setAuthDisplayName] = useState("");
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
+  const [rememberMe, setRememberMe] = useState(() => !!localStorage.getItem("gt_remember_email"));
   const [authNewPassword, setAuthNewPassword] = useState("");
   const [resetToken, setResetToken] = useState("");
   const [userProfile, setUserProfile] = useState(null); // { role, lookups_used, margins_used, ... }
@@ -211,6 +212,7 @@ export default function App() {
       if (!ok) throw new Error(data.msg || data.error_description || data.message || "Login failed");
       localStorage.setItem("gt_token", data.access_token);
       localStorage.setItem("gt_refresh", data.refresh_token || "");
+      if (rememberMe) { localStorage.setItem("gt_remember_email", authEmail); } else { localStorage.removeItem("gt_remember_email"); }
       setAuthToken(data.access_token);
       setAuthUser(data.user);
       await loadProfile(data.user.id, data.access_token);
@@ -365,6 +367,24 @@ export default function App() {
     } catch (e) {
       addDiag("error", "admin", "Delete user failed: " + e.message);
       alert("Delete failed: " + e.message);
+    }
+  };
+
+  const resetUserQuota = async (uid, email) => {
+    if (!authToken || !isAdmin) return;
+    if (!confirm("Reset quota for " + email + "?\n\nThis sets lookups_used and margins_used back to 0.")) return;
+    try {
+      const r = await fetch(SUPABASE_URL + "/rest/v1/profiles?id=eq." + uid, {
+        method: "PATCH",
+        headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + authToken, "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ lookups_used: 0, margins_used: 0 })
+      });
+      if (!r.ok) throw new Error("PATCH failed: " + r.status);
+      addDiag("ok", "admin", "Reset quota for: " + email);
+      await loadAdminUsers();
+    } catch (e) {
+      addDiag("error", "admin", "Reset quota failed: " + e.message);
+      alert("Reset failed: " + e.message);
     }
   };
 
@@ -1636,6 +1656,7 @@ export default function App() {
             {authMode === "register" && <input type="text" value={authDisplayName} onChange={e => setAuthDisplayName(e.target.value)} placeholder="Display name (optional)" style={{ width: "100%", padding: "10px 14px", background: c.input, border: "1px solid " + c.border2, color: c.text, fontFamily: "monospace", fontSize: "12px", borderRadius: "4px", outline: "none", marginBottom: "8px" }} />}
             <input type="email" value={authEmail} onChange={e => { setAuthEmail(e.target.value); setAuthError(""); }} placeholder="Email" autoFocus style={{ width: "100%", padding: "10px 14px", background: c.input, border: "1px solid " + (authError ? c.red : c.border2), color: c.text, fontFamily: "monospace", fontSize: "12px", borderRadius: "4px", outline: "none", marginBottom: "8px" }} />
             <input type="password" value={authPassword} onChange={e => { setAuthPassword(e.target.value); setAuthError(""); }} onKeyDown={e => e.key === "Enter" && (authMode === "login" ? handleSignIn() : handleSignUp())} placeholder="Password" style={{ width: "100%", padding: "10px 14px", background: c.input, border: "1px solid " + (authError ? c.red : c.border2), color: c.text, fontFamily: "monospace", fontSize: "12px", borderRadius: "4px", outline: "none", marginBottom: "12px" }} />
+            {authMode === "login" && <label style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px", cursor: "pointer", justifyContent: "flex-start" }}><input type="checkbox" checked={rememberMe} onChange={e => setRememberMe(e.target.checked)} style={{ accentColor: c.gold, cursor: "pointer" }} /><span style={{ fontSize: "11px", color: c.dim }}>Remember me</span></label>}
             {authError && <div style={{ fontSize: "11px", color: authError.includes("confirm") || authError.includes("Check") || authError.includes("sent") || authError.includes("updated") ? c.green : c.red, marginBottom: "12px", lineHeight: 1.5 }}>{authError}</div>}
             <button onClick={authMode === "login" ? handleSignIn : handleSignUp} disabled={authLoading} style={{ width: "100%", padding: "12px", background: authLoading ? c.dimmest : c.gold, color: c.btnText, border: "none", borderRadius: "4px", fontFamily: "monospace", fontWeight: 700, letterSpacing: "1px", cursor: authLoading ? "default" : "pointer", opacity: authLoading ? 0.6 : 1 }}>{authLoading ? "..." : authMode === "login" ? "LOG IN" : "CREATE ACCOUNT"}</button>
             {authMode === "login" && <button onClick={handleForgotPassword} disabled={authLoading} style={{ width: "100%", marginTop: "8px", padding: "8px", background: "transparent", color: c.dim, border: "none", fontFamily: "monospace", fontSize: "10px", cursor: "pointer", textDecoration: "underline" }}>Forgot password?</button>}
@@ -1818,6 +1839,7 @@ export default function App() {
         inviteRole={inviteRole} setInviteRole={setInviteRole}
         inviteMsg={inviteMsg} setInviteMsg={setInviteMsg}
         createInviteAccount={createInviteAccount}
+        resetUserQuota={resetUserQuota}
       />}
 
       {/* ══════════ DIAGNOSTIC PANEL ══════════ */}
