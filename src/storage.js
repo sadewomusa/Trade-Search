@@ -1,41 +1,18 @@
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from "./constants";
-import { compressEntry, expandEntry } from "./helpers";
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './constants.js';
 
+// ══════════ STORAGE LAYER ══════════
 const supabaseReady = SUPABASE_URL !== "https://YOUR-PROJECT-ID.supabase.co" && SUPABASE_ANON_KEY !== "eyJ...your-anon-key-here...";
+// Storage uses user auth token when available, falls back to anon key
 let _authTokenForStorage = "";
+function setStorageAuthToken(token) { _authTokenForStorage = token; }
+async function supabaseGet(key) { if (!supabaseReady) return null; const token = _authTokenForStorage || SUPABASE_ANON_KEY; const r = await fetch(SUPABASE_URL + "/rest/v1/kv_store?key=eq." + encodeURIComponent(key) + "&select=value", { headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + token } }); if (!r.ok) return null; const rows = await r.json(); return rows?.length ? JSON.parse(rows[0].value) : null; }
+async function supabaseSet(key, val) { if (!supabaseReady) return false; const token = _authTokenForStorage || SUPABASE_ANON_KEY; const r = await fetch(SUPABASE_URL + "/rest/v1/kv_store", { method: "POST", headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + token, "Content-Type": "application/json", Prefer: "resolution=merge-duplicates" }, body: JSON.stringify({ key, value: JSON.stringify(val), updated_at: new Date().toISOString() }) }); return r.ok; }
+async function storeGet(key) { try { const v = await supabaseGet(key); if (v !== null) { try { localStorage.setItem("gt:" + key, JSON.stringify(v)); } catch {} return v; } } catch {} try { const v = localStorage.getItem("gt:" + key); return v ? JSON.parse(v) : null; } catch { return null; } }
+async function storeSet(key, val) { try { localStorage.setItem("gt:" + key, JSON.stringify(val)); } catch {} try { return await supabaseSet(key, val); } catch { return false; } }
 
-export function setStorageAuthToken(token) { _authTokenForStorage = token; }
-
-export async function supabaseGet(key) {
-  if (!supabaseReady) return null;
-  const token = _authTokenForStorage || SUPABASE_ANON_KEY;
-  const r = await fetch(SUPABASE_URL + "/rest/v1/kv_store?key=eq." + encodeURIComponent(key) + "&select=value", { headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + token } });
-  if (!r.ok) return null;
-  const rows = await r.json();
-  return rows?.length ? JSON.parse(rows[0].value) : null;
-}
-
-export async function supabaseSet(key, val) {
-  if (!supabaseReady) return false;
-  const token = _authTokenForStorage || SUPABASE_ANON_KEY;
-  const r = await fetch(SUPABASE_URL + "/rest/v1/kv_store", { method: "POST", headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + token, "Content-Type": "application/json", Prefer: "resolution=merge-duplicates" }, body: JSON.stringify({ key, value: JSON.stringify(val), updated_at: new Date().toISOString() }) });
-  return r.ok;
-}
-
-export async function storeGet(key) {
-  try { const v = await supabaseGet(key); if (v !== null) { try { localStorage.setItem("gt:" + key, JSON.stringify(v)); } catch {} return v; } } catch {}
-  try { const v = localStorage.getItem("gt:" + key); return v ? JSON.parse(v) : null; } catch { return null; }
-}
-
-export async function storeSet(key, val) {
-  try { localStorage.setItem("gt:" + key, JSON.stringify(val)); } catch {}
-  try { return await supabaseSet(key, val); } catch { return false; }
-}
-
-export async function loadHistory(pin) {
-  try { const d = await storeGet(pin + ":history"); return d?.length ? d.map(expandEntry) : []; } catch { return []; }
-}
-
-export async function saveHistory(pin, h) {
-  try { return await storeSet(pin + ":history", h.map(compressEntry)); } catch { return false; }
-}
+function compressEntry(h) { const mm = h.margins?.median || {}; return { pn: h.uaeProduct?.product_name || "", pnid: h.uaeProduct?.product_name_id || "", pid: h.normalized?.clean_name_id || h.uaeProduct?.clean_name_id || "", pen: h.uaeProduct?.clean_name_en || h.normalized?.clean_name_en || "", br: h.uaeProduct?.brand || "", cat: h.normalized?.category || h.uaeProduct?.category || "", wc: h.weightClass || "medium", src: h.uaeProduct?.source || "", url: h.uaeProduct?.url || "", pa: h.uaeProduct?.price_aed || 0, pq: h.uaeProduct?.pack_quantity || 1, ir: (h.indoResults?.results || []).slice(0, 50).map(r => ({ n: r.name || "", p: r.price_idr || 0, s: r.source === "Shopee" ? "S" : "T", sl: r.seller || "", sd: r.sold || "" })), lo: h.lowestPriceIDR || 0, md: h.medianPriceIDR || 0, hi: h.highestPriceIDR || 0, nr: h.indoResults?.price_stats?.num_results || 0, mb: h.margins?.best?.margin || 0, mm: h.margins?.median?.margin || 0, mw: h.margins?.worst?.margin || 0, mc: { uU: mm.uaeUSD||0, uA: mm.uaeAED||0, uI: mm.uaeIDR||0, iU: mm.indoUSD||0, iA: mm.indoAED||0, iI: mm.indoIDR||0, fU: mm.freightUSD||0, fA: mm.freightAED||0, fI: mm.freightIDR||0, dU: mm.dutyUSD||0, dA: mm.dutyAED||0, dI: mm.dutyIDR||0, lU: mm.lastMileUSD||0, lA: mm.lastMileAED||0, lI: mm.lastMileIDR||0, tU: mm.totalUSD||0, tA: mm.totalAED||0, tI: mm.totalIDR||0 }, cs: h.confidence?.score || 0, cl: h.confidence?.level || "low", cf: h.confidence?.flags || [], st: h.status || "", ts: h.timestamp || "", ap: h.source === "apify" ? 1 : 0 }; }
+function expandEntry(c) { if (c.uaeProduct) return c; const mc = c.mc || {}; return { uaeProduct: { product_name: c.pn, product_name_id: c.pnid || "", clean_name_en: c.pen, clean_name_id: c.pid, brand: c.br, category: c.cat, weight_class: c.wc, source: c.src, url: c.url, price_aed: c.pa, pack_quantity: c.pq || 1 }, normalized: { clean_name_id: c.pid, clean_name_en: c.pen, category: c.cat, weight_class: c.wc }, indoResults: { results: (c.ir || []).map(r => ({ name: r.n, price_idr: r.p, source: r.s === "S" ? "Shopee" : "Tokopedia", seller: r.sl, sold: r.sd, url: "" })), price_stats: { lowest_idr: c.lo, median_idr: c.md, highest_idr: c.hi, num_results: c.nr }, confidence: { score: c.cs, level: c.cl, flags: c.cf } }, margins: { best: { margin: c.mb }, median: { margin: c.mm, uaeUSD: mc.uU, uaeAED: mc.uA, uaeIDR: mc.uI, indoUSD: mc.iU, indoAED: mc.iA, indoIDR: mc.iI, freightUSD: mc.fU, freightAED: mc.fA, freightIDR: mc.fI, dutyUSD: mc.dU, dutyAED: mc.dA, dutyIDR: mc.dI, lastMileUSD: mc.lU, lastMileAED: mc.lA, lastMileIDR: mc.lI, totalUSD: mc.tU, totalAED: mc.tA, totalIDR: mc.tI }, worst: { margin: c.mw } }, confidence: { score: c.cs, level: c.cl, flags: c.cf }, medianPriceIDR: c.md, lowestPriceIDR: c.lo, highestPriceIDR: c.hi, weightClass: c.wc, status: c.st, timestamp: c.ts, source: c.ap ? "apify" : "legacy" }; }
+async function loadHistory(pin) { try { const d = await storeGet(pin + ":history"); return d?.length ? d.map(expandEntry) : []; } catch { return []; } }
+async function saveHistory(pin, h) { try { return await storeSet(pin + ":history", h.map(compressEntry)); } catch { return false; } }
+// hashPin removed — replaced by Supabase Auth
+export { supabaseReady, setStorageAuthToken, supabaseGet, supabaseSet, storeGet, storeSet, compressEntry, expandEntry, loadHistory, saveHistory };

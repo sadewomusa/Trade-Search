@@ -1,110 +1,74 @@
-import { useState } from "react";
-import { Badge, ConfidenceBadge } from "../components/SharedUI";
-import { STATUS_COLORS, STATUS_COLORS_LIGHT, MARGIN_THRESHOLD, getStyles } from "../constants";
-import { marginColor, fmtIDR, fmtAED } from "../helpers";
+import { Badge, ConfidenceBadge } from '../components/SharedUI.jsx';
+import { STATUS_COLORS, STATUS_COLORS_LIGHT } from '../constants.js';
+import { marginColor, fmtIDR } from '../helpers.js';
 
-export default function HistoryPage({ c, dark, history, setHistory, updateHistoryStatus, restoreFromHistory, exportQuickCSV, exportStructuredCSV, exportBackup, importBackup, backupFileRef, setMode }) {
-  const { secStyle, btnStyle, btnSec, btnGreen } = getStyles(c);
-  const [expandedHistoryIdx, setExpandedHistoryIdx] = useState(-1);
-  const [histFilter, setHistFilter] = useState("all"); // all | candidates | investigated | rejected | active
-  const candidates = history.filter(h => (h.margins?.median?.margin || 0) >= MARGIN_THRESHOLD.candidate);
-  const statuses = ["Candidate", "Investigated", "Active", "Rejected"];
-
-  const filtered = history.filter(h => {
-    if (histFilter === "all") return true;
-    if (histFilter === "candidates") return (h.margins?.median?.margin || 0) >= MARGIN_THRESHOLD.candidate;
-    return (h.status || "").toLowerCase() === histFilter.toLowerCase();
-  });
-
-  return (
-    <div style={secStyle}>
-      {/* Summary row */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "8px", marginBottom: "16px" }}>
-        {[
-          { l: "TOTAL", v: history.length, cl: c.gold },
-          { l: "CANDIDATES", v: candidates.length, cl: c.green },
-          { l: "INVESTIGATED", v: history.filter(h => h.status === "Investigated").length, cl: c.darkGold || c.gold },
-          { l: "ACTIVE", v: history.filter(h => h.status === "Active").length, cl: c.gold },
-        ].map(s => (
-          <div key={s.l} style={{ padding: "10px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px", textAlign: "center" }}>
-            <div style={{ fontSize: "8px", color: c.dimmer, letterSpacing: "1px" }}>{s.l}</div>
-            <div style={{ fontSize: "18px", fontWeight: 700, color: s.cl }}>{s.v}</div>
+export default function HistoryPage({
+  c, dark, secStyle, btnSec,
+  isAdmin, userId,
+  history, setHistory,
+  expandedHistoryIdx, setExpandedHistoryIdx,
+  updateHistoryStatus,
+  exportQuickCSV, exportStructuredCSV, exportBackup, importBackup, backupFileRef,
+  saveHistory,
+}) {
+  return <div style={secStyle}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "14px", flexWrap: "wrap", gap: "6px" }}>
+          <span style={{ fontSize: "10px", color: c.dim, letterSpacing: "1px" }}>{history.length} LOOKUPS</span>
+          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+            <button style={btnSec} onClick={exportQuickCSV}>{"\ud83d\udcca"} EXPORT CSV</button>
+            {isAdmin && <>
+              <button style={btnSec} onClick={exportStructuredCSV}>FULL CSV</button>
+              <button style={btnSec} onClick={exportBackup}>{"\ud83d\udcbe BACKUP"}</button>
+              <input type="file" ref={backupFileRef} accept=".json" style={{ display: "none" }} onChange={e => e.target.files[0] && importBackup(e.target.files[0])} />
+              <button style={btnSec} onClick={() => backupFileRef.current?.click()}>{"\ud83d\udcc2 RESTORE"}</button>
+              <button style={{ ...btnSec, color: c.red, borderColor: c.red }} onClick={async () => { if (!confirm("Clear all?")) return; setHistory([]); await saveHistory(userId, []); }}>CLEAR</button>
+            </>}
           </div>
-        ))}
-      </div>
-
-      {/* Filter + export bar */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", flexWrap: "wrap", gap: "8px" }}>
-        <div style={{ display: "flex", gap: "4px" }}>
-          {["all", "candidates", "Investigated", "Active", "Rejected"].map(f => (
-            <button key={f} onClick={() => setHistFilter(f)} style={{ padding: "3px 8px", background: histFilter === f ? c.gold : "transparent", color: histFilter === f ? c.btnText : c.dim, border: "1px solid " + (histFilter === f ? c.gold : c.border), borderRadius: "3px", cursor: "pointer", fontFamily: "monospace", fontSize: "9px", textTransform: "capitalize" }}>{f}</button>
-          ))}
         </div>
-        <div style={{ display: "flex", gap: "4px" }}>
-          <button onClick={exportQuickCSV} style={{ padding: "3px 8px", background: "transparent", color: c.gold, border: "1px solid " + c.gold, borderRadius: "3px", cursor: "pointer", fontFamily: "monospace", fontSize: "9px" }}>QUICK CSV</button>
-          <button onClick={exportStructuredCSV} style={{ padding: "3px 8px", background: "transparent", color: c.gold, border: "1px solid " + c.gold, borderRadius: "3px", cursor: "pointer", fontFamily: "monospace", fontSize: "9px" }}>FULL CSV</button>
-          <button onClick={exportBackup} style={{ padding: "3px 8px", background: "transparent", color: c.green, border: "1px solid " + c.green, borderRadius: "3px", cursor: "pointer", fontFamily: "monospace", fontSize: "9px" }}>BACKUP</button>
-          <button onClick={() => backupFileRef.current?.click()} style={{ padding: "3px 8px", background: "transparent", color: c.dim, border: "1px solid " + c.border2, borderRadius: "3px", cursor: "pointer", fontFamily: "monospace", fontSize: "9px" }}>IMPORT</button>
-          <input ref={backupFileRef} type="file" accept=".json" style={{ display: "none" }} onChange={e => e.target.files?.[0] && importBackup(e.target.files[0])} />
-        </div>
-      </div>
-
-      {/* History list */}
-      {filtered.length === 0 && <div style={{ textAlign: "center", padding: "40px", color: c.dimmer }}>
-        <div style={{ fontSize: "28px", marginBottom: "8px" }}>{"\ud83d\udccb"}</div>
-        <div style={{ fontSize: "13px" }}>No lookups yet</div>
-        <div style={{ fontSize: "11px", color: c.dimmest, marginTop: "4px" }}>Products you research will appear here</div>
-      </div>}
-
-      <div style={{ maxHeight: "500px", overflowY: "auto" }}>
-        {filtered.map((h, realIdx) => {
-          const idx = history.indexOf(h);
-          const m = h.margins?.median?.margin || 0;
-          const sc = dark ? STATUS_COLORS : STATUS_COLORS_LIGHT;
-          const statusStyle = h.status && sc[h.status] ? { background: sc[h.status].bg, color: sc[h.status].text, border: "1px solid " + sc[h.status].border } : {};
-          const isExpanded = expandedHistoryIdx === idx;
-          return (
-            <div key={idx} style={{ padding: "10px 12px", borderBottom: "1px solid " + c.border, background: isExpanded ? c.surface2 : "transparent" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }} onClick={() => setExpandedHistoryIdx(isExpanded ? -1 : idx)}>
-                <span style={{ fontSize: "16px", fontWeight: 800, color: marginColor(m), minWidth: "50px", fontFamily: "monospace" }}>{m.toFixed(0)}%</span>
-                <div style={{ flex: 1, overflow: "hidden" }}>
-                  <div style={{ fontSize: "12px", color: c.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.uaeProduct?.product_name || "—"}</div>
-                  <div style={{ fontSize: "10px", color: c.dim }}>{fmtAED(h.uaeProduct?.price_aed)} → {fmtIDR(h.medianPriceIDR)} · {h.timestamp?.slice(0, 10) || ""}</div>
-                </div>
-                {h.confidence && <ConfidenceBadge confidence={h.confidence} c={c} />}
-                {h.status && <span style={{ ...statusStyle, padding: "2px 6px", borderRadius: "3px", fontSize: "9px", fontWeight: 700, fontFamily: "monospace" }}>{h.status}</span>}
-                <span style={{ color: c.dimmest, fontSize: "10px" }}>{isExpanded ? "\u25be" : "\u25b8"}</span>
-              </div>
-
-              {/* Expanded detail */}
-              {isExpanded && <div style={{ marginTop: "10px", padding: "10px", background: c.cardBg, border: "1px solid " + c.border, borderRadius: "4px" }}>
-                {/* Status buttons */}
-                <div style={{ display: "flex", gap: "4px", marginBottom: "8px" }}>
-                  <span style={{ fontSize: "9px", color: c.dimmer, paddingTop: "4px" }}>STATUS:</span>
-                  {statuses.map(s => (
-                    <button key={s} onClick={() => updateHistoryStatus(idx, s)} style={{ padding: "3px 8px", background: h.status === s ? (sc[s]?.bg || "transparent") : "transparent", color: h.status === s ? (sc[s]?.text || c.dim) : c.dim, border: "1px solid " + (h.status === s ? (sc[s]?.border || c.border) : c.border), borderRadius: "3px", cursor: "pointer", fontFamily: "monospace", fontSize: "9px" }}>{s}</button>
-                  ))}
-                </div>
-                {/* Indo results preview */}
-                {h.indoResults?.results?.length > 0 && <div style={{ marginBottom: "8px" }}>
-                  <div style={{ fontSize: "9px", color: c.dimmer, marginBottom: "4px" }}>INDONESIAN LISTINGS ({h.indoResults.results.length})</div>
-                  {h.indoResults.results.slice(0, 5).map((r, ri) => (
-                    <div key={ri} style={{ fontSize: "10px", color: c.dim, padding: "2px 0", display: "flex", justifyContent: "space-between" }}>
-                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, marginRight: "8px" }}>{r.name}</span>
-                      <span style={{ color: c.gold, whiteSpace: "nowrap" }}>{fmtIDR(r.price_idr)}</span>
+        {!history.length ? <div style={{ textAlign: "center", padding: "40px", color: c.dimmer }}>No lookups yet.</div> : (
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px", maxHeight: "550px", overflowY: "auto" }}>
+            {history.map((h, i) => {
+              const m = h.margins?.median?.margin || 0;
+              const sc = (dark ? STATUS_COLORS : STATUS_COLORS_LIGHT)[h.status] || (dark ? STATUS_COLORS : STATUS_COLORS_LIGHT).Candidate;
+              const isExp = expandedHistoryIdx === i;
+              return (
+                <div key={i} style={{ background: c.surface2, border: "1px solid " + sc.border, borderRadius: "4px", borderLeft: "3px solid " + sc.text }}>
+                  <div style={{ padding: "10px 12px", cursor: "pointer" }} onClick={() => setExpandedHistoryIdx(isExp ? -1 : i)}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: "12px", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: "3px" }}>{h.uaeProduct?.product_name}</div>
+                        <div style={{ fontSize: "10px", color: h.uaeProduct?.product_name_id ? c.gold : c.dim, marginBottom: "3px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: h.uaeProduct?.product_name_id ? 500 : 400 }}>{h.uaeProduct?.product_name_id || h.normalized?.clean_name_id}</div>
+                        <div style={{ display: "flex", gap: "4px", flexWrap: "wrap", alignItems: "center" }}>
+                          <Badge text={"AED " + (h.uaeProduct?.price_aed || 0)} color={c.gold} bg={c.surface} />
+                          <Badge text={fmtIDR(h.medianPriceIDR)} color={c.green} bg={c.surface} />
+                          {h.confidence && <ConfidenceBadge confidence={h.confidence} c={c} />}
+                          <span style={{ fontSize: "9px", color: c.dimmest }}>{h.timestamp?.slice(0, 10)}</span>
+                        </div>
+                      </div>
+                      <div style={{ textAlign: "right", marginLeft: "10px" }}>
+                        <div style={{ fontSize: "18px", fontWeight: 700, color: marginColor(m) }}>{m.toFixed(1)}%</div>
+                        <select value={h.status} onChange={e => { e.stopPropagation(); updateHistoryStatus(i, e.target.value); }} onClick={e => e.stopPropagation()} style={{ padding: "2px 4px", background: sc.bg, border: "1px solid " + sc.border, color: sc.text, fontFamily: "monospace", fontSize: "9px", borderRadius: "3px" }}>
+                          {Object.keys(STATUS_COLORS).map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      </div>
                     </div>
-                  ))}
-                </div>}
-                {/* Actions */}
-                <div style={{ display: "flex", gap: "6px" }}>
-                  <button onClick={() => { restoreFromHistory(h); setMode("auto"); }} style={{ padding: "4px 10px", background: c.gold, color: c.btnText, border: "none", borderRadius: "3px", cursor: "pointer", fontFamily: "monospace", fontSize: "9px", fontWeight: 700 }}>RE-OPEN IN LOOKUP</button>
-                  {h.uaeProduct?.url && <a href={h.uaeProduct.url} target="_blank" rel="noopener" style={{ padding: "4px 10px", background: "transparent", color: c.dim, border: "1px solid " + c.border2, borderRadius: "3px", fontFamily: "monospace", fontSize: "9px", textDecoration: "none" }}>VIEW LISTING</a>}
+                  </div>
+                  {isExp && (h.indoResults?.results || []).length > 0 && <div style={{ padding: "0 12px 12px", borderTop: "1px solid " + c.border }}>
+                    <div style={{ fontSize: "9px", color: c.dimmer, padding: "8px 0 4px", textTransform: "uppercase" }}>INDO LISTINGS ({(h.indoResults?.results || []).length})</div>
+                    <div style={{ maxHeight: "200px", overflowY: "auto" }}>
+                      {(h.indoResults?.results || []).map((r, j) => <div key={j} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", borderBottom: "1px solid " + c.border, fontSize: "10px" }}>
+                        <div style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
+                        <div style={{ display: "flex", gap: "8px", marginLeft: "8px" }}>
+                          <span style={{ color: r.source === "Shopee" ? "#EE4D2D" : c.green, fontSize: "9px" }}>{r.source === "Shopee" ? "S" : "T"}</span>
+                          <span style={{ color: c.gold, fontWeight: 700 }}>{fmtIDR(r.price_idr)}</span>
+                        </div>
+                      </div>)}
+                    </div>
+                  </div>}
                 </div>
-              </div>}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
+              );
+            })}
+          </div>
+        )}
+  </div>;
 }

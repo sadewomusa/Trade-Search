@@ -1,7 +1,6 @@
 // ══════════ SUPABASE CONFIG ══════════
 export const SUPABASE_URL = "https://cqpxzxafavqflnrilgjh.supabase.co";
 export const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNxcHh6eGFmYXZxZmxucmlsZ2poIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ1MDUyNzEsImV4cCI6MjA5MDA4MTI3MX0.tAK15mxTdofv5eymd9wJOxxA4vjVuS_QkpmKiqA5qCI";
-
 // ══════════ CONSTANTS ══════════
 export const DEFAULT_FX = { AEDUSD: 0.2723, IDRUSD: 0.0000613, AED_TO_IDR: 0.2723 / 0.0000613, IDR_TO_AED: 0.0000613 / 0.2723 };
 export const DEFAULT_FREIGHT = { air: { rate_per_kg: 4, min_kg: 100, transit: { port_port: "3-5 days", port_door: "5-7 days", door_door: "7-10 days" } }, ocean: { rate_20ft: 800, rate_40ft: 1400, rate_per_cbm: 45, transit: { port_port: "14-18 days", port_door: "18-25 days", door_door: "21-30 days" } }, source: "default", updated: null };
@@ -92,33 +91,3 @@ export const DEFAULT_KEYWORDS = [
   "seagrass basket","bamboo straw","moringa powder","vanilla beans","clove oil",
   "teak serving bowl","banana leaf plate","tempeh starter","luwak coffee"
 ];
-
-// ══════════ BLOCKED-SIGNAL DETECTION ══════════
-export const BLOCKED_SIGNALS = [
-  { pattern: /sorry.*i.*(?:can't|cannot|unable)/i, reason: "Claude refusal" },
-  { pattern: /as an ai/i, reason: "AI identity disclosure" },
-  { pattern: /i don't have.*(?:access|ability|capability)/i, reason: "Capability limitation" },
-  { pattern: /captcha|blocked|denied|forbidden/i, reason: "Access blocked" },
-  { pattern: /unfortunately.*(?:no|not|cannot)/i, reason: "Negative response" },
-  { pattern: /please note.*(?:real|actual|live)/i, reason: "Fabrication warning" },
-  { pattern: /(?:hypothetical|fictional|imagin(?:ary|ed))\s+(?:product|listing|price|result)/i, reason: "Fabricated results" },
-];
-
-export const AMAZON_URL_PATTERN = /^https?:\/\/(www\.)?(amazon\.(ae|com|co\.uk|de|fr|it|es|ca|com\.au|in|sg|sa|com\.br|co\.jp|nl|pl|se|com\.mx|com\.tr|eg)|amzn\.(to|eu|asia|com))\//i;
-
-// ══════════ THEME COLORS ══════════
-export function getThemeColors(dark) {
-  return dark
-    ? { bg: "#0a0a0a", surface: "#0C0F0C", surface2: "#0E120E", input: "#1a1a1a", border: "#222", border2: "#333", text: "#d4d4d4", dim: "#888", dimmer: "#555", dimmest: "#444", gold: "#C9A84C", green: "#2EAA5A", red: "#f87171", darkGold: "#D4A843", cardBg: "#080808", btnText: "#0f0f0f", sectionBg: "#0D1F15", greenBg: "#0D2E1A", goldBg: "#2A2210" }
-    : { bg: "#F5F2EB", surface: "#FFFFFF", surface2: "#F0EDE4", input: "#FFFFFF", border: "#D4CFC4", border2: "#C0BAB0", text: "#1A1A1A", dim: "#555", dimmer: "#888", dimmest: "#AAA", gold: "#8B6914", green: "#1A7A3A", red: "#DC2626", darkGold: "#9A7A1C", cardBg: "#F8F6F0", btnText: "#FFFFFF", sectionBg: "#E8F5EC", greenBg: "#E8F5EC", goldBg: "#FDF8ED" };
-}
-
-// ══════════ SHARED STYLES (factory) ══════════
-export function getStyles(c) {
-  const inputStyle = { width: "100%", padding: "10px 12px", background: c.input, border: "1px solid " + c.border2, color: c.text, fontFamily: "monospace", fontSize: "13px", borderRadius: "3px", outline: "none" };
-  const btnStyle = { padding: "10px 24px", background: c.gold, color: c.btnText, border: "none", cursor: "pointer", fontFamily: "'Inconsolata',monospace", fontSize: "12px", fontWeight: 700, letterSpacing: "0.5px", textTransform: "uppercase", borderRadius: "3px" };
-  const btnSec = { ...btnStyle, background: "transparent", color: c.gold, border: "1px solid " + c.gold };
-  const btnGreen = { ...btnStyle, background: c.green, color: "#fff" };
-  const secStyle = { padding: "20px", background: c.surface, border: "1px solid " + c.border2, borderTop: "none", minHeight: "420px", borderRadius: "0 0 4px 4px" };
-  return { inputStyle, btnStyle, btnSec, btnGreen, secStyle };
-}

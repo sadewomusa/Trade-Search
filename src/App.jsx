@@ -1,16 +1,29 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { SUPABASE_URL, SUPABASE_ANON_KEY, DEFAULT_FX, DEFAULT_FREIGHT, DEFAULT_KEYWORDS, BRAND_BLOCKLIST_DEFAULT, MARGIN_THRESHOLD, WEIGHT_KG, VOLUME_CBM, CUSTOMS_DUTY, LAST_MILE_AED, ROUTES, TIER_LIMITS, DISPOSABLE_DOMAINS, WORKER_URL, AMAZON_AE_DEPTS, AMAZON_URL_PATTERN, FX_CACHE_MS, MAX_HISTORY, FREIGHT_MODES, getThemeColors, getStyles } from "./constants";
-import { marginColor, fmtIDR, fmtAED, fmtUSD, escapeHtml, sanitizeIDR, computeConfidence, guessCategory, EN_TO_ID, fallbackSearchQueries, isBrandBlocked, getIndoSignalScore, detectBlockedSignals, isDisposableEmail, compressEntry, expandEntry } from "./helpers";
-import { storeGet, storeSet, setStorageAuthToken, loadHistory, saveHistory } from "./storage";
-import { Badge, Spinner } from "./components/SharedUI";
-import CookieWizard from "./components/CookieWizard";
-import GuidePage from "./pages/GuidePage";
-import DiscoverPage from "./pages/DiscoverPage";
-import LookupPage from "./pages/LookupPage";
-import HistoryPage from "./pages/HistoryPage";
-import BrainstormPage from "./pages/BrainstormPage";
-import AdminPage from "./pages/AdminPage";
+import {
+  SUPABASE_URL, SUPABASE_ANON_KEY, DEFAULT_FX, DEFAULT_FREIGHT, CUSTOMS_DUTY, LAST_MILE_AED,
+  MARGIN_THRESHOLD, WEIGHT_KG, VOLUME_CBM, FREIGHT_MODES, ROUTES, TIER_LIMITS, DISPOSABLE_DOMAINS,
+  WORKER_URL, STATUS_COLORS, STATUS_COLORS_LIGHT, MAX_HISTORY, FX_CACHE_MS, AMAZON_AE_DEPTS,
+  BRAND_BLOCKLIST_DEFAULT, INDO_SIGNAL_WORDS, DEFAULT_KEYWORDS
+} from './constants.js';
+import {
+  marginColor, fmtIDR, fmtAED, fmtUSD, escapeHtml, sanitizeIDR, computeConfidence,
+  guessCategory, fallbackSearchQueries, isBrandBlocked, getIndoSignalScore,
+  detectBlockedSignals, EN_TO_ID
+} from './helpers.js';
+import {
+  supabaseReady, setStorageAuthToken, storeGet, storeSet,
+  compressEntry, expandEntry, loadHistory, saveHistory
+} from './storage.js';
+import { Badge, Spinner, ConfidenceBadge, WaveStatusBar } from './components/SharedUI.jsx';
+import CookieWizard from './components/CookieWizard.jsx';
+import { GUIDE_STEPS, BandarGuide } from './pages/GuidePage.jsx';
+import BrainstormPage from './pages/BrainstormPage.jsx';
+import DiscoverPage from './pages/DiscoverPage.jsx';
+import LookupPage from './pages/LookupPage.jsx';
+import HistoryPage from './pages/HistoryPage.jsx';
+import AdminPage from './pages/AdminPage.jsx';
 
+// ══════════ MAIN APP ══════════
 export default function App() {
   // ── Auth State ──
   const [authUser, setAuthUser] = useState(null); // { id, email }
@@ -151,6 +164,7 @@ export default function App() {
   historyRef.current = history;
   const userIdRef = useRef(userId);
   userIdRef.current = userId;
+
 
   const c = dark ? { bg: "#0a0a0a", surface: "#0C0F0C", surface2: "#0E120E", input: "#1a1a1a", border: "#222", border2: "#333", text: "#d4d4d4", dim: "#888", dimmer: "#555", dimmest: "#444", gold: "#C9A84C", green: "#2EAA5A", red: "#f87171", darkGold: "#D4A843", cardBg: "#080808", btnText: "#0f0f0f", sectionBg: "#0D1F15" } : { bg: "#F5F2EB", surface: "#FFFFFF", surface2: "#F0EDE4", input: "#FFFFFF", border: "#D4CFC4", border2: "#C0BAB0", text: "#1A1A1A", dim: "#555", dimmer: "#888", dimmest: "#AAA", gold: "#8B6914", green: "#1A7A3A", red: "#DC2626", darkGold: "#9A7A1C", cardBg: "#F8F6F0", btnText: "#FFFFFF", sectionBg: "#E8F5EC" };
 
@@ -354,12 +368,61 @@ export default function App() {
     }
   };
 
-  // ── Init: no auto-login, user must log in each visit ──
+  // ── Init: restore session from stored tokens, only clear on explicit logout ──
   useEffect(() => { (async () => {
     const t = await storeGet("global:theme"); if (t === "light") setDark(false);
-    // Clear any stale tokens
-    localStorage.removeItem("gt_token");
-    localStorage.removeItem("gt_refresh");
+    // BUG FIX: Restore session from stored tokens instead of clearing them
+    const storedToken = localStorage.getItem("gt_token");
+    const storedRefresh = localStorage.getItem("gt_refresh");
+    if (storedToken) {
+      try {
+        // Verify the token is still valid by fetching user info
+        const r = await fetch(SUPABASE_URL + "/auth/v1/user", {
+          headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + storedToken }
+        });
+        if (r.ok) {
+          const user = await r.json();
+          if (user?.id) {
+            setAuthToken(storedToken);
+            setAuthUser(user);
+            setStorageAuthToken(storedToken);
+            await loadProfile(user.id, storedToken);
+          } else {
+            // Token returned but no user — clear
+            localStorage.removeItem("gt_token");
+            localStorage.removeItem("gt_refresh");
+          }
+        } else if (storedRefresh) {
+          // Token expired — try refresh
+          const rr = await fetch(SUPABASE_URL + "/auth/v1/token?grant_type=refresh_token", {
+            method: "POST",
+            headers: { apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" },
+            body: JSON.stringify({ refresh_token: storedRefresh })
+          });
+          if (rr.ok) {
+            const data = await rr.json();
+            if (data.access_token) {
+              localStorage.setItem("gt_token", data.access_token);
+              localStorage.setItem("gt_refresh", data.refresh_token || storedRefresh);
+              setAuthToken(data.access_token);
+              setAuthUser(data.user);
+              setStorageAuthToken(data.access_token);
+              await loadProfile(data.user.id, data.access_token);
+            }
+          } else {
+            localStorage.removeItem("gt_token");
+            localStorage.removeItem("gt_refresh");
+          }
+        } else {
+          localStorage.removeItem("gt_token");
+          localStorage.removeItem("gt_refresh");
+        }
+      } catch (e) {
+        console.warn("Session restore failed:", e);
+        localStorage.removeItem("gt_token");
+        localStorage.removeItem("gt_refresh");
+      }
+    }
     // Check for password reset token in URL
     const hash = window.location.hash;
     if (hash && hash.includes("type=recovery")) {
@@ -372,6 +435,7 @@ export default function App() {
         window.history.replaceState(null, "", window.location.pathname);
       }
     }
+  })(); }, []);
   })(); }, []);
 
   // ── Load data on unlock (with legacy PIN migration) ──
@@ -475,6 +539,7 @@ export default function App() {
   // Cooldown & FX
   useEffect(() => { if (cooldown <= 0) return; const t = setInterval(() => setCooldown(x => x <= 1 ? 0 : x - 1), 1000); return () => clearInterval(t); }, [cooldown]);
   useEffect(() => { if (!unlocked) return; (async () => { const cached = await storeGet("global:fx"); if (cached && Date.now() - cached.ts < FX_CACHE_MS) { const b = cached.rates; setFx({ AEDUSD: b.AEDUSD || 0.2723, IDRUSD: b.IDRUSD || 0.0000613, AED_TO_IDR: (b.AEDUSD || 0.2723) / (b.IDRUSD || 0.0000613), IDR_TO_AED: (b.IDRUSD || 0.0000613) / (b.AEDUSD || 0.2723) }); setFxUpdated(new Date(cached.ts)); return; } try { const r = await fetch("https://api.frankfurter.app/latest?from=USD&to=AED,IDR"); const d = await r.json(); const aedusd = 1/d.rates.AED, idrusd = 1/d.rates.IDR; const rates = { AEDUSD: aedusd, IDRUSD: idrusd, AED_TO_IDR: aedusd/idrusd, IDR_TO_AED: idrusd/aedusd }; setFx(rates); setFxUpdated(new Date()); await storeSet("global:fx", { rates, ts: Date.now() }); } catch {} })(); }, [unlocked]);
+
 
   // ══════════ CORE: callClaude ══════════
   const callClaude = async (prompt, model, useSearch = false, retries = 2, maxTokens = 2048) => {
@@ -580,6 +645,7 @@ export default function App() {
   } : null;
   const displayStatus = displayMargins ? (displayMargins.median.margin >= MARGIN_THRESHOLD.candidate ? "Candidate" : displayMargins.median.margin >= MARGIN_THRESHOLD.borderline ? "Investigated" : "Rejected") : "";
 
+
   // ══════════ QUOTA + VALIDATION ══════════
   const [quotaError, setQuotaError] = useState("");
 
@@ -611,6 +677,7 @@ export default function App() {
       await refreshProfile();
     } catch (e) { addDiag("warn", "usage", "Increment failed: " + e.message); }
   };
+
 
   // ══════════ INDO SEARCH — APIFY ══════════
   const workerCall = async (action, data) => {
@@ -788,7 +855,8 @@ export default function App() {
     const waves = []; const mainQ = queries[0];
     const doSearch = async (platform, label) => {
       const site = platform === "Tokopedia" ? "tokopedia.com" : "shopee.co.id";
-      setStage(label + " " + platform + "...");
+      const displayPlatform = isAdmin ? platform : (platform === "Tokopedia" ? "Source 1" : "Source 2");
+      setStage(label + " " + displayPlatform + "...");
       const raw = await runWithProgress(() => callClaude('Find "' + productData.clean_name_id + '" on ' + platform + ' Indonesia.\nSearch: "' + mainQ + ' ' + site + '"\nSearch: "' + mainQ + ' ' + platform + ' Indonesia harga"\nONLY ' + platform + '. Include name, price IDR, seller, sold, link.', "claude-sonnet-4-20250514", true, 2, 4096), 25);
       const blockReason = detectBlockedSignals(raw, platform);
       await wait(1500); setStage(label + " Formatting...");
@@ -921,7 +989,6 @@ export default function App() {
   };
   const deleteDiscHistory = (idx) => { const nh = discHistory.filter((_, i) => i !== idx); setDiscHistory(nh); if (discSelectedIdx === idx) { setDiscAmazonResults([]); setDiscSelectedIdx(-1); } else if (discSelectedIdx > idx) { setDiscSelectedIdx(discSelectedIdx - 1); } };
 
-
   // ══════════ BRAINSTORM: Amazon Pipeline ══════════
   const bsExtractSubcats = async () => {
     if (!authToken) { setBsError("Login required."); return; }
@@ -1000,7 +1067,7 @@ export default function App() {
     // Step 5: Claude classify remaining non-blocklisted products
     const nonBranded = allProducts.filter(p => !p.isBranded);
     if (nonBranded.length > 0 && nonBranded.length <= 200) {
-      setStage("Claude classifying...");
+      setStage(isAdmin ? "Claude classifying..." : "Classifying...");
       try {
         const batch = nonBranded.map((p, i) => (i + 1) + ". " + p.name + (p.brand ? " [" + p.brand + "]" : "")).join("\n");
         const clRaw = await callClaude('Classify each product. Is it GENERIC (unbranded/artisan/sourceable from SE Asia) or BRANDED (known brand, not sourceable)?\n\n' + batch + '\n\n{"classified":[{"index":1,"type":"GENERIC or BRANDED"}]}\nJSON only:', "claude-haiku-4-5-20251001", false, 1, 4096);
@@ -1026,7 +1093,6 @@ export default function App() {
     setBsLastScan(ts);
     await storeSet(userId + ":brainstorm:amazon", { products: allProducts, scannedAt: ts });
   };
-
 
   // ══════════ LOOKUP ══════════
   const AMAZON_URL_PATTERN = /^https?:\/\/(www\.)?(amazon\.(ae|com|co\.uk|de|fr|it|es|ca|com\.au|in|sg|sa|com\.br|co\.jp|nl|pl|se|com\.mx|com\.tr|eg)|amzn\.(to|eu|asia|com))\//i;
@@ -1144,7 +1210,7 @@ export default function App() {
 
       // ── Part A: Try ScrapingDog → direct structured mapping ──
       if (asin) {
-        setStage("ScrapingDog Product API...");
+        setStage(isAdmin ? "ScrapingDog Product API..." : "Reading product...");
         try {
           addDiag("info", "lookup", `SD product API: domain=${domainCode}, asin=${asin}`);
           const sdData = await workerCall("scrapingdog_product", { asin, domain: domainCode });
@@ -1457,7 +1523,7 @@ export default function App() {
   const exportStructuredCSV = () => { if (!history.length) return; const headers = ["Date","Product EN","Product ID (Full)","Product ID (Short)","Brand","Category","Weight","Source","Pack","AED","USD","Indo Med IDR","Indo Low IDR","Indo Hi IDR","Freight USD","Customs USD","Last Mile USD","Total Cost USD","Margin Best%","Margin Med%","Margin Worst%","Conf Score","Status"]; const rows = history.map(h => { const m = h.margins?.median || {}; return [h.timestamp?.slice(0,10)||"",'"'+(h.uaeProduct?.product_name||"").replace(/"/g,'""')+'"','"'+(h.uaeProduct?.product_name_id||"").replace(/"/g,'""')+'"','"'+(h.normalized?.clean_name_id||"").replace(/"/g,'""')+'"','"'+(h.uaeProduct?.brand||"")+'"',h.normalized?.category||"",h.weightClass||"",h.uaeProduct?.source||"",h.uaeProduct?.pack_quantity||1,h.uaeProduct?.price_aed||0,(m.uaeUSD||0).toFixed(2),h.medianPriceIDR||0,h.lowestPriceIDR||0,h.highestPriceIDR||0,(m.freightUSD||0).toFixed(2),(m.dutyUSD||0).toFixed(2),(m.lastMileUSD||0).toFixed(2),(m.totalUSD||0).toFixed(2),(h.margins?.best?.margin||0).toFixed(1),(h.margins?.median?.margin||0).toFixed(1),(h.margins?.worst?.margin||0).toFixed(1),h.confidence?.score||0,h.status||""].join(","); }); const blob = new Blob([[headers.join(","), ...rows].join("\n")], { type: "text/csv" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "bandar-analysis-" + new Date().toISOString().slice(0, 10) + ".csv"; a.click(); };
   const exportBrainstormCSV = (products, label) => { if (!products.length) return; const h = ["Name","AED","Rating","Reviews","Brand","Department","Sub-cat","Source","Branded","Indo Signal","Signal Words"]; const rows = products.map(p => ['"'+(p.name||"").replace(/"/g,'""')+'"',p.price_aed||0,p.rating||0,p.reviews||0,'"'+(p.brand||"")+'"','"'+(p.department||"")+'"','"'+(p.subcategory||"")+'"',p.source||"",p.isBranded?"Y":"N",p.indoSignal?.score||0,'"'+(p.indoSignal?.matched||[]).join("; ")+'"'].join(",")); const blob = new Blob([[h.join(","),...rows].join("\n")], { type: "text/csv" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "bandar-brainstorm-" + label + "-" + new Date().toISOString().slice(0, 10) + ".csv"; a.click(); };
 
-
+  // ══════════ STYLES ══════════
   // ══════════ STYLES ══════════
   const inputStyle = { width: "100%", padding: "10px 12px", background: c.input, border: "1px solid " + c.border2, color: c.text, fontFamily: "monospace", fontSize: "13px", borderRadius: "3px", outline: "none" };
   const btnStyle = { padding: "10px 24px", background: c.gold, color: c.btnText, border: "none", cursor: "pointer", fontFamily: "'Inconsolata',monospace", fontSize: "12px", fontWeight: 700, letterSpacing: "0.5px", textTransform: "uppercase", borderRadius: "3px" };
@@ -1465,131 +1531,297 @@ export default function App() {
   const btnGreen = { ...btnStyle, background: c.green, color: "#fff" };
   const secStyle = { padding: "20px", background: c.surface, border: "1px solid " + c.border2, borderTop: "none", minHeight: "420px", borderRadius: "0 0 4px 4px" };
   const candidates = history.filter(h => (h.margins?.median?.margin || 0) >= MARGIN_THRESHOLD.candidate);
-  const cookieAgeDays = shopeeCookieUpdatedAt ? Math.floor((Date.now() - shopeeCookieUpdatedAt) / 86400000) : null;
-  const cookieColor = cookieAgeDays === null ? c.dimmer : cookieAgeDays <= 10 ? c.green : cookieAgeDays <= 12 ? (c.darkGold || c.gold) : c.red;
+
+  // Brainstorm filtered products
+  const bsAllProducts = [...bsAmazonProducts];
+  const bsFiltered = bsAllProducts.filter(p => {
+    if (bsHideBranded && p.isBranded) return false;
+    if (bsFilter.search && !p.name.toLowerCase().includes(bsFilter.search.toLowerCase())) return false;
+    if (bsFilter.minPrice && p.price_aed < parseFloat(bsFilter.minPrice)) return false;
+    if (bsFilter.maxPrice && p.price_aed > parseFloat(bsFilter.maxPrice)) return false;
+    if (bsFilter.dept !== "all" && p.department !== bsFilter.dept && p.subcategory !== bsFilter.dept) return false;
+    return p.price_aed > 0;
+  }).sort((a, b) => {
+    if (bsSort === "signal") return (b.indoSignal?.score || 0) - (a.indoSignal?.score || 0);
+    if (bsSort === "price_asc") return a.price_aed - b.price_aed;
+    if (bsSort === "price_desc") return b.price_aed - a.price_aed;
+    if (bsSort === "reviews") return (b.reviews || 0) - (a.reviews || 0);
+    return 0;
+  });
+
+  const discAllProducts = [...discAmazonResults].sort((a, b) => {
+    if (discSort === "reviews") return (b.reviews || 0) - (a.reviews || 0);
+    if (discSort === "price_asc") return a.price_aed - b.price_aed;
+    if (discSort === "price_desc") return b.price_aed - a.price_aed;
+    if (discSort === "rating") return (b.rating || 0) - (a.rating || 0);
+    return 0;
+  });
   const getQty = () => qtyMode === "container" ? Math.floor(24000 / (WEIGHT_KG[dryRunData?.weight_class || "medium"] || 1)) : qtyMode === "custom" ? qty : 1;
-  const tabs = [
-    { id: "discover", label: "\ud83d\udd0d Discover", show: true },
-    { id: "auto", label: "\u26a1 Lookup", show: true },
-    { id: "history", label: "\ud83d\udccb History (" + history.length + ")", show: true },
-    { id: "brainstorm", label: "\ud83e\udde0 Brainstorm", show: isAdmin },
-    { id: "guide", label: "\ud83d\udcd6 Guide", show: true },
-    { id: "admin", label: "\ud83d\udd12 Admin", show: isAdmin },
-  ];
+  const cookieAgeDays = shopeeCookieUpdatedAt ? Math.floor((Date.now() - shopeeCookieUpdatedAt) / 86400000) : null;
+  const cookieColor = cookieAgeDays === null ? c.dimmer : cookieAgeDays <= 10 ? c.green : cookieAgeDays <= 12 ? c.darkGold : c.red;
+
+  const SectionToggle = ({ index, title, icon, children, count }) => (<div style={{ marginBottom: "8px", border: "1px solid " + (activeSection === index ? c.gold + "44" : c.border), borderRadius: "6px", overflow: "hidden" }}><button onClick={() => setActiveSection(activeSection === index ? -1 : index)} style={{ width: "100%", display: "flex", alignItems: "center", gap: "10px", padding: "14px 16px", background: activeSection === index ? c.surface2 : c.surface, border: "none", cursor: "pointer", textAlign: "left", color: c.text, fontFamily: "'Inconsolata',monospace", fontSize: "12px" }}><span style={{ fontSize: "16px" }}>{icon}</span><span style={{ flex: 1, fontWeight: 600, color: activeSection === index ? c.gold : c.text }}>{title}</span>{count !== undefined && <span style={{ color: c.green, fontSize: "10px" }}>{count}</span>}<span style={{ color: c.dimmer }}>{activeSection === index ? "\u25be" : "\u25b8"}</span></button>{activeSection === index && <div style={{ padding: "16px", borderTop: "1px solid " + c.border }}>{children}</div>}</div>);
+  const PriceRow = ({ label, usd, aed, idr }) => <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr", gap: "6px", fontSize: "11px", padding: "4px 0", borderBottom: "1px solid " + c.border }}><div style={{ color: c.dim }}>{label}</div><div style={{ color: c.gold }}>{fmtUSD(usd)}</div><div>{fmtAED(aed)}</div><div>{fmtIDR(idr)}</div></div>;
+
+  // ══════════ PRODUCT TABLE (reused in Brainstorm + Discover) ══════════
+  const ProductTable = ({ products, validatingIdx, validationResults, onValidate, showSubcat, showSignal, maxRows = 200 }) => (
+    <div style={{ maxHeight: "500px", overflowY: "auto" }}>
+      <div style={{ display: "grid", gridTemplateColumns: showSubcat ? "2fr 0.6fr 0.4fr 0.5fr" + (showSignal ? " 0.7fr" : "") + " 0.7fr" : "2.2fr 0.6fr 0.4fr 0.5fr 0.7fr", gap: "6px", padding: "6px 0", borderBottom: "1px solid " + c.border2, fontSize: "9px", color: c.dimmer, letterSpacing: "0.5px", textTransform: "uppercase", position: "sticky", top: 0, background: c.surface, zIndex: 1 }}>
+        <div>Product</div><div style={{ textAlign: "right" }}>Price</div><div style={{ textAlign: "center" }}>{"\u2605"}</div><div style={{ textAlign: "right" }}>Reviews</div>{showSignal && <div style={{ textAlign: "center" }}>{"\ud83c\uddee\ud83c\udde9"} Signal</div>}<div style={{ textAlign: "center" }}>Action</div>
+      </div>
+      {products.slice(0, maxRows).map((p, i) => {
+        const pk = p.asin || p.url || `${p.name}_${p.price_aed}`;
+        const vr = validationResults[pk];
+        return (
+          <div key={pk + i} style={{ display: "grid", gridTemplateColumns: showSubcat ? "2fr 0.6fr 0.4fr 0.5fr" + (showSignal ? " 0.7fr" : "") + " 0.7fr" : "2.2fr 0.6fr 0.4fr 0.5fr 0.7fr", gap: "6px", padding: "8px 0", borderBottom: "1px solid " + c.border, fontSize: "11px", alignItems: "center", background: vr?.status === "Candidate" ? (dark ? "#0D2E1A22" : "#E8F5EC44") : vr?.status === "Rejected" ? (dark ? "#3a1a1a22" : "#FEF2F244") : (p.indoSignal?.score >= 4 && showSignal ? (dark ? "#0D2E1A11" : "#E8F5EC22") : "transparent") }}>
+            <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {p.url ? <a href={p.url} target="_blank" rel="noopener" style={{ color: c.text, textDecoration: "none" }}>{p.name}</a> : p.name}
+              {showSubcat && p.subcategory && <span style={{ color: c.dimmest, fontSize: "9px" }}>{" \u00b7 "}{p.subcategory}</span>}
+            </div>
+            <div style={{ color: c.gold, fontWeight: 700, textAlign: "right" }}>{fmtAED(p.price_aed)}</div>
+            <div style={{ textAlign: "center", color: c.darkGold, fontSize: "10px" }}>{p.rating > 0 ? "\u2605" + p.rating.toFixed(1) : "\u2014"}</div>
+            <div style={{ textAlign: "right", color: c.dim, fontSize: "10px" }}>{p.reviews > 0 ? p.reviews.toLocaleString() : "\u2014"}</div>
+            {showSignal && <div style={{ textAlign: "center" }}>
+              {p.indoSignal?.score > 0 ? <span style={{ fontSize: "9px", color: p.indoSignal.score >= 4 ? c.green : c.darkGold, fontWeight: 700 }}>{"\ud83c\uddee\ud83c\udde9 "}{p.indoSignal.score}</span> : <span style={{ color: c.dimmest, fontSize: "9px" }}>{"\u2014"}</span>}
+            </div>}
+            <div style={{ textAlign: "center" }}>
+              {validatingIdx === pk ? <Spinner /> : vr ? (
+                <span style={{ fontSize: "11px", fontWeight: 700, color: marginColor(vr.margin) }}>{vr.margin != null ? vr.margin.toFixed(0) + "%" : "ERR"}</span>
+              ) : (
+                <button onClick={() => onValidate(p)} style={{ padding: "3px 8px", background: c.green, color: "#fff", border: "none", borderRadius: "3px", fontSize: "9px", fontWeight: 700, fontFamily: "monospace", cursor: "pointer" }}>VALIDATE</button>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
 
   // ══════════ RENDER ══════════
   return (
     <div className="bandar-root" style={{ minHeight: "100vh", background: c.bg, color: c.text, fontFamily: "'Inconsolata',monospace", padding: "24px", transition: "background 0.3s" }}>
       <link href="https://fonts.googleapis.com/css2?family=Lora:wght@400;500;600;700&family=Inconsolata:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}::selection{background:#C9A84C33}input::placeholder{color:${dark?"#555":"#999"}}@media(max-width:640px){.bandar-root{padding:12px !important}}`}</style>
+      <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}
+        @media(max-width:640px){
+          .bandar-root{padding:12px !important}
+          .bandar-header{flex-direction:column !important; align-items:flex-start !important; gap:10px !important}
+          .bandar-header-stats{flex-wrap:wrap !important; gap:8px !important}
+          .bandar-tabs{overflow-x:auto !important; -webkit-overflow-scrolling:touch}
+          .bandar-tabs button{font-size:10px !important; padding:8px 10px !important; white-space:nowrap}
+          .bandar-grid4{grid-template-columns:repeat(2,1fr) !important}
+          .bandar-grid3{grid-template-columns:1fr !important}
+          .bandar-price-grid{grid-template-columns:1.5fr 1fr 1fr !important}
+          .bandar-route-grid{grid-template-columns:1.5fr 0.7fr 0.7fr !important; min-width:0 !important}
+        }
+      `}</style>
+      {showCookieWizard && <CookieWizard c={c} onClose={() => setShowCookieWizard(false)} onSave={ck => { setShopeeCookie(ck); setShopeeCookieUpdatedAt(Date.now()); }} />}
 
-      {showCookieWizard && <CookieWizard c={c} onSave={val => { setShopeeCookie(val); setShopeeCookieUpdatedAt(Date.now()); }} onClose={() => setShowCookieWizard(false)} />}
-
-      {/* ══════════ AUTH SCREEN ══════════ */}
       {!unlocked ? (
-        <div style={{ maxWidth: "400px", margin: "80px auto", padding: "32px", background: c.surface, border: "1px solid " + c.border2, borderRadius: "8px" }}>
-          <div style={{ textAlign: "center", marginBottom: "24px" }}>
-            <h1 style={{ fontFamily: "'Lora',serif", fontSize: "28px", fontWeight: 500, color: c.gold, margin: "0 0 4px" }}>Bandar</h1>
-            <p style={{ fontSize: "11px", color: c.dimmer, margin: 0 }}>UAE–Indonesia Trade Intelligence</p>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "80vh", position: "relative" }}>
+          <button onClick={toggleTheme} style={{ position: "absolute", top: 0, right: 0, background: "transparent", border: "1px solid " + c.border2, color: c.dim, fontFamily: "monospace", fontSize: "11px", padding: "6px 12px", borderRadius: "4px", cursor: "pointer" }}>{dark ? "\u2600" : "\ud83c\udf19"}</button>
+          <div style={{ width: "380px", padding: "40px", background: c.surface, border: "1px solid " + c.border, borderRadius: "8px", textAlign: "center" }}>
+            <div style={{ fontSize: "32px", marginBottom: "12px", opacity: 0.3 }}>{"\ud83d\udd12"}</div>
+            <h2 style={{ fontFamily: "'Lora',serif", fontSize: "24px", fontWeight: 500, color: c.gold, marginBottom: "4px" }}>Bandar</h2>
+            <p style={{ fontSize: "11px", color: c.dimmer, marginBottom: "24px" }}>{authMode === "reset" ? "Set your new password" : "World\u2013Indonesia Trade Intelligence"}</p>
+            {authMode === "reset" ? <>
+              <input type="password" value={authNewPassword} onChange={e => { setAuthNewPassword(e.target.value); setAuthError(""); }} onKeyDown={e => e.key === "Enter" && handleResetPassword()} placeholder="New password (6+ characters)" autoFocus style={{ width: "100%", padding: "10px 14px", background: c.input, border: "1px solid " + (authError && !authError.includes("updated") ? c.red : c.border2), color: c.text, fontFamily: "monospace", fontSize: "12px", borderRadius: "4px", outline: "none", marginBottom: "12px" }} />
+              {authError && <div style={{ fontSize: "11px", color: authError.includes("updated") ? c.green : c.red, marginBottom: "12px", lineHeight: 1.5 }}>{authError}</div>}
+              <button onClick={handleResetPassword} disabled={authLoading} style={{ width: "100%", padding: "12px", background: authLoading ? c.dimmest : c.gold, color: c.btnText, border: "none", borderRadius: "4px", fontFamily: "monospace", fontWeight: 700, letterSpacing: "1px", cursor: authLoading ? "default" : "pointer", opacity: authLoading ? 0.6 : 1 }}>{authLoading ? "..." : "SET NEW PASSWORD"}</button>
+              <button onClick={() => { setAuthMode("login"); setAuthError(""); setResetToken(""); }} style={{ width: "100%", marginTop: "8px", padding: "8px", background: "transparent", color: c.dim, border: "none", fontFamily: "monospace", fontSize: "10px", cursor: "pointer", textDecoration: "underline" }}>Back to login</button>
+            </> : <>
+            <div style={{ display: "flex", gap: "0", marginBottom: "20px", border: "1px solid " + c.border2, borderRadius: "4px", overflow: "hidden" }}>
+              <button onClick={() => { setAuthMode("login"); setAuthError(""); }} style={{ flex: 1, padding: "8px", background: authMode === "login" ? c.gold : "transparent", color: authMode === "login" ? c.btnText : c.dim, border: "none", fontFamily: "monospace", fontSize: "11px", fontWeight: 700, cursor: "pointer" }}>LOG IN</button>
+              <button onClick={() => { setAuthMode("register"); setAuthError(""); }} style={{ flex: 1, padding: "8px", background: authMode === "register" ? c.gold : "transparent", color: authMode === "register" ? c.btnText : c.dim, border: "none", fontFamily: "monospace", fontSize: "11px", fontWeight: 700, cursor: "pointer" }}>REGISTER</button>
+            </div>
+            {authMode === "register" && <input type="text" value={authDisplayName} onChange={e => setAuthDisplayName(e.target.value)} placeholder="Display name (optional)" style={{ width: "100%", padding: "10px 14px", background: c.input, border: "1px solid " + c.border2, color: c.text, fontFamily: "monospace", fontSize: "12px", borderRadius: "4px", outline: "none", marginBottom: "8px" }} />}
+            <input type="email" value={authEmail} onChange={e => { setAuthEmail(e.target.value); setAuthError(""); }} placeholder="Email" autoFocus style={{ width: "100%", padding: "10px 14px", background: c.input, border: "1px solid " + (authError ? c.red : c.border2), color: c.text, fontFamily: "monospace", fontSize: "12px", borderRadius: "4px", outline: "none", marginBottom: "8px" }} />
+            <input type="password" value={authPassword} onChange={e => { setAuthPassword(e.target.value); setAuthError(""); }} onKeyDown={e => e.key === "Enter" && (authMode === "login" ? handleSignIn() : handleSignUp())} placeholder="Password" style={{ width: "100%", padding: "10px 14px", background: c.input, border: "1px solid " + (authError ? c.red : c.border2), color: c.text, fontFamily: "monospace", fontSize: "12px", borderRadius: "4px", outline: "none", marginBottom: "12px" }} />
+            {authError && <div style={{ fontSize: "11px", color: authError.includes("confirm") || authError.includes("Check") || authError.includes("sent") || authError.includes("updated") ? c.green : c.red, marginBottom: "12px", lineHeight: 1.5 }}>{authError}</div>}
+            <button onClick={authMode === "login" ? handleSignIn : handleSignUp} disabled={authLoading} style={{ width: "100%", padding: "12px", background: authLoading ? c.dimmest : c.gold, color: c.btnText, border: "none", borderRadius: "4px", fontFamily: "monospace", fontWeight: 700, letterSpacing: "1px", cursor: authLoading ? "default" : "pointer", opacity: authLoading ? 0.6 : 1 }}>{authLoading ? "..." : authMode === "login" ? "LOG IN" : "CREATE ACCOUNT"}</button>
+            {authMode === "login" && <button onClick={handleForgotPassword} disabled={authLoading} style={{ width: "100%", marginTop: "8px", padding: "8px", background: "transparent", color: c.dim, border: "none", fontFamily: "monospace", fontSize: "10px", cursor: "pointer", textDecoration: "underline" }}>Forgot password?</button>}
+            </>}
           </div>
-          {authMode === "reset" ? (
-            <div>
-              <div style={{ fontSize: "12px", color: c.dim, marginBottom: "12px" }}>Set your new password:</div>
-              <input type="password" value={authNewPassword} onChange={e => setAuthNewPassword(e.target.value)} placeholder="New password (6+ chars)" style={{ ...inputStyle, marginBottom: "12px" }} />
-              <button onClick={handleResetPassword} disabled={authLoading} style={{ ...btnGreen, width: "100%" }}>{authLoading ? "UPDATING..." : "SET NEW PASSWORD"}</button>
-            </div>
-          ) : (
-            <div>
-              <div style={{ display: "flex", gap: "4px", marginBottom: "16px" }}>
-                {["login", "register"].map(m => (
-                  <button key={m} onClick={() => { setAuthMode(m); setAuthError(""); }} style={{ flex: 1, padding: "8px", background: authMode === m ? c.gold : "transparent", color: authMode === m ? c.btnText : c.dim, border: "1px solid " + (authMode === m ? c.gold : c.border2), borderRadius: "3px", cursor: "pointer", fontFamily: "monospace", fontSize: "11px", fontWeight: 700, textTransform: "uppercase" }}>{m}</button>
-                ))}
-              </div>
-              <input type="email" value={authEmail} onChange={e => setAuthEmail(e.target.value)} placeholder="Email" style={{ ...inputStyle, marginBottom: "8px" }} />
-              {authMode !== "forgot" && <input type="password" value={authPassword} onChange={e => setAuthPassword(e.target.value)} placeholder="Password" onKeyDown={e => e.key === "Enter" && (authMode === "login" ? handleSignIn() : handleSignUp())} style={{ ...inputStyle, marginBottom: "12px" }} />}
-              <button onClick={authMode === "login" ? handleSignIn : authMode === "register" ? handleSignUp : handleForgotPassword} disabled={authLoading} style={{ ...btnGreen, width: "100%", marginBottom: "8px" }}>
-                {authLoading ? "..." : authMode === "login" ? "LOG IN" : authMode === "register" ? "CREATE ACCOUNT" : "SEND RESET EMAIL"}
-              </button>
-              {authMode === "login" && <button onClick={() => { setAuthMode("forgot"); setAuthError(""); }} style={{ background: "transparent", border: "none", color: c.dimmer, fontSize: "10px", cursor: "pointer", width: "100%", textAlign: "center" }}>Forgot password?</button>}
-              {authMode === "forgot" && <button onClick={() => setAuthMode("login")} style={{ background: "transparent", border: "none", color: c.dimmer, fontSize: "10px", cursor: "pointer", width: "100%", textAlign: "center" }}>Back to login</button>}
-            </div>
-          )}
-          {authError && <div style={{ marginTop: "12px", padding: "8px", background: dark ? "#3a1a1a" : "#fef2f2", border: "1px solid " + c.red, borderRadius: "4px", fontSize: "11px", color: c.red, textAlign: "center" }}>{authError}</div>}
         </div>
+      ) : !storageReady ? (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "60vh", flexDirection: "column", gap: "16px" }}><Spinner /><div style={{ fontSize: "12px", color: c.dim }}>Loading...</div></div>
       ) : (<>
 
       {/* ══════════ HEADER ══════════ */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "8px" }}>
-        <div>
-          <h1 style={{ fontFamily: "'Lora',serif", fontSize: "24px", fontWeight: 500, color: c.gold, margin: 0 }}>Bandar</h1>
-          <div style={{ fontSize: "10px", color: c.dimmer }}>{authUser?.email} · {TIER_LIMITS[userProfile?.role]?.label || "Free"} · {candidates.length} candidates</div>
-        </div>
-        <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-          <button onClick={toggleTheme} style={{ background: "transparent", border: "1px solid " + c.border, color: c.dim, borderRadius: "3px", padding: "4px 8px", cursor: "pointer", fontSize: "11px" }}>{dark ? "\u2600" : "\ud83c\udf19"}</button>
-          <button onClick={() => setShowDiag(!showDiag)} style={{ background: "transparent", border: "1px solid " + c.border, color: c.gold, borderRadius: "3px", padding: "4px 8px", cursor: "pointer", fontFamily: "monospace", fontSize: "9px" }}>DIAG</button>
-          <button onClick={handleSignOut} style={{ background: "transparent", border: "1px solid " + c.border, color: c.dim, borderRadius: "3px", padding: "4px 8px", cursor: "pointer", fontSize: "10px" }}>LOGOUT</button>
+      <div style={{ marginBottom: "16px", borderBottom: "1px solid " + c.border, paddingBottom: "12px" }}>
+        <div className="bandar-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+          <div>
+            <h1 style={{ fontFamily: "'Lora',serif", fontSize: "28px", fontWeight: 500, color: c.gold, margin: 0 }}>Bandar <span style={{ fontSize: "12px", color: c.dimmer, fontFamily: "monospace" }}>v5.3</span></h1>
+            <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "4px", letterSpacing: "2px", textTransform: "uppercase" }}>World {"\u2192"} Indonesia {"\u00b7"} {authUser?.email?.split("@")[0]} {isAdmin && <span style={{ color: c.red }}>{"\u00b7 ADMIN"}</span>} {"\u00b7"} {userProfile ? (TIER_LIMITS[userProfile.role]?.label || userProfile.role) : ""}{isAdmin && <>{" \u00b7 "}{fxUpdated ? "FX " + fxUpdated.toLocaleDateString() : "FX: defaults"}{" \u00b7 "}<span style={{ color: supabaseReady ? c.green : c.darkGold }}>{supabaseReady ? "\u25cf DB" : "\u25cb local"}</span></>}</div>
+          </div>
+          <div className="bandar-header-stats" style={{ display: "flex", gap: "12px", fontSize: "11px", alignItems: "flex-end" }}>
+            <div style={{ textAlign: "right" }}><div style={{ color: c.dimmer }}>LOOKUPS</div><div style={{ color: c.gold, fontSize: "16px", fontWeight: 700 }}>{history.length}</div></div>
+            <div style={{ textAlign: "right" }}><div style={{ color: c.dimmer }}>CANDIDATES</div><div style={{ color: c.green, fontSize: "16px", fontWeight: 700 }}>{candidates.length}</div></div>
+            {userProfile && !isAdmin && (() => { const used = userProfile.lookups_used || 0; const limit = TIER_LIMITS[userProfile.role]?.lookups || 1; const pct = used / limit; const col = pct >= 1 ? c.red : pct >= 0.8 ? c.darkGold : c.green; return <div style={{ textAlign: "right" }}><div style={{ color: c.dimmer }}>SCRAPES</div><div style={{ color: col, fontSize: "11px", fontWeight: 600 }}>{used}/{limit}</div></div>; })()}
+            {userProfile && !isAdmin && (() => { const used = userProfile.margins_used || 0; const limit = TIER_LIMITS[userProfile.role]?.margins || 1; const pct = used / limit; const col = pct >= 1 ? c.red : pct >= 0.8 ? c.darkGold : c.green; return <div style={{ textAlign: "right" }}><div style={{ color: c.dimmer }}>ANALYSES</div><div style={{ color: col, fontSize: "11px", fontWeight: 600 }}>{used}/{limit}</div></div>; })()}
+            <button onClick={toggleTheme} style={{ background: c.surface2, border: "1px solid " + c.border2, color: c.dim, fontFamily: "monospace", fontSize: "10px", padding: "6px 10px", borderRadius: "4px", cursor: "pointer" }}>{dark ? "\u2600" : "\ud83c\udf19"}</button>
+            {isAdmin && <button onClick={() => setShowDiag(!showDiag)} style={{ background: showDiag ? c.gold : c.surface2, border: "1px solid " + (showDiag ? c.gold : c.border2), color: showDiag ? c.btnText : c.dim, fontFamily: "monospace", fontSize: "10px", padding: "6px 10px", borderRadius: "4px", cursor: "pointer" }}>DIAG</button>}
+            <button onClick={handleSignOut} style={{ background: "transparent", border: "1px solid " + c.red + "44", color: c.red, fontFamily: "monospace", fontSize: "9px", padding: "6px 10px", borderRadius: "4px", cursor: "pointer" }}>LOGOUT</button>
+          </div>
         </div>
       </div>
 
-      {quotaError && <div style={{ padding: "8px 12px", background: dark ? "#3a1a1a" : "#fef2f2", border: "1px solid " + c.red, borderRadius: "4px", fontSize: "11px", color: c.red, marginBottom: "12px" }}>{quotaError}</div>}
+      {/* ══════════ QUOTA WARNING ══════════ */}
+      {quotaError && <div style={{ marginBottom: "12px", padding: "14px 16px", background: dark ? "#2A1A10" : "#FEF3E2", border: "1px solid " + c.darkGold + "66", borderRadius: "6px", display: "flex", alignItems: "center", gap: "12px" }}>
+        <span style={{ fontSize: "20px" }}>{"\ud83d\udeab"}</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: "12px", color: c.text, fontWeight: 600, marginBottom: "2px" }}>Quota Limit Reached</div>
+          <div style={{ fontSize: "11px", color: c.dim }}>{quotaError}</div>
+        </div>
+        <button onClick={() => setQuotaError("")} style={{ background: "transparent", border: "none", color: c.dimmest, fontSize: "14px", cursor: "pointer" }}>{"\u2715"}</button>
+      </div>}
 
       {/* ══════════ CONFIG (admin only) ══════════ */}
-      {isAdmin && <details style={{ marginBottom: "12px" }}>
-        <summary style={{ cursor: "pointer", fontSize: "10px", color: c.dimmer, letterSpacing: "1px" }}>CONFIG</summary>
-        <div style={{ padding: "12px", background: c.surface, border: "1px solid " + c.border, borderRadius: "4px", marginTop: "6px", display: "flex", flexDirection: "column", gap: "8px" }}>
-          <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-            <span style={{ fontSize: "10px", color: c.dim, minWidth: "80px" }}>Claude API</span>
-            <input type={showKey ? "text" : "password"} value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-ant-..." style={{ ...inputStyle, flex: 1, padding: "6px 8px", fontSize: "11px" }} />
-            <button onClick={() => setShowKey(!showKey)} style={{ background: "transparent", border: "1px solid " + c.border, color: c.dim, borderRadius: "3px", padding: "4px 6px", cursor: "pointer", fontSize: "9px" }}>{showKey ? "HIDE" : "SHOW"}</button>
-            {apiKeyStatus && <span style={{ fontSize: "9px", color: c.green }}>{apiKeyStatus}</span>}
+      {isAdmin && <div style={{ marginBottom: "12px", padding: "10px 12px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "4px" }}>
+        {[
+          { label: "CLAUDE", val: apiKey, set: setApiKey, show: showKey, toggle: () => setShowKey(!showKey), status: apiKeyStatus, ph: "sk-ant-..." },
+          { label: "APIFY", val: apifyKey, set: setApifyKey, show: showApifyKey, toggle: () => setShowApifyKey(!showApifyKey), status: apifyStatus, ph: "apify_api_..." },
+          { label: "SD", val: scrapingDogKey, set: setScrapingDogKey, show: showSDKey, toggle: () => setShowSDKey(!showSDKey), status: sdStatus, ph: "ScrapingDog key..." },
+        ].map(k => (
+          <div key={k.label} style={{ display: "flex", gap: "6px", alignItems: "center", marginBottom: "6px" }}>
+            <span style={{ fontSize: "9px", color: c.dim, letterSpacing: "1px", width: "50px" }}>{k.label}</span>
+            <input type={k.show ? "text" : "password"} value={k.val} onChange={e => k.set(e.target.value)} placeholder={k.ph} style={{ ...inputStyle, flex: 1, padding: "4px 8px", fontSize: "11px" }} />
+            <button onClick={k.toggle} style={{ ...btnSec, padding: "4px 8px", fontSize: "9px" }}>{k.show ? "HIDE" : "SHOW"}</button>
+            {k.status && <span style={{ fontSize: "10px", color: k.status === "missing" ? c.red : c.green }}>{"\u2713"}</span>}
           </div>
-          <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-            <span style={{ fontSize: "10px", color: c.dim, minWidth: "80px" }}>Apify</span>
-            <input type={showApifyKey ? "text" : "password"} value={apifyKey} onChange={e => setApifyKey(e.target.value)} placeholder="apify_api_..." style={{ ...inputStyle, flex: 1, padding: "6px 8px", fontSize: "11px" }} />
-            <button onClick={() => setShowApifyKey(!showApifyKey)} style={{ background: "transparent", border: "1px solid " + c.border, color: c.dim, borderRadius: "3px", padding: "4px 6px", cursor: "pointer", fontSize: "9px" }}>{showApifyKey ? "HIDE" : "SHOW"}</button>
-            {apifyStatus && <span style={{ fontSize: "9px", color: c.green }}>{apifyStatus}</span>}
-          </div>
-          <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-            <span style={{ fontSize: "10px", color: c.dim, minWidth: "80px" }}>ScrapingDog</span>
-            <input type={showSDKey ? "text" : "password"} value={scrapingDogKey} onChange={e => setScrapingDogKey(e.target.value)} placeholder="sd_..." style={{ ...inputStyle, flex: 1, padding: "6px 8px", fontSize: "11px" }} />
-            <button onClick={() => setShowSDKey(!showSDKey)} style={{ background: "transparent", border: "1px solid " + c.border, color: c.dim, borderRadius: "3px", padding: "4px 6px", cursor: "pointer", fontSize: "9px" }}>{showSDKey ? "HIDE" : "SHOW"}</button>
-            {sdStatus && <span style={{ fontSize: "9px", color: c.green }}>{sdStatus}</span>}
-          </div>
-          <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-            <span style={{ fontSize: "10px", color: c.dim, minWidth: "80px" }}>Shopee Cookie</span>
-            <span style={{ fontSize: "10px", color: cookieColor }}>{cookieAgeDays !== null ? cookieAgeDays + "d old" : "Not set"}</span>
-            <button onClick={() => setShowCookieWizard(true)} style={{ background: "transparent", border: "1px solid " + c.gold, color: c.gold, borderRadius: "3px", padding: "4px 8px", cursor: "pointer", fontSize: "9px" }}>{"\ud83c\udf6a"} SETUP</button>
-          </div>
-          <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-            <span style={{ fontSize: "10px", color: c.dim, minWidth: "80px" }}>FX Rate</span>
-            <span style={{ fontSize: "10px", color: c.gold }}>1 AED = {Math.round(fx.AED_TO_IDR).toLocaleString()} IDR</span>
-            {fxUpdated && <span style={{ fontSize: "9px", color: c.dimmest }}>({fxUpdated.toLocaleDateString()})</span>}
-          </div>
+        ))}
+        <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "9px", color: c.dim, letterSpacing: "1px", width: "50px" }}>INDO</span>
+          {[{ id: "apify", label: "\ud83d\udd17 Apify" }, { id: "claude", label: "\ud83d\udd0d Claude" }].map(m => (
+            <button key={m.id} onClick={() => setIndoMode(m.id)} style={{ padding: "3px 8px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", background: indoMode === m.id ? (m.id === "apify" ? c.green : c.gold) : "transparent", color: indoMode === m.id ? "#fff" : c.dim, border: "1px solid " + (indoMode === m.id ? (m.id === "apify" ? c.green : c.gold) : c.border2), borderRadius: "3px" }}>{m.label}</button>
+          ))}
+          <span style={{ padding: "2px 8px", borderRadius: "10px", fontSize: "9px", background: cookieAgeDays === null ? c.surface : cookieAgeDays <= 10 ? (dark ? "#0D2E1A" : "#E8F5EC") : (dark ? "#3a1a1a" : "#FEF2F2"), color: cookieColor, border: "1px solid " + cookieColor + "44" }}>{"\ud83c\udf6a "}{cookieAgeDays === null ? "No cookie" : cookieAgeDays + "d"}</span>
+          <button onClick={() => setShowCookieWizard(true)} style={{ ...btnSec, padding: "3px 8px", fontSize: "8px" }}>Update</button>
         </div>
-      </details>}
+      </div>}
 
       {/* ══════════ TAB BAR ══════════ */}
-      <div style={{ display: "flex", gap: 0, borderBottom: "1px solid " + c.border2, marginBottom: 0 }}>
-        {tabs.filter(m => m.show).map(m => (
+      <div className="bandar-tabs" style={{ display: "flex", gap: "2px", borderBottom: "1px solid " + c.border2 }}>
+        {[
+          { id: "guide", label: "\ud83d\udcd6 GUIDE" },
+          ...(isAdmin ? [{ id: "brainstorm", label: "\ud83e\udde0 BRAINSTORM" }] : []),
+          { id: "discover", label: "\ud83d\udd0d DISCOVER" },
+          { id: "auto", label: "\u26a1 LOOKUP" },
+          { id: "history", label: "\ud83d\udccb HISTORY" },
+          ...(isAdmin ? [{ id: "admin", label: "\u2699 ADMIN" }] : [])
+        ].map(m => (
           <button key={m.id} onClick={() => setMode(m.id)} style={{ padding: "10px 16px", background: mode === m.id ? c.surface : "transparent", color: mode === m.id ? c.gold : c.dimmest, border: mode === m.id ? "1px solid " + c.border2 : "1px solid transparent", borderBottom: mode === m.id ? "1px solid " + c.surface : "1px solid " + c.border2, cursor: "pointer", fontFamily: "monospace", fontSize: "11px", position: "relative", top: "1px", borderRadius: "4px 4px 0 0" }}>
             {m.label}
+            {m.id === "history" && history.length > 0 && <span style={{ marginLeft: 4, color: c.green, fontSize: 9 }}>[{history.length}]</span>}
+            {m.id === "brainstorm" && bsAllProducts.length > 0 && <span style={{ marginLeft: 4, color: c.green, fontSize: 9 }}>[{bsAllProducts.length}]</span>}
           </button>
         ))}
       </div>
 
-      {/* ══════════ TAB CONTENT ══════════ */}
-      {mode === "discover" && <DiscoverPage c={c} dark={dark} stage={stage} workerCall={workerCall} addDiag={addDiag} setStage={setStage} validateProduct={validateProduct} historyRef={historyRef} saveHistoryNow={saveHistoryNow} setHistory={setHistory} checkQuota={checkQuota} incrementUsage={incrementUsage} callClaude={callClaude} parseJSON={parseJSON} calcMargin={calcMargin} runFullIndoSearch={runFullIndoSearch} storeSet={storeSet} userId={userId} storageReady={storageReady} authToken={authToken} />}
+      {/* ══════════ BRAINSTORM TAB ══════════ */}
+      {mode === "brainstorm" && isAdmin && <BrainstormPage
+        c={c} dark={dark} secStyle={secStyle} inputStyle={inputStyle} btnStyle={btnStyle} btnSec={btnSec} btnGreen={btnGreen}
+        isAdmin={isAdmin} authToken={authToken}
+        loading={loading} stage={stage} progress={progress}
+        bsStep={bsStep} setBsStep={setBsStep} bsError={bsError} bsSubcats={bsSubcats} setBsSubcats={setBsSubcats}
+        bsProgress={bsProgress} bsDept={bsDept} setBsDept={setBsDept}
+        bsExtractSubcats={bsExtractSubcats} bsScrapeApproved={bsScrapeApproved} bsAbortRef={bsAbortRef}
+        bsAmazonProducts={bsAmazonProducts} bsAllProducts={bsAllProducts} bsLastScan={bsLastScan}
+        bsHideBranded={bsHideBranded} setBsHideBranded={setBsHideBranded}
+        bsBoostIndo={bsBoostIndo} setBsBoostIndo={setBsBoostIndo}
+        bsFilter={bsFilter} setBsFilter={setBsFilter}
+        bsSort={bsSort} setBsSort={setBsSort}
+        bsFiltered={bsFiltered}
+        bsValidatingIdx={bsValidatingIdx} bsValidationResults={bsValidationResults}
+        validateProduct={validateProduct} setBsValidatingIdx={setBsValidatingIdx} setBsValidationResults={setBsValidationResults}
+        showBrandList={showBrandList} setShowBrandList={setShowBrandList}
+        allBrands={allBrands} baseBrands={baseBrands} setBaseBrands={setBaseBrands} customBrands={customBrands} setCustomBrands={setCustomBrands}
+        newBrandInput={newBrandInput} setNewBrandInput={setNewBrandInput}
+        brandSearchFilter={brandSearchFilter} setBrandSearchFilter={setBrandSearchFilter}
+        exportBrainstormCSV={exportBrainstormCSV}
+        ProductTable={ProductTable}
+      />}
 
-      {mode === "auto" && <LookupPage c={c} dark={dark} url={url} setUrl={setUrl} loading={loading} stage={stage} progress={progress} dryRunData={dryRunData} indoResults={indoResults} marginData={marginData} autoError={autoError} editableQueries={editableQueries} setEditableQueries={setEditableQueries} newQueryInput={newQueryInput} setNewQueryInput={setNewQueryInput} cooldown={cooldown} activeSection={activeSection} setActiveSection={setActiveSection} waveStatus={waveStatus} lookupView={lookupView} marginScenario={marginScenario} setMarginScenario={setMarginScenario} scenarioBData={scenarioBData} scenarioBLoading={scenarioBLoading} qty={qty} setQty={setQty} freightMode={freightMode} setFreightMode={setFreightMode} qtyMode={qtyMode} setQtyMode={setQtyMode} streamingResults={streamingResults} apifyPaused={apifyPaused} marginAnalysisLoading={marginAnalysisLoading} displayMargins={displayMargins} displayStatus={displayStatus} scenarioBMargins={scenarioBMargins} routeComparisons={routeComparisons} runDryRun={runDryRun} runLookupToko={runLookupToko} runLookupShopee={runLookupShopee} runLookupIndoSearch={runLookupIndoSearch} runMarginAnalysis={runMarginAnalysis} resetLookup={resetLookup} exportPDF={exportPDF} apifyAbortRef={apifyAbortRef} apifyPauseRef={apifyPauseRef} setApifyPaused={setApifyPaused} fx={fx} getQty={getQty} />}
+      {/* ══════════ DISCOVER TAB ══════════ */}
+      {mode === "discover" && <DiscoverPage
+        c={c} dark={dark} secStyle={secStyle} inputStyle={inputStyle} btnStyle={btnStyle} btnSec={btnSec} btnGreen={btnGreen}
+        isAdmin={isAdmin}
+        keywords={keywords} setKeywords={setKeywords} newKeywordInput={newKeywordInput} setNewKeywordInput={setNewKeywordInput}
+        discSearchInput={discSearchInput} setDiscSearchInput={setDiscSearchInput}
+        discSearchingAmazon={discSearchingAmazon} searchAmazonSD={searchAmazonSD}
+        discAllProducts={discAllProducts} discError={discError}
+        discHistory={discHistory} discSelectedIdx={discSelectedIdx} setDiscSelectedIdx={setDiscSelectedIdx} setDiscAmazonResults={setDiscAmazonResults}
+        setDiscValidationResults={setDiscValidationResults}
+        discSort={discSort} setDiscSort={setDiscSort}
+        discValidatingIdx={discValidatingIdx} discValidationResults={discValidationResults}
+        validateProduct={validateProduct} setDiscValidatingIdx={setDiscValidatingIdx} setDiscValidationResults={setDiscValidationResults}
+        exportDiscoverCSV={exportDiscoverCSV} deleteDiscHistory={deleteDiscHistory}
+        stage={stage}
+        fmtAED={fmtAED}
+        ProductTable={ProductTable}
+      />}
 
-      {mode === "history" && <HistoryPage c={c} dark={dark} history={history} setHistory={setHistory} updateHistoryStatus={updateHistoryStatus} restoreFromHistory={restoreFromHistory} exportQuickCSV={exportQuickCSV} exportStructuredCSV={exportStructuredCSV} exportBackup={exportBackup} importBackup={importBackup} backupFileRef={backupFileRef} setMode={setMode} />}
+      {/* ══════════ LOOKUP TAB ══════════ */}
+      {mode === "auto" && <LookupPage
+        c={c} dark={dark} secStyle={secStyle} inputStyle={inputStyle} btnStyle={btnStyle} btnSec={btnSec} btnGreen={btnGreen}
+        isAdmin={isAdmin} loading={loading} stage={stage} progress={progress} autoError={autoError}
+        apifyPaused={apifyPaused} setApifyPaused={setApifyPaused} apifyPauseRef={apifyPauseRef} apifyAbortRef={apifyAbortRef}
+        streamingResults={streamingResults}
+        lookupView={lookupView} setLookupView={setLookupView}
+        url={url} setUrl={setUrl} runDryRun={runDryRun} cooldown={cooldown}
+        history={history} restoreFromHistory={restoreFromHistory}
+        dryRunData={dryRunData} setDryRunData={setDryRunData}
+        editableQueries={editableQueries} setEditableQueries={setEditableQueries} newQueryInput={newQueryInput} setNewQueryInput={setNewQueryInput}
+        indoResults={indoResults} marginData={marginData}
+        indoMode={indoMode}
+        runLookupToko={runLookupToko} runLookupShopee={runLookupShopee} runLookupIndoSearch={runLookupIndoSearch}
+        runMarginAnalysis={runMarginAnalysis} marginAnalysisLoading={marginAnalysisLoading}
+        resetLookup={resetLookup}
+        marginScenario={marginScenario} setMarginScenario={setMarginScenario}
+        scenarioBData={scenarioBData} scenarioBLoading={scenarioBLoading}
+        scenarioBMargins={scenarioBMargins}
+        displayMargins={displayMargins} displayStatus={displayStatus}
+        freightMode={freightMode} setFreightMode={setFreightMode}
+        qtyMode={qtyMode} setQtyMode={setQtyMode} qty={qty} setQty={setQty} getQty={getQty}
+        routeComparisons={routeComparisons}
+        fx={fx}
+        exportPDF={exportPDF}
+        waveStatus={waveStatus}
+        activeSection={activeSection} setActiveSection={setActiveSection}
+        SectionToggle={SectionToggle} PriceRow={PriceRow}
+      />}
 
-      {mode === "brainstorm" && isAdmin && <BrainstormPage c={c} dark={dark} bsAmazonProducts={bsAmazonProducts} setBsAmazonProducts={setBsAmazonProducts} bsLastScan={bsLastScan} bsDept={bsDept} setBsDept={setBsDept} bsStep={bsStep} bsSubcats={bsSubcats} setBsSubcats={setBsSubcats} bsProgress={bsProgress} bsError={bsError} bsHideBranded={bsHideBranded} setBsHideBranded={setBsHideBranded} bsBoostIndo={bsBoostIndo} setBsBoostIndo={setBsBoostIndo} bsFilter={bsFilter} setBsFilter={setBsFilter} bsSort={bsSort} setBsSort={setBsSort} bsValidatingIdx={bsValidatingIdx} bsValidationResults={bsValidationResults} bsAbortRef={bsAbortRef} stage={stage} bsExtractSubcats={bsExtractSubcats} bsScrapeApproved={bsScrapeApproved} validateProduct={validateProduct} exportBrainstormCSV={exportBrainstormCSV} setBsValidatingIdx={setBsValidatingIdx} setBsValidationResults={setBsValidationResults} />}
+      {/* ══════════ HISTORY TAB ══════════ */}
+      {mode === "history" && <HistoryPage
+        c={c} dark={dark} secStyle={secStyle} btnSec={btnSec}
+        isAdmin={isAdmin} userId={userId}
+        history={history} setHistory={setHistory}
+        expandedHistoryIdx={expandedHistoryIdx} setExpandedHistoryIdx={setExpandedHistoryIdx}
+        updateHistoryStatus={updateHistoryStatus}
+        exportQuickCSV={exportQuickCSV} exportStructuredCSV={exportStructuredCSV} exportBackup={exportBackup} importBackup={importBackup} backupFileRef={backupFileRef}
+        saveHistory={saveHistory}
+      />}
 
-      {mode === "guide" && <div style={secStyle}><GuidePage dark={dark} /></div>}
+      {/* ══════════ GUIDE TAB ══════════ */}
+      {mode === "guide" && <div style={secStyle}><BandarGuide dark={dark} /></div>}
 
-      {mode === "admin" && isAdmin && <AdminPage c={c} dark={dark} adminUsers={adminUsers} adminSearches={adminSearches} adminRates={adminRates} adminLoading={adminLoading} adminSubTab={adminSubTab} setAdminSubTab={setAdminSubTab} inviteEmail={inviteEmail} setInviteEmail={setInviteEmail} invitePassword={invitePassword} setInvitePassword={setInvitePassword} inviteRole={inviteRole} setInviteRole={setInviteRole} inviteMsg={inviteMsg} setInviteMsg={setInviteMsg} loadAdminUsers={loadAdminUsers} loadAdminSearches={loadAdminSearches} loadAdminRates={loadAdminRates} updateUserRole={updateUserRole} createInviteAccount={createInviteAccount} deleteUser={deleteUser} userId={userId} />}
+      {/* ══════════ ADMIN TAB ══════════ */}
+      {mode === "admin" && isAdmin && <AdminPage
+        c={c} dark={dark} secStyle={secStyle} inputStyle={inputStyle} btnStyle={btnStyle} btnSec={btnSec} btnGreen={btnGreen}
+        isAdmin={isAdmin}
+        adminSubTab={adminSubTab} setAdminSubTab={setAdminSubTab}
+        adminUsers={adminUsers} loadAdminUsers={loadAdminUsers}
+        adminSearches={adminSearches} loadAdminSearches={loadAdminSearches}
+        adminRates={adminRates} loadAdminRates={loadAdminRates}
+        updateUserRole={updateUserRole} deleteUser={deleteUser}
+        inviteEmail={inviteEmail} setInviteEmail={setInviteEmail}
+        invitePassword={invitePassword} setInvitePassword={setInvitePassword}
+        inviteRole={inviteRole} setInviteRole={setInviteRole}
+        inviteMsg={inviteMsg} setInviteMsg={setInviteMsg}
+        createInviteAccount={createInviteAccount}
+      />}
 
+      {/* ══════════ DIAGNOSTIC PANEL ══════════ */}
       {/* ══════════ DIAGNOSTIC PANEL ══════════ */}
       {showDiag && <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, maxHeight: "40vh", background: dark ? "#0a0a0a" : "#1a1a1a", borderTop: "2px solid " + c.gold, zIndex: 9998, display: "flex", flexDirection: "column", fontFamily: "'Inconsolata',monospace" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 14px", borderBottom: "1px solid #333", flexShrink: 0 }}>

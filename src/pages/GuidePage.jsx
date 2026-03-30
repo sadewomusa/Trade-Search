@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+// ══════════ BANDAR USER GUIDE ══════════
 const GUIDE_STEPS = [
   { id: "welcome", icon: "\ud83c\udfea", badge: "START HERE", title: "Welcome to Bandar", subtitle: "Your trade opportunity finder", body: "Bandar helps you find products selling at high prices in the UAE \u2014 that can be sourced cheaply from Indonesia.", tip: "Think of it as your personal trade scout. It does the price comparison legwork for you.", visual: "flow" },
   { id: "discover", icon: "\ud83d\udd0d", badge: "TAB 1", title: "Discover", subtitle: "Search for products on Amazon UAE", body: "Type any product keyword \u2014 like \"coconut bowl\" or \"rattan basket\" \u2014 and hit Search. Bandar fetches real Amazon.ae listings with prices and reviews.", steps: ["Type a product keyword in the search box", "Tap SEARCH AMAZON", "Browse results \u2014 sorted by popularity", "Tap VALIDATE on any product to check its Indonesia margin"], tip: "High review count = proven demand. Start there!", visual: "discover" },
@@ -11,7 +12,7 @@ const GUIDE_STEPS = [
   { id: "tips", icon: "\u2728", badge: "VOIL\u00c0!", title: "You\u2019re Ready", subtitle: "Quick tips before you go", quickTips: [{ emoji: "\ud83c\udfaf", text: "Search for natural, handmade, or artisan products \u2014 Indonesia excels here" }, { emoji: "\ud83d\udcc8", text: "High reviews on Amazon = proven demand = lower risk" }, { emoji: "\ud83d\udca1", text: "Look for 40%+ margins \u2014 gives you room for unexpected costs" }, { emoji: "\ud83d\udd04", text: "Validate on both Source 1 (Tokopedia) and Source 2 (Shopee)" }, { emoji: "\ud83d\udcca", text: "Export your best candidates to CSV and track them" }, { emoji: "\ud83d\udea2", text: "Khorfakkan routes (marked with \u2605) are often best value" }], tip: null, visual: "tips" },
 ];
 
-export default function GuidePage({ dark }) {
+function BandarGuide({ dark }) {
   const [guideStep, setGuideStep] = useState(0);
   const [guideAnimating, setGuideAnimating] = useState(false);
   const [guideHovered, setGuideHovered] = useState(-1);
@@ -157,3 +158,5 @@ export default function GuidePage({ dark }) {
     </div>
   );
 }
+
+export { GUIDE_STEPS, BandarGuide };
