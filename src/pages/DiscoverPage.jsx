@@ -16,7 +16,42 @@ export default function DiscoverPage({
   stage,
   fmtAED,
   ProductTable,
+  discViewMode, setDiscViewMode,
+  discSelected, setDiscSelected,
+  discQuickFilter, setDiscQuickFilter,
+  discPriceMin, setDiscPriceMin,
+  discPriceMax, setDiscPriceMax,
+  discPreviewOpen, setDiscPreviewOpen,
+  discPreviewLoading,
+  discPreviewCache,
+  fetchProductPreview,
+  extractSizeTag,
+  launchDeepDiveFromDiscover,
 }) {
+  // ── Client-side quick filters ──
+  const filteredProducts = (discAllProducts || []).filter(p => {
+    if (discQuickFilter && !(p.title || p.name || "").toLowerCase().includes(discQuickFilter.toLowerCase())) return false;
+    const price = parseFloat(p.price_aed || p.price) || 0;
+    if (discPriceMin && price < parseFloat(discPriceMin)) return false;
+    if (discPriceMax && price > parseFloat(discPriceMax)) return false;
+    return true;
+  });
+
+  const toggleSelect = (asin) => {
+    setDiscSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(asin)) next.delete(asin);
+      else next.add(asin);
+      return next;
+    });
+  };
+
+  const selectedCount = discSelected?.size || 0;
+  const canDeepDive = selectedCount >= 5 && selectedCount <= 15;
+
+  const pill = { display: "inline-block", padding: "1px 5px", borderRadius: "8px", fontSize: "9px", fontFamily: "monospace" };
+  const mono = { fontFamily: "'Inconsolata',monospace" };
+
   return <div style={secStyle}>
 
 
@@ -102,21 +137,95 @@ export default function DiscoverPage({
           );
         })()}
 
-        {/* ── Sort bar ── */}
-        {discAllProducts.length > 0 && <div style={{ display: "flex", gap: "6px", marginBottom: "10px", flexWrap: "wrap", alignItems: "center" }}>
-          {[{ id: "reviews", label: "Most Reviews" }, { id: "rating", label: "Top Rated" }, { id: "price_asc", label: "Price \u2191" }, { id: "price_desc", label: "Price \u2193" }].map(s => (
-            <button key={s.id} onClick={() => setDiscSort(s.id)} style={{ padding: "3px 8px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", background: discSort === s.id ? c.gold : "transparent", color: discSort === s.id ? c.btnText : c.dim, border: "1px solid " + (discSort === s.id ? c.gold : c.border2), borderRadius: "3px" }}>{s.label}</button>
-          ))}
-          <span style={{ fontSize: "10px", color: c.green, marginLeft: "auto" }}>{discAllProducts.length} results</span>
+        {/* ── View toggle + Quick filters + Sort bar ── */}
+        {discAllProducts.length > 0 && <div style={{ marginBottom: "10px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px", flexWrap: "wrap", gap: "6px" }}>
+            {/* View mode toggle */}
+            <div style={{ display: "flex", gap: "4px" }}>
+              {[{ id: "card", icon: "\u25a6" }, { id: "list", icon: "\u2630" }].map(v => (
+                <button key={v.id} onClick={() => setDiscViewMode(v.id)} style={{ padding: "4px 10px", fontSize: "11px", fontFamily: "monospace", cursor: "pointer", background: discViewMode === v.id ? c.gold : "transparent", color: discViewMode === v.id ? c.btnText : c.dim, border: "1px solid " + (discViewMode === v.id ? c.gold : c.border), borderRadius: "3px" }}>{v.icon}</button>
+              ))}
+            </div>
+            {/* Quick filters */}
+            <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
+              <input value={discQuickFilter} onChange={e => setDiscQuickFilter(e.target.value)} placeholder="Filter titles..." style={{ ...inputStyle, padding: "4px 8px", fontSize: "10px", width: "130px" }} />
+              <input type="number" value={discPriceMin} onChange={e => setDiscPriceMin(e.target.value)} placeholder="Min" style={{ ...inputStyle, padding: "4px 6px", fontSize: "10px", width: "60px" }} />
+              <span style={{ color: c.dim, fontSize: "10px" }}>{"\u2013"}</span>
+              <input type="number" value={discPriceMax} onChange={e => setDiscPriceMax(e.target.value)} placeholder="Max" style={{ ...inputStyle, padding: "4px 6px", fontSize: "10px", width: "60px" }} />
+            </div>
+          </div>
+          {/* Sort buttons */}
+          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center" }}>
+            {[{ id: "reviews", label: "Most Reviews" }, { id: "rating", label: "Top Rated" }, { id: "price_asc", label: "Price \u2191" }, { id: "price_desc", label: "Price \u2193" }].map(s => (
+              <button key={s.id} onClick={() => setDiscSort(s.id)} style={{ padding: "3px 8px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", background: discSort === s.id ? c.gold : "transparent", color: discSort === s.id ? c.btnText : c.dim, border: "1px solid " + (discSort === s.id ? c.gold : c.border2), borderRadius: "3px" }}>{s.label}</button>
+            ))}
+            <span style={{ fontSize: "10px", color: c.green, marginLeft: "auto", ...mono }}>{filteredProducts.length}{filteredProducts.length !== discAllProducts.length ? " / " + discAllProducts.length : ""} results</span>
+          </div>
         </div>}
 
-        {/* Results */}
-        {discAllProducts.length > 0 && <ProductTable products={discAllProducts} validatingIdx={discValidatingIdx} validationResults={discValidationResults} onValidate={p => validateProduct(p, setDiscValidatingIdx, setDiscValidationResults)} showSubcat={false} showSignal={false} />}
+        {/* ── Results: Card View ── */}
+        {discAllProducts.length > 0 && discViewMode === "card" && <ProductTable products={filteredProducts} validatingIdx={discValidatingIdx} validationResults={discValidationResults} onValidate={p => validateProduct(p, setDiscValidatingIdx, setDiscValidationResults)} showSubcat={false} showSignal={false} />}
+
+        {/* ── Results: Compact List View ── */}
+        {discAllProducts.length > 0 && discViewMode === "list" && <div style={{ border: "1px solid " + c.border, borderRadius: "4px", overflow: "hidden" }}>
+          {/* Header */}
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "6px 8px", background: dark ? "#111" : "#f5f5f0", borderBottom: "1px solid " + c.border, fontSize: "9px", color: c.dim, fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+            <div style={{ width: 30 }}>{"\u2611"}</div>
+            <div style={{ width: 40 }}>Img</div>
+            <div style={{ flex: 1 }}>Title</div>
+            <div style={{ width: 80, textAlign: "right" }}>Price</div>
+            <div style={{ width: 55, textAlign: "center" }}>Rating</div>
+            <div style={{ width: 65, textAlign: "center" }}>Size</div>
+            <div style={{ width: 36 }}></div>
+          </div>
+          {/* Rows */}
+          <div style={{ maxHeight: "450px", overflowY: "auto" }}>
+            {filteredProducts.map((p, i) => {
+              const asin = p.asin;
+              const isSelected = discSelected?.has(asin);
+              const size = extractSizeTag ? extractSizeTag(p.title || p.name || "") : null;
+              const isPreviewOpen = discPreviewOpen === asin;
+              const prevData = discPreviewCache?.[asin];
+              return <div key={asin || i}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "5px 8px", borderBottom: "1px solid " + c.border + "44", background: isSelected ? (dark ? "#1a2a1a" : "#f0faf0") : "transparent" }}>
+                  <input type="checkbox" checked={!!isSelected} onChange={() => toggleSelect(asin)} style={{ width: 16, height: 16, accentColor: c.gold, cursor: "pointer" }} />
+                  {(p.image || p.thumbnail) && <img src={p.image || p.thumbnail} alt="" style={{ width: 36, height: 36, objectFit: "contain", borderRadius: 3, background: "#fff" }} />}
+                  <div style={{ flex: 1, minWidth: 0, fontSize: "11px", color: c.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", ...mono }}>{p.title || p.name || "\u2014"}</div>
+                  <div style={{ width: 80, textAlign: "right", fontSize: "11px", color: c.gold, fontWeight: 600, ...mono }}>{(p.price_aed || p.price) ? "AED " + parseFloat(p.price_aed || p.price).toFixed(0) : "\u2014"}</div>
+                  <div style={{ width: 55, textAlign: "center", fontSize: "10px", color: c.dim }}>{"\u2b50" + (p.rating || "\u2014")}</div>
+                  <div style={{ width: 65, textAlign: "center" }}>
+                    {size ? <span style={{ ...pill, background: dark ? "#1a2a2a" : "#e0f0f0", color: dark ? "#6dd" : "#077" }}>{size}</span> : <span style={{ fontSize: "9px", color: c.dimmest }}>{"\u2014"}</span>}
+                  </div>
+                  <button onClick={() => fetchProductPreview(asin)} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: "14px", color: c.dim, padding: "2px", width: 30 }} title="Preview (5 credits)">{"\ud83d\udc41"}</button>
+                </div>
+                {/* Inline preview */}
+                {isPreviewOpen && <div style={{ padding: "8px 16px 10px 60px", background: dark ? "#111" : "#fafafa", borderBottom: "1px solid " + c.border, fontSize: "10px" }}>
+                  {discPreviewLoading && !prevData ? <span style={{ color: c.dim }}>Loading preview...</span> : prevData ? <div>
+                    {prevData.feature_bullets?.length > 0 && <div style={{ marginBottom: 6 }}>
+                      <span style={{ fontSize: "9px", color: c.dim, textTransform: "uppercase", letterSpacing: "1px" }}>Key Features</span>
+                      <ul style={{ margin: "2px 0 0 16px", padding: 0, color: c.text }}>{prevData.feature_bullets.slice(0, 5).map((b, bi) => <li key={bi} style={{ marginBottom: 2, lineHeight: 1.3 }}>{b}</li>)}</ul>
+                    </div>}
+                    {prevData.product_information && <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 14px", color: c.text }}>
+                      {Object.entries(prevData.product_information).slice(0, 8).map(([k, v]) => <span key={k}><span style={{ color: c.dim }}>{k}:</span> {v}</span>)}
+                    </div>}
+                  </div> : <span style={{ color: c.dim }}>No data</span>}
+                </div>}
+              </div>;
+            })}
+          </div>
+        </div>}
 
         {discAllProducts.length === 0 && !discSearchingAmazon && <div style={{ textAlign: "center", padding: "40px 20px" }}>
           <div style={{ fontSize: "36px", marginBottom: "10px", opacity: 0.15 }}>{"\ud83d\udd0d"}</div>
           <div style={{ fontSize: "12px", color: c.dim }}>{discHistory.length > 0 ? "Select a past search above, or search a new keyword" : "Type a product keyword to search Amazon.ae"}</div>
           <div style={{ fontSize: "10px", color: c.dimmer, marginTop: "6px" }}>Find products on Amazon.ae, then validate margins against Indonesian prices</div>
+        </div>}
+
+        {/* ── Floating Deep Dive button ── */}
+        {selectedCount >= 3 && <div style={{ position: "sticky", bottom: 16, display: "flex", justifyContent: "center", padding: "10px 0", zIndex: 100, pointerEvents: "none" }}>
+          <button onClick={canDeepDive ? launchDeepDiveFromDiscover : undefined} disabled={!canDeepDive} style={{ pointerEvents: "auto", padding: "10px 28px", fontSize: "13px", fontFamily: "'Lora',serif", fontWeight: 600, background: canDeepDive ? c.gold : c.surface, color: canDeepDive ? c.btnText : c.dim, border: "2px solid " + (canDeepDive ? c.gold : c.border2), borderRadius: "24px", cursor: canDeepDive ? "pointer" : "not-allowed", boxShadow: "0 4px 16px " + (dark ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.15)"), opacity: canDeepDive ? 1 : 0.7, transition: "all 0.2s" }} title={!canDeepDive ? "Select at least 5 products (max 15)" : ""}>
+            {"\ud83c\udfaf"} Deep Dive Selected ({selectedCount})
+          </button>
         </div>}
   </div>;
 }

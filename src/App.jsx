@@ -22,6 +22,7 @@ import DiscoverPage from './pages/DiscoverPage.jsx';
 import LookupPage from './pages/LookupPage.jsx';
 import HistoryPage from './pages/HistoryPage.jsx';
 import AdminPage from './pages/AdminPage.jsx';
+import DeepDivePage from './pages/DeepDivePage.jsx';
 
 // ══════════ MAIN APP ══════════
 export default function App() {
@@ -97,6 +98,13 @@ export default function App() {
   const [marginScenario, setMarginScenario] = useState("A"); // "A" = link price vs indo, "B" = regional similar avg/med vs indo
   const [scenarioBData, setScenarioBData] = useState(null); // { uaeMedian, uaeAverage, source, count }
   const [scenarioBLoading, setScenarioBLoading] = useState(false);
+
+  // Deep Dive shared state (passed from Discover or Lookup)
+  const [deepDiveEntry, setDeepDiveEntry] = useState(null);
+  // { source: "discover", selectedProducts: [...] }
+  // { source: "lookup", anchorProduct: {...}, indonesianResults: [...] | null }
+  // null = standalone mode
+
   const [qty, setQty] = useState(1);
   const [freightMode, setFreightMode] = useState("air");
   const [qtyMode, setQtyMode] = useState("unit");
@@ -115,6 +123,14 @@ export default function App() {
   const [discHistory, setDiscHistory] = useState([]);
   const [discSelectedIdx, setDiscSelectedIdx] = useState(-1);
   const [discSort, setDiscSort] = useState("reviews");
+  const [discViewMode, setDiscViewMode] = useState("card"); // "card" | "list"
+  const [discSelected, setDiscSelected] = useState(new Set()); // Set of ASIN strings
+  const [discQuickFilter, setDiscQuickFilter] = useState("");
+  const [discPriceMin, setDiscPriceMin] = useState("");
+  const [discPriceMax, setDiscPriceMax] = useState("");
+  const [discPreviewCache, setDiscPreviewCache] = useState({}); // { asin: productData }
+  const [discPreviewOpen, setDiscPreviewOpen] = useState(null); // asin or null
+  const [discPreviewLoading, setDiscPreviewLoading] = useState(false);
 
   // Brainstorm state
   const [bsAmazonProducts, setBsAmazonProducts] = useState([]);
@@ -704,6 +720,59 @@ export default function App() {
     if (r.status === 429) { const d = await r.json().catch(() => ({})); throw new Error(d.error || "Rate limit reached. Upgrade your plan."); }
     if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(typeof d.error === "string" ? d.error : JSON.stringify(d).slice(0, 300) || "Worker error " + r.status); }
     return r.json();
+  };
+
+  // ── Launch Deep Dive from Discover ──
+  const launchDeepDiveFromDiscover = () => {
+    const selected = discAllProducts.filter(p => discSelected.has(p.asin));
+    if (selected.length < 5) return;
+    setDeepDiveEntry({
+      source: "discover",
+      selectedProducts: selected.map(p => ({
+        asin: p.asin,
+        title: p.title,
+        price: p.price,
+        rating: p.rating,
+        image: p.image || p.thumbnail,
+        sizeTag: extractSizeTag(p.title),
+      })),
+    });
+    setMode("deepdive");
+  };
+
+  // ── Launch Deep Dive from Lookup ──
+  const launchDeepDiveFromLookup = () => {
+    if (!dryRunData) return;
+    setDeepDiveEntry({
+      source: "lookup",
+      anchorProduct: dryRunData,
+      indonesianResults: indoResults || null,
+    });
+    setMode("deepdive");
+  };
+
+  // Size tag extractor (shared between Discover and Deep Dive)
+  const extractSizeTag = (title) => {
+    if (!title) return null;
+    const match = title.match(/(\d+\.?\d*)\s*(ml|oz|fl\.?\s*oz|g|kg|mg|l|count|pack|pcs|capsules?|pods?|pieces?|ct)/i);
+    return match ? `${match[1]}${match[2].toLowerCase().replace(/\s/g, '')}` : null;
+  };
+
+  // Inline preview fetcher for Discover/Deep Dive compact list
+  const fetchProductPreview = async (asin) => {
+    if (discPreviewCache[asin]) {
+      setDiscPreviewOpen(discPreviewOpen === asin ? null : asin);
+      return;
+    }
+    setDiscPreviewLoading(true);
+    setDiscPreviewOpen(asin);
+    try {
+      const data = await workerCall("scrapingdog_product", { asin, domain: "ae" });
+      setDiscPreviewCache(prev => ({ ...prev, [asin]: data }));
+    } catch (e) {
+      addDiag("error", "preview", "Failed to fetch " + asin + ": " + e.message);
+    }
+    setDiscPreviewLoading(false);
   };
 
   const runApifyActor = async (actorId, input, label, onPartialResults) => {
@@ -1726,6 +1795,7 @@ export default function App() {
           { id: "guide", label: "\ud83d\udcd6 GUIDE" },
           ...(isAdmin ? [{ id: "brainstorm", label: "\ud83e\udde0 BRAINSTORM" }] : []),
           { id: "discover", label: "\ud83d\udd0d DISCOVER" },
+          { id: "deepdive", label: "\ud83c\udfaf DEEP DIVE" },
           { id: "auto", label: "\u26a1 LOOKUP" },
           { id: "history", label: "\ud83d\udccb HISTORY" },
           ...(isAdmin ? [{ id: "admin", label: "\u2699 ADMIN" }] : [])
@@ -1779,6 +1849,29 @@ export default function App() {
         stage={stage}
         fmtAED={fmtAED}
         ProductTable={ProductTable}
+        discViewMode={discViewMode} setDiscViewMode={setDiscViewMode}
+        discSelected={discSelected} setDiscSelected={setDiscSelected}
+        discQuickFilter={discQuickFilter} setDiscQuickFilter={setDiscQuickFilter}
+        discPriceMin={discPriceMin} setDiscPriceMin={setDiscPriceMin}
+        discPriceMax={discPriceMax} setDiscPriceMax={setDiscPriceMax}
+        discPreviewOpen={discPreviewOpen} setDiscPreviewOpen={setDiscPreviewOpen}
+        discPreviewLoading={discPreviewLoading}
+        discPreviewCache={discPreviewCache}
+        fetchProductPreview={fetchProductPreview}
+        extractSizeTag={extractSizeTag}
+        launchDeepDiveFromDiscover={launchDeepDiveFromDiscover}
+      />}
+
+      {/* ══════════ DEEP DIVE TAB ══════════ */}
+      {mode === "deepdive" && <DeepDivePage
+        c={c} dark={dark} secStyle={secStyle} inputStyle={inputStyle} btnStyle={btnStyle} btnSec={btnSec} btnGreen={btnGreen}
+        isAdmin={isAdmin} authToken={authToken}
+        workerCall={workerCall} addDiag={addDiag}
+        deepDiveEntry={deepDiveEntry} setDeepDiveEntry={setDeepDiveEntry}
+        extractSizeTag={extractSizeTag}
+        shopeeCookie={shopeeCookie}
+        fetchProductPreview={fetchProductPreview}
+        discPreviewCache={discPreviewCache} setDiscPreviewCache={setDiscPreviewCache}
       />}
 
       {/* ══════════ LOOKUP TAB ══════════ */}
@@ -1809,6 +1902,7 @@ export default function App() {
         waveStatus={waveStatus}
         activeSection={activeSection} setActiveSection={setActiveSection}
         SectionToggle={SectionToggle} PriceRow={PriceRow}
+        launchDeepDiveFromLookup={launchDeepDiveFromLookup}
       />}
 
       {/* ══════════ HISTORY TAB ══════════ */}

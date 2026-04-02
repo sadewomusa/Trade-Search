@@ -30,6 +30,7 @@ export default function LookupPage({
   waveStatus,
   activeSection, setActiveSection,
   SectionToggle, PriceRow,
+  launchDeepDiveFromLookup,
 }) {
   return <div style={secStyle}>
         {loading && stage && <div style={{ marginBottom: "12px" }}><div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}><Spinner /><span style={{ fontSize: "12px", color: c.gold, flex: 1 }}>{stage}</span><div style={{ display: "flex", gap: "4px" }}>{!apifyPaused ? <button onClick={() => { apifyPauseRef.current = true; setApifyPaused(true); }} style={{ padding: "4px 10px", background: "transparent", border: "1px solid " + c.darkGold, color: c.darkGold, borderRadius: "3px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", fontWeight: 700 }}>{"\u23f8"} PAUSE</button> : <button onClick={() => { apifyPauseRef.current = false; setApifyPaused(false); }} style={{ padding: "4px 10px", background: c.green, border: "1px solid " + c.green, color: "#fff", borderRadius: "3px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", fontWeight: 700 }}>{"\u25b6"} CONTINUE</button>}<button onClick={() => { apifyAbortRef.current = true; apifyPauseRef.current = false; setApifyPaused(false); }} style={{ padding: "4px 10px", background: "transparent", border: "1px solid " + c.red, color: c.red, borderRadius: "3px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer", fontWeight: 700 }}>{"\u25a0"} STOP</button></div></div>{progress > 0 && <div style={{ width: "100%", height: "3px", background: c.border, borderRadius: "2px" }}><div style={{ width: progress + "%", height: "100%", background: apifyPaused ? c.darkGold : c.gold, borderRadius: "2px", transition: "width 0.3s" }} /></div>}{streamingResults.length > 0 && <div style={{ marginTop: "8px", padding: "8px 10px", background: c.surface2, border: "1px solid " + c.green + "44", borderRadius: "4px", fontSize: "10px", color: c.green }}>{"\u26a1"} {streamingResults.length} results found so far{streamingResults.filter(r => r.source === "Tokopedia").length > 0 && " | Source 1: " + streamingResults.filter(r => r.source === "Tokopedia").length}{streamingResults.filter(r => r.source === "Shopee").length > 0 && " | Source 2: " + streamingResults.filter(r => r.source === "Shopee").length}</div>}</div>}
@@ -169,6 +170,14 @@ export default function LookupPage({
               <div style={{ fontSize: "10px", color: c.gold, marginTop: "2px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>{dryRunData.product_name_id || dryRunData.clean_name_id} {"\u00b7"} <span style={{ color: c.dim, fontWeight: 400 }}>AED {dryRunData.price_aed}</span></div>
             </div>
           </div>
+
+          {/* ── Deep Dive from this product ── */}
+          {launchDeepDiveFromLookup && <div style={{ marginBottom: "10px" }}>
+            <button onClick={launchDeepDiveFromLookup} style={{ ...btnSec, padding: "8px 20px", fontSize: "11px", display: "flex", alignItems: "center", gap: "6px", width: "100%", justifyContent: "center", border: "1px dashed " + c.gold + "66", background: dark ? c.gold + "08" : c.gold + "06" }}>
+              {"\ud83c\udfaf"} Deep Dive from this product
+              <span style={{ fontSize: "9px", color: c.dim, fontStyle: "italic" }}>{"\u2014"} find similar bestsellers + Indonesian suppliers</span>
+            </button>
+          </div>}
 
           {indoResults && <SectionToggle index={1} title={"Indonesia Market" + (isAdmin ? " \u2014 " + (indoResults.source === "apify" ? "Apify" : "Claude") : "")} icon={"\ud83c\uddee\ud83c\udde9"} count={indoResults.results?.length}>
             {isAdmin && indoResults.wave_status && <WaveStatusBar waves={indoResults.wave_status} c={c} />}
