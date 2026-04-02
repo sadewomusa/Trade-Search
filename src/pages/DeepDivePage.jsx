@@ -29,6 +29,9 @@ export default function DeepDivePage({
   deepDiveEntry, setDeepDiveEntry,
   shopeeCookie,
   fetchProductPreview, discPreviewCache, setDiscPreviewCache,
+  discHistory,
+  lookupHistory,
+  setMode,
 }) {
   // ── Pipeline state ──
   const [step, setStep] = useState(0); // 0=entry, 1.5=selection, 2=scraping, 3=golden, 4=indoSearch, 4.5=translate, 5=scoring, 6=done
@@ -104,6 +107,34 @@ export default function DeepDivePage({
       image: p.thumbnail || p.image || "",
       url: p.link || p.url || (p.asin ? "https://www.amazon.ae/dp/" + p.asin : ""),
     })).filter(p => p.title && p.title.length > 3 && p.asin);
+  };
+
+  // ── Launch from a past Discover search ──
+  const launchFromDiscoverHistory = (entry) => {
+    // Convert Discover results to the format CompactRow expects
+    const products = (entry.results || []).map(p => ({
+      title: p.title || p.name || "",
+      asin: p.asin || "",
+      price: p.price_aed || p.price || 0,
+      rating: p.rating || 0,
+      reviews: p.reviews || 0,
+      image: p.image || p.thumbnail || "",
+      url: p.url || (p.asin ? "https://www.amazon.ae/dp/" + p.asin : ""),
+    })).filter(p => p.asin);
+    setSearchResults(products);
+    setSearchKeyword(entry.keyword || "");
+    setSelected(new Set());
+    setStep(1.5);
+    addDiag("info", "deepdive", "Launched from Discover history: " + entry.keyword + " (" + products.length + " products)");
+  };
+
+  // ── Launch from a past Lookup result ──
+  const launchFromLookupHistory = (entry) => {
+    const anchor = entry.uaeProduct || entry;
+    anchorRef.current = anchor;
+    existingIndoRef.current = entry.indoResults?.results || null;
+    addDiag("info", "deepdive", "Launched from Lookup history: " + (anchor.product_name || anchor.title || "").slice(0, 60));
+    runSearchFromAnchor(anchor);
   };
 
   // ══════════ STEP 1.5: Search from Lookup anchor ══════════
@@ -715,28 +746,86 @@ Sort by score descending, then by sold_count descending within same score.`;
 
       {error && <div style={{ padding: "10px 12px", background: dark ? "#2a1a1a" : "#fef2f2", border: "1px solid " + c.red + "44", borderRadius: "4px", color: c.red, fontSize: "11px", marginBottom: 12, ...mono }}>{error}</div>}
 
-      {/* ══════════ STEP 0: Empty State — Start from Discover or Lookup ══════════ */}
-      {step === 0 && !deepDiveEntry && (
-        <div style={{ textAlign: "center", padding: "40px 20px" }}>
-          <div style={{ fontSize: "48px", marginBottom: "16px", opacity: 0.15 }}>{"\ud83c\udfaf"}</div>
-          <div style={{ fontSize: "14px", color: c.text, fontWeight: 500, marginBottom: "8px" }}>Start a Deep Dive from Discover or Lookup</div>
-          <div style={{ fontSize: "11px", color: c.dim, lineHeight: 1.6, maxWidth: "380px", margin: "0 auto 20px" }}>
-            Deep Dive analyzes Amazon bestsellers, extracts what makes them sell, and finds matching Indonesian suppliers scored 1{"\u2013"}5.
+      {/* ══════════ STEP 0: Launch from Discover or Lookup history ══════════ */}
+      {step === 0 && !deepDiveEntry && (() => {
+        const hasDiscover = discHistory && discHistory.length > 0;
+        const lookupEntries = (lookupHistory || []).filter(h => h.uaeProduct?.product_name || h.uaeProduct?.title);
+        const hasLookup = lookupEntries.length > 0;
+        const hasAnything = hasDiscover || hasLookup;
+
+        return <div>
+          <div style={{ fontSize: "12px", color: c.dim, marginBottom: "16px", lineHeight: 1.5 }}>
+            Choose a Discover search or Lookup product below to start a Deep Dive. The pipeline will analyze Amazon bestsellers, extract what makes them sell, and score Indonesian suppliers 1{"\u2013"}5.
           </div>
-          <div style={{ display: "flex", gap: "12px", justifyContent: "center", flexWrap: "wrap" }}>
-            <div style={{ padding: "14px 18px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "8px", maxWidth: "220px", textAlign: "left" }}>
-              <div style={{ fontSize: "16px", marginBottom: "4px" }}>{"\ud83d\udd0d"}</div>
-              <div style={{ fontSize: "11px", fontWeight: 600, color: c.gold, marginBottom: "4px" }}>From Discover</div>
-              <div style={{ fontSize: "10px", color: c.dim, lineHeight: 1.4 }}>Switch to list view {"\u2192"} check 5{"\u2013"}15 products {"\u2192"} tap the floating Deep Dive button</div>
+
+          {/* ── FROM DISCOVER ── */}
+          {hasDiscover && <div style={{ marginBottom: "16px" }}>
+            <div style={{ fontSize: "9px", color: c.gold, letterSpacing: "1px", fontWeight: 700, marginBottom: "8px", ...mono }}>{"\ud83d\udd0d"} FROM DISCOVER SEARCHES</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+              {discHistory.slice(0, 10).map((dh, i) => {
+                const count = dh.results?.length || 0;
+                if (count < 5) return null; // Need at least 5 products to Deep Dive
+                const topProduct = dh.results?.[0];
+                return <div key={i} onClick={() => launchFromDiscoverHistory(dh)} style={{ padding: "10px 14px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "6px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", transition: "border-color 0.15s" }} onMouseEnter={e => e.currentTarget.style.borderColor = c.gold} onMouseLeave={e => e.currentTarget.style.borderColor = c.border}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: "12px", fontWeight: 600, color: c.text }}>{dh.keyword}</div>
+                    <div style={{ fontSize: "9px", color: c.dimmer, marginTop: "3px", ...mono }}>
+                      {count} products
+                      {topProduct && <span>{" \u00b7 top: "}{(topProduct.name || topProduct.title || "").slice(0, 40)}</span>}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0, marginLeft: "10px" }}>
+                    <span style={{ fontSize: "9px", color: c.dimmest, ...mono }}>{dh.timestamp?.slice(0, 10)}</span>
+                    <span style={{ fontSize: "11px", color: c.gold, fontWeight: 600 }}>{"\u2192"}</span>
+                  </div>
+                </div>;
+              })}
             </div>
-            <div style={{ padding: "14px 18px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "8px", maxWidth: "220px", textAlign: "left" }}>
-              <div style={{ fontSize: "16px", marginBottom: "4px" }}>{"\u26a1"}</div>
-              <div style={{ fontSize: "11px", fontWeight: 600, color: c.gold, marginBottom: "4px" }}>From Lookup</div>
-              <div style={{ fontSize: "10px", color: c.dim, lineHeight: 1.4 }}>Run a product lookup {"\u2192"} go to results {"\u2192"} tap "Deep Dive from this product"</div>
+            <div style={{ fontSize: "9px", color: c.dimmest, marginTop: "6px", ...mono }}>You{"'"}ll pick 5{"\u2013"}15 products from the search results</div>
+          </div>}
+
+          {/* ── FROM LOOKUP ── */}
+          {hasLookup && <div style={{ marginBottom: "16px" }}>
+            <div style={{ fontSize: "9px", color: c.gold, letterSpacing: "1px", fontWeight: 700, marginBottom: "8px", ...mono }}>{"\u26a1"} FROM LOOKUP PRODUCTS</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+              {lookupEntries.slice(0, 8).map((h, i) => {
+                const p = h.uaeProduct;
+                const name = p?.product_name || p?.title || "";
+                const hasIndo = h.indoResults?.results?.length > 0;
+                const margin = h.margins?.median?.margin;
+                return <div key={i} onClick={() => launchFromLookupHistory(h)} style={{ padding: "10px 14px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "6px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", transition: "border-color 0.15s" }} onMouseEnter={e => e.currentTarget.style.borderColor = c.gold} onMouseLeave={e => e.currentTarget.style.borderColor = c.border}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: "11px", fontWeight: 500, color: c.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>
+                    <div style={{ fontSize: "9px", color: c.dimmer, marginTop: "3px", display: "flex", gap: "8px", ...mono }}>
+                      {p?.price_aed && <span style={{ color: c.gold }}>AED {p.price_aed}</span>}
+                      {hasIndo && <span style={{ color: c.green }}>{h.indoResults.results.length} indo results</span>}
+                      {margin != null && <span style={{ color: margin >= 40 ? c.green : margin >= 20 ? c.gold : c.red }}>{margin.toFixed(0)}% margin</span>}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0, marginLeft: "10px" }}>
+                    <span style={{ fontSize: "9px", color: c.dimmest, ...mono }}>{h.timestamp?.slice(0, 10)}</span>
+                    <span style={{ fontSize: "11px", color: c.gold, fontWeight: 600 }}>{"\u2192"}</span>
+                  </div>
+                </div>;
+              })}
             </div>
-          </div>
-        </div>
-      )}
+            <div style={{ fontSize: "9px", color: c.dimmest, marginTop: "6px", ...mono }}>Bandar will search for similar bestsellers, then find Indonesian suppliers</div>
+          </div>}
+
+          {/* ── EMPTY: no history at all ── */}
+          {!hasAnything && <div style={{ textAlign: "center", padding: "30px 20px" }}>
+            <div style={{ fontSize: "36px", marginBottom: "12px", opacity: 0.15 }}>{"\ud83c\udfaf"}</div>
+            <div style={{ fontSize: "12px", color: c.dim, marginBottom: "6px" }}>No searches yet</div>
+            <div style={{ fontSize: "10px", color: c.dimmer, lineHeight: 1.5, maxWidth: "300px", margin: "0 auto 16px" }}>
+              Run a search in Discover or a product lookup first {"\u2014"} your results will appear here for Deep Dive.
+            </div>
+            <div style={{ display: "flex", gap: "8px", justifyContent: "center" }}>
+              <button onClick={() => setMode("discover")} style={{ ...btnSec, padding: "8px 16px", fontSize: "11px" }}>{"\ud83d\udd0d"} Go to Discover</button>
+              <button onClick={() => setMode("auto")} style={{ ...btnSec, padding: "8px 16px", fontSize: "11px" }}>{"\u26a1"} Go to Lookup</button>
+            </div>
+          </div>}
+        </div>;
+      })()}
 
       {/* ══════════ STEP 1.5: Product Selection ══════════ */}
       {step === 1.5 && (
