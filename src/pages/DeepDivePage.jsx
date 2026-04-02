@@ -83,30 +83,27 @@ export default function DeepDivePage({
       // From Lookup: go to Step 1.5 (search + selection)
       anchorRef.current = deepDiveEntry.anchorProduct;
       existingIndoRef.current = deepDiveEntry.indonesianResults;
-      addDiag("info", "deepdive", "Entry from Lookup — anchor: " + (deepDiveEntry.anchorProduct.title || "").slice(0, 60));
+      addDiag("info", "deepdive", "Entry from Lookup — anchor: " + (deepDiveEntry.anchorProduct.title || deepDiveEntry.anchorProduct.product_name || "").slice(0, 60));
       runSearchFromAnchor(deepDiveEntry.anchorProduct);
     }
     // Don't clear entry yet — we may need existingIndoRef later
   }, []);
 
-  // ══════════ STEP 0: Standalone keyword entry ══════════
+  // ══════════ STEP 0: No standalone — Deep Dive is entry from Discover or Lookup only ══════════
 
-  const handleStandaloneSearch = async () => {
-    if (!searchKeyword.trim()) return;
-    setSearchLoading(true);
-    setError("");
-    setStep(1.5);
-    try {
-      addDiag("info", "deepdive", "Standalone search: " + searchKeyword);
-      const res = await workerCall("amazon_search", { query: searchKeyword.trim(), domain: "ae" });
-      const products = Array.isArray(res) ? res : res?.products || res?.data || [];
-      setSearchResults(products);
-      addDiag("ok", "deepdive", "Search returned " + products.length + " results");
-    } catch (e) {
-      setError("Search failed: " + e.message);
-      addDiag("error", "deepdive", "Search failed: " + e.message);
-    }
-    setSearchLoading(false);
+  // Helper: parse ScrapingDog search response (returns various field names)
+  const parseSearchResponse = (res) => {
+    const raw = res?.results || res?.organic_results || res?.search_results || (Array.isArray(res) ? res : []);
+    if (!Array.isArray(raw)) return [];
+    return raw.map(p => ({
+      title: p.title || p.name || "",
+      asin: p.asin || "",
+      price: parseFloat(String(p.price || p.extracted_price || "0").replace(/[^0-9.]/g, "")) || 0,
+      rating: parseFloat(p.rating || p.stars || 0) || 0,
+      reviews: parseInt(String(p.reviews || p.total_reviews || p.ratings_total || "0").replace(/[^0-9]/g, "")) || 0,
+      image: p.thumbnail || p.image || "",
+      url: p.link || p.url || (p.asin ? "https://www.amazon.ae/dp/" + p.asin : ""),
+    })).filter(p => p.title && p.title.length > 3 && p.asin);
   };
 
   // ══════════ STEP 1.5: Search from Lookup anchor ══════════
@@ -117,18 +114,19 @@ export default function DeepDivePage({
     setError("");
     try {
       // Build search query from anchor title — take first 5-6 meaningful words
-      const words = (anchor.title || "").replace(/[^a-zA-Z0-9\s]/g, "").split(/\s+/).filter(w => w.length > 2).slice(0, 6);
+      const anchorTitle = anchor.title || anchor.product_name || "";
+      const words = anchorTitle.replace(/[^a-zA-Z0-9\s]/g, "").split(/\s+/).filter(w => w.length > 2).slice(0, 6);
       const query = words.join(" ");
       setSearchKeyword(query);
       addDiag("info", "deepdive", "Anchor search query: " + query);
 
-      const res = await workerCall("amazon_search", { query, domain: "ae" });
-      let products = Array.isArray(res) ? res : res?.products || res?.data || [];
+      const res = await workerCall("scrapingdog_search", { query, domain: "ae" });
+      let products = parseSearchResponse(res);
 
       // Try to embed-rank by similarity to anchor
       if (products.length > 3) {
         try {
-          const anchorText = (anchor.title || "") + " " + (anchor.feature_bullets || []).join(" ");
+          const anchorText = anchorTitle + " " + (anchor.feature_bullets || []).join(" ");
           const candidates = products.map((p, i) => ({ id: i, text: p.title || "" }));
           const rankRes = await workerCall("embed_and_rank", { anchor_text: anchorText, candidates, top_n: products.length });
           if (rankRes.ranked?.length) {
@@ -146,7 +144,7 @@ export default function DeepDivePage({
       setSearchResults(products);
 
       // Pre-check the anchor ASIN if it appears in results
-      const anchorAsin = anchor.asin || anchor._asin;
+      const anchorAsin = anchor.asin || anchor._asin || "";
       if (anchorAsin) {
         setSelected(new Set([anchorAsin]));
       }
@@ -717,21 +715,25 @@ Sort by score descending, then by sold_count descending within same score.`;
 
       {error && <div style={{ padding: "10px 12px", background: dark ? "#2a1a1a" : "#fef2f2", border: "1px solid " + c.red + "44", borderRadius: "4px", color: c.red, fontSize: "11px", marginBottom: 12, ...mono }}>{error}</div>}
 
-      {/* ══════════ STEP 0: Standalone Entry ══════════ */}
+      {/* ══════════ STEP 0: Empty State — Start from Discover or Lookup ══════════ */}
       {step === 0 && !deepDiveEntry && (
-        <div style={cardStyle}>
-          <div style={labelStyle}>Search Amazon.ae</div>
-          <p style={{ fontSize: "11px", color: c.dim, margin: "0 0 10px" }}>Enter a product keyword to find bestsellers, then select 5-15 to analyze.</p>
-          <div style={{ display: "flex", gap: "8px" }}>
-            <input
-              value={searchKeyword} onChange={e => setSearchKeyword(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && handleStandaloneSearch()}
-              placeholder="e.g. nespresso compatible capsules"
-              style={{ ...inputStyle, flex: 1, padding: "8px 12px", fontSize: "12px" }}
-            />
-            <button onClick={handleStandaloneSearch} disabled={searchLoading || !searchKeyword.trim()} style={{ ...btnStyle, padding: "8px 20px", opacity: searchLoading ? 0.6 : 1 }}>
-              {searchLoading ? "Searching..." : "Search"}
-            </button>
+        <div style={{ textAlign: "center", padding: "40px 20px" }}>
+          <div style={{ fontSize: "48px", marginBottom: "16px", opacity: 0.15 }}>{"\ud83c\udfaf"}</div>
+          <div style={{ fontSize: "14px", color: c.text, fontWeight: 500, marginBottom: "8px" }}>Start a Deep Dive from Discover or Lookup</div>
+          <div style={{ fontSize: "11px", color: c.dim, lineHeight: 1.6, maxWidth: "380px", margin: "0 auto 20px" }}>
+            Deep Dive analyzes Amazon bestsellers, extracts what makes them sell, and finds matching Indonesian suppliers scored 1{"\u2013"}5.
+          </div>
+          <div style={{ display: "flex", gap: "12px", justifyContent: "center", flexWrap: "wrap" }}>
+            <div style={{ padding: "14px 18px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "8px", maxWidth: "220px", textAlign: "left" }}>
+              <div style={{ fontSize: "16px", marginBottom: "4px" }}>{"\ud83d\udd0d"}</div>
+              <div style={{ fontSize: "11px", fontWeight: 600, color: c.gold, marginBottom: "4px" }}>From Discover</div>
+              <div style={{ fontSize: "10px", color: c.dim, lineHeight: 1.4 }}>Switch to list view {"\u2192"} check 5{"\u2013"}15 products {"\u2192"} tap the floating Deep Dive button</div>
+            </div>
+            <div style={{ padding: "14px 18px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "8px", maxWidth: "220px", textAlign: "left" }}>
+              <div style={{ fontSize: "16px", marginBottom: "4px" }}>{"\u26a1"}</div>
+              <div style={{ fontSize: "11px", fontWeight: 600, color: c.gold, marginBottom: "4px" }}>From Lookup</div>
+              <div style={{ fontSize: "10px", color: c.dim, lineHeight: 1.4 }}>Run a product lookup {"\u2192"} go to results {"\u2192"} tap "Deep Dive from this product"</div>
+            </div>
           </div>
         </div>
       )}

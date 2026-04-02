@@ -1795,8 +1795,8 @@ export default function App() {
           { id: "guide", label: "\ud83d\udcd6 GUIDE" },
           ...(isAdmin ? [{ id: "brainstorm", label: "\ud83e\udde0 BRAINSTORM" }] : []),
           { id: "discover", label: "\ud83d\udd0d DISCOVER" },
-          { id: "deepdive", label: "\ud83c\udfaf DEEP DIVE" },
           { id: "auto", label: "\u26a1 LOOKUP" },
+          { id: "deepdive", label: "\ud83c\udfaf DEEP DIVE" },
           { id: "history", label: "\ud83d\udccb HISTORY" },
           ...(isAdmin ? [{ id: "admin", label: "\u2699 ADMIN" }] : [])
         ].map(m => (
