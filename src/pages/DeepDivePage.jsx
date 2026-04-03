@@ -32,6 +32,7 @@ export default function DeepDivePage({
   discHistory,
   lookupHistory,
   setMode,
+  normalizeApifyResults,
 }) {
   // ── Pipeline state ──
   const [step, setStep] = useState(0); // 0=entry, 1.5=selection, 2=scraping, 3=golden, 4=indoSearch, 4.5=translate, 5=scoring, 6=done
@@ -249,6 +250,14 @@ PRICE NORMALIZATION: Identify the natural unit for this product category (per ml
 
 If the selected products span multiple size variants of the same product type, group your analysis by size segment and note which specs are consistent across ALL sizes vs. which vary by size.
 
+INDONESIAN KEYWORDS RULES — CRITICAL:
+- Generate 5-8 keywords that Indonesian suppliers would ACTUALLY use on Tokopedia/Shopee listings
+- Use SHORT, BROAD terms (1-3 words max). Example: "bubuk vanili", "vanilla powder", "ekstrak vanili" — NOT "bubuk vanili organik Madagascar premium grade A"
+- Include the generic product name in Bahasa (e.g., "bubuk vanili")
+- Include common marketplace variations (e.g., "vanilla powder", "vanili murni")
+- Include the English product name as-is (Indonesian sellers often use English titles)
+- NEVER add qualifiers like "premium", "grade A", "organik", "Madagascar" — these make searches return zero results on Indonesian marketplaces
+
 Products:
 ${JSON.stringify(stripped, null, 1)}
 
@@ -264,7 +273,7 @@ Respond ONLY in this exact JSON format with no other text:
   "certifications": ["certification 1", "certification 2"],
   "packaging": "Common packaging description",
   "red_flags": ["Thing to avoid based on negative reviews or low-rated products"],
-  "indonesian_keywords": ["keyword phrase 1 in Bahasa Indonesia", "keyword 2", "keyword 3"],
+  "indonesian_keywords": ["broad keyword 1 in Bahasa Indonesia", "keyword 2", "keyword 3", "keyword 4", "keyword 5"],
   "summary": "2-3 sentence executive summary of what a manufacturer needs to know to compete in this category"
 }`;
 
@@ -286,7 +295,22 @@ Respond ONLY in this exact JSON format with no other text:
 
       const golden = JSON.parse(jsonMatch[0]);
       setGoldenThread(golden);
-      setIndoKeywords((golden.indonesian_keywords || []).join("\n"));
+
+      // Build keyword list: Claude's keywords + auto-generated short variants
+      const claudeKws = golden.indonesian_keywords || [];
+      const shortVariants = new Set();
+      // Add each Claude keyword
+      claudeKws.forEach(k => shortVariants.add(k.trim()));
+      // Auto-add first 1-2 words of multi-word keywords as broader searches
+      claudeKws.forEach(k => {
+        const words = k.trim().split(/\s+/);
+        if (words.length >= 3) shortVariants.add(words.slice(0, 2).join(" "));
+        if (words.length >= 2) shortVariants.add(words[0]);
+      });
+      // Add English category name as-is (Indonesian sellers often use English)
+      if (golden.category) shortVariants.add(golden.category.toLowerCase());
+
+      setIndoKeywords([...shortVariants].join("\n"));
       setProgress({ message: "Golden thread analysis complete", pct: 100 });
       addDiag("ok", "deepdive", "Golden thread: " + golden.category + " — " + (golden.must_have_specs?.length || 0) + " specs");
     } catch (e) {
@@ -297,6 +321,34 @@ Respond ONLY in this exact JSON format with no other text:
 
   // ══════════ STEP 4: Indonesian Source Search ══════════
 
+  // Helper: poll a single Apify actor run to completion (matches App.jsx runApifyActor behavior)
+  const pollApifyRun = async (actorId, input, label) => {
+    addDiag("info", "deepdive", label + " starting: " + JSON.stringify(input).slice(0, 200));
+    const rd = await workerCall("apify_run", { actorId, input });
+    addDiag("info", "deepdive", label + " run response: " + JSON.stringify(rd).slice(0, 300));
+    const runId = rd.data?.id;
+    const dsId = rd.data?.defaultDatasetId;
+    if (!runId) { addDiag("warn", "deepdive", label + " no run ID"); return []; }
+
+    // Poll — 36 polls × 5s = 3 min max (matching Lookup behavior)
+    let status = "RUNNING", polls = 0;
+    while ((status === "RUNNING" || status === "READY") && polls < 36) {
+      await new Promise(r => setTimeout(r, 5000));
+      polls++;
+      try {
+        const pr = await workerCall("apify_status", { runId });
+        status = pr.data?.status || "RUNNING";
+        if (polls % 4 === 0) addDiag("info", "deepdive", label + " poll " + polls + ": " + status);
+      } catch {}
+    }
+
+    if (!dsId) { addDiag("warn", "deepdive", label + " no dataset ID"); return []; }
+    const items = await workerCall("apify_dataset", { datasetId: dsId, limit: 100 });
+    addDiag("info", "deepdive", label + " dataset: " + (Array.isArray(items) ? items.length + " raw items" : "NOT array: " + JSON.stringify(items).slice(0, 200)));
+    if (!Array.isArray(items)) return [];
+    return items;
+  };
+
   const runIndoSearch = async () => {
     setStep(4);
     setError("");
@@ -305,10 +357,19 @@ Respond ONLY in this exact JSON format with no other text:
     // If using existing Lookup results
     if (useExistingLookup && existingIndoRef.current?.length) {
       addDiag("info", "deepdive", "Using existing Lookup indo results: " + existingIndoRef.current.length);
-      setIndoProducts(existingIndoRef.current);
-      setIndoSearchProgress("Using " + existingIndoRef.current.length + " existing results from Lookup");
-      // Auto-proceed to translation
-      setTimeout(() => runTranslation(existingIndoRef.current), 500);
+      // Convert Lookup format to Deep Dive format
+      const converted = existingIndoRef.current.map(r => ({
+        original_name: r.name || "",
+        price_idr: r.price_idr || 0,
+        seller: r.seller || "",
+        sold_count: r.sold || "0",
+        marketplace: (r.source || "").toLowerCase().includes("shopee") ? "shopee" : "tokopedia",
+        url: r.url || "",
+        description: "",
+      }));
+      setIndoProducts(converted);
+      setIndoSearchProgress("Using " + converted.length + " existing results from Lookup");
+      setTimeout(() => runTranslation(converted), 500);
       return;
     }
 
@@ -321,7 +382,7 @@ Respond ONLY in this exact JSON format with no other text:
 
     addDiag("info", "deepdive", "Indo search with " + kws.length + " keywords: " + kws.join(", "));
     const allResults = [];
-    const seenUrls = new Set();
+    const seenKeys = new Set();
 
     for (let ki = 0; ki < kws.length; ki++) {
       const kw = kws[ki];
@@ -330,35 +391,27 @@ Respond ONLY in this exact JSON format with no other text:
 
       // Tokopedia
       try {
-        const tokoInput = { keyword: kw, maxItems: 20 };
-        const rd = await workerCall("apify_run", { actorId: "jupri/tokopedia-scraper", input: tokoInput });
-        const runId = rd.data?.id;
-        const dsId = rd.data?.defaultDatasetId;
-        if (runId) {
-          // Poll for completion (max 60s)
-          let status = "RUNNING", polls = 0;
-          while ((status === "RUNNING" || status === "READY") && polls < 12) {
-            await new Promise(r => setTimeout(r, 5000));
-            polls++;
-            try {
-              const pr = await workerCall("apify_status", { runId });
-              status = pr.data?.status || "RUNNING";
-            } catch {}
+        const rawItems = await pollApifyRun("jupri/tokopedia-scraper", { keyword: kw, maxItems: 20 }, `Tokopedia "${kw}"`);
+        // Use the same normalizer as Lookup
+        const normalized = normalizeApifyResults ? normalizeApifyResults(rawItems, "Tokopedia") : rawItems;
+        let added = 0;
+        normalized.forEach(item => {
+          const key = item.url || (item.name + "_" + item.price_idr);
+          if (!seenKeys.has(key)) {
+            seenKeys.add(key);
+            allResults.push({
+              original_name: item.name || "",
+              price_idr: item.price_idr || 0,
+              seller: item.seller || "",
+              sold_count: item.sold || "0",
+              marketplace: "tokopedia",
+              url: item.url || "",
+              description: "",
+            });
+            added++;
           }
-          if (dsId) {
-            const items = await workerCall("apify_dataset", { datasetId: dsId, limit: 30 });
-            if (Array.isArray(items)) {
-              items.forEach(item => {
-                const url = item.url || item.link || "";
-                if (!seenUrls.has(url)) {
-                  seenUrls.add(url);
-                  allResults.push(normalizeIndoProduct(item, "tokopedia", kw));
-                }
-              });
-              addDiag("ok", "deepdive", `Tokopedia "${kw}": ${items.length} results`);
-            }
-          }
-        }
+        });
+        addDiag("ok", "deepdive", `Tokopedia "${kw}": ${rawItems.length} raw → ${normalized.length} normalized → ${added} new`);
       } catch (e) {
         addDiag("warn", "deepdive", `Tokopedia "${kw}" failed: ${e.message}`);
       }
@@ -367,33 +420,26 @@ Respond ONLY in this exact JSON format with no other text:
       try {
         const shopeeInput = { keyword: kw, maxItems: 20 };
         if (shopeeCookie) shopeeInput.shopeeCookies = shopeeCookie;
-        const rd = await workerCall("apify_run", { actorId: "fatihtahta/shopee-scraper", input: shopeeInput });
-        const runId = rd.data?.id;
-        const dsId = rd.data?.defaultDatasetId;
-        if (runId) {
-          let status = "RUNNING", polls = 0;
-          while ((status === "RUNNING" || status === "READY") && polls < 12) {
-            await new Promise(r => setTimeout(r, 5000));
-            polls++;
-            try {
-              const pr = await workerCall("apify_status", { runId });
-              status = pr.data?.status || "RUNNING";
-            } catch {}
+        const rawItems = await pollApifyRun("fatihtahta/shopee-scraper", shopeeInput, `Shopee "${kw}"`);
+        const normalized = normalizeApifyResults ? normalizeApifyResults(rawItems, "Shopee") : rawItems;
+        let added = 0;
+        normalized.forEach(item => {
+          const key = item.url || (item.name + "_" + item.price_idr);
+          if (!seenKeys.has(key)) {
+            seenKeys.add(key);
+            allResults.push({
+              original_name: item.name || "",
+              price_idr: item.price_idr || 0,
+              seller: item.seller || "",
+              sold_count: item.sold || "0",
+              marketplace: "shopee",
+              url: item.url || "",
+              description: "",
+            });
+            added++;
           }
-          if (dsId) {
-            const items = await workerCall("apify_dataset", { datasetId: dsId, limit: 30 });
-            if (Array.isArray(items)) {
-              items.forEach(item => {
-                const url = item.url || item.link || "";
-                if (!seenUrls.has(url)) {
-                  seenUrls.add(url);
-                  allResults.push(normalizeIndoProduct(item, "shopee", kw));
-                }
-              });
-              addDiag("ok", "deepdive", `Shopee "${kw}": ${items.length} results`);
-            }
-          }
-        }
+        });
+        addDiag("ok", "deepdive", `Shopee "${kw}": ${rawItems.length} raw → ${normalized.length} normalized → ${added} new`);
       } catch (e) {
         addDiag("warn", "deepdive", `Shopee "${kw}" failed: ${e.message}`);
       }
@@ -406,33 +452,12 @@ Respond ONLY in this exact JSON format with no other text:
     addDiag("ok", "deepdive", "Indo search complete: " + allResults.length + " products");
 
     if (allResults.length === 0) {
-      setError("No Indonesian products found. Try different keywords.");
+      setError("No Indonesian products found. Try broader keywords (1-2 words instead of full phrases).");
       return;
     }
 
     // Auto-proceed to translation
     setTimeout(() => runTranslation(allResults), 500);
-  };
-
-  const normalizeIndoProduct = (item, marketplace, keyword) => {
-    let price = 0;
-    if (marketplace === "tokopedia") {
-      price = item.price?.number || item.price || 0;
-    } else {
-      price = item.price || 0;
-    }
-    const name = item.name || item.title || item.productName || "";
-    return {
-      original_name: name,
-      price_idr: typeof price === "number" ? price : parseInt(String(price).replace(/\D/g, "")) || 0,
-      seller: item.shop?.name || item.seller || item.shopName || item.storeName || "",
-      sold_count: item.sold || item.sold_count || item.historicalSold || item.totalSold || "0",
-      marketplace,
-      url: item.url || item.link || "",
-      image: item.image || item.thumbnail || item.imageUrl || "",
-      description: item.description || "",
-      keyword,
-    };
   };
 
   // ══════════ STEP 4.5: Translation ══════════

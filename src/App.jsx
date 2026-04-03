@@ -1875,6 +1875,7 @@ export default function App() {
         discHistory={discHistory}
         lookupHistory={history}
         setMode={setMode}
+        normalizeApifyResults={normalizeApifyResults}
       />}
 
       {/* ══════════ LOOKUP TAB ══════════ */}
