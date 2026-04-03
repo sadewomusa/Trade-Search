@@ -157,21 +157,18 @@ export default function DeepDivePage({
       const res = await workerCall("scrapingdog_search", { query, domain: "ae" });
       let products = parseSearchResponse(res);
 
-      // Try to embed-rank by similarity to anchor
+      // Rank by keyword overlap with anchor (no API call — instant)
       if (products.length > 3) {
         try {
-          const anchorText = anchorTitle + " " + (anchor.feature_bullets || []).join(" ");
-          const candidates = products.map((p, i) => ({ id: i, text: p.title || "" }));
-          const rankRes = await workerCall("embed_and_rank", { anchor_text: anchorText, candidates, top_n: products.length });
-          if (rankRes.ranked?.length) {
-            // Reorder products by similarity
-            const idOrder = rankRes.ranked.map(r => r.id);
-            const reordered = idOrder.map(id => ({ ...products[id], _similarity: rankRes.ranked.find(r => r.id === id)?.similarity })).filter(Boolean);
-            products = reordered;
-            addDiag("ok", "deepdive", "Ranked by similarity — top: " + (products[0]?.title || "").slice(0, 40));
-          }
+          const anchorWords = new Set(anchorTitle.toLowerCase().replace(/[^a-z0-9\s]/g, "").split(/\s+/).filter(w => w.length > 2));
+          products = [...products].map(p => {
+            const titleWords = (p.title || "").toLowerCase().replace(/[^a-z0-9\s]/g, "").split(/\s+/);
+            const overlap = titleWords.filter(w => anchorWords.has(w)).length;
+            return { ...p, _similarity: anchorWords.size > 0 ? overlap / anchorWords.size : 0 };
+          }).sort((a, b) => b._similarity - a._similarity);
+          addDiag("ok", "deepdive", "Ranked by keyword overlap — top: " + (products[0]?.title || "").slice(0, 40));
         } catch (e) {
-          addDiag("warn", "deepdive", "Embedding rank failed, using default order: " + e.message);
+          addDiag("warn", "deepdive", "Ranking failed, using default order: " + e.message);
         }
       }
 
@@ -539,43 +536,80 @@ Respond ONLY in this exact JSON format with no other text:
 
   const runEmbeddingFilter = async (products) => {
     setStep(5);
-    setProgress({ message: `Ranking ${products.length} products by similarity...`, pct: 20 });
-    addDiag("info", "deepdive", "Embedding filter starting for " + products.length + " products");
+    setProgress({ message: `Pre-filtering ${products.length} products with AI...`, pct: 20 });
+    addDiag("info", "deepdive", "Claude pre-filter starting for " + products.length + " products");
 
     try {
-      // Build anchor text from golden thread
       const gt = goldenThread || {};
-      const anchorParts = [
-        gt.summary || "",
-        ...(gt.must_have_specs || []),
-        ...(gt.winning_attributes || []),
-      ];
-      const anchor_text = anchorParts.join(". ");
 
-      const candidates = products.map((p, i) => ({
+      const productList = products.map((p, i) => ({
         id: i,
-        text: p.translated_name || p.original_name,
+        name: p.translated_name || p.original_name,
+        price_idr: p.price_idr || 0,
+        seller: p.seller || "",
+        sold_count: String(p.sold_count || "0"),
+        marketplace: p.marketplace || "",
       }));
 
-      const res = await workerCall("embed_and_rank", { anchor_text, candidates, top_n: 15 });
+      const prompt = `You are a product sourcing pre-filter. Given a target product profile and a list of Indonesian supplier products, pick the TOP 15 most relevant candidates.
 
-      if (!res.ranked?.length) throw new Error("No ranked results returned");
+TARGET PROFILE:
+Category: ${gt.category || "Unknown"}
+Summary: ${gt.summary || ""}
+Must-have specs: ${(gt.must_have_specs || []).join(", ")}
+Winning attributes: ${(gt.winning_attributes || []).join(", ")}
 
-      const top15 = res.ranked.map(r => ({
+CANDIDATES (${productList.length} products):
+${JSON.stringify(productList, null, 1)}
+
+RULES:
+- Pick the 15 most relevant to the target profile
+- Product type match is the #1 priority
+- High sold_count = manufacturing capability signal — prioritize these
+- Price relevance matters but don't exclude solely on price
+- If fewer than 15 are relevant, return only the relevant ones
+
+Respond ONLY in this exact JSON format with no other text:
+{
+  "top_candidates": [
+    { "id": 0, "relevance": 95, "reason": "3-5 word reason" },
+    { "id": 5, "relevance": 88, "reason": "3-5 word reason" }
+  ]
+}
+
+Sort by relevance descending. "relevance" is 0-100.`;
+
+      const res = await workerCall("claude", {
+        data: {
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 2048,
+          messages: [{ role: "user", content: prompt }],
+        },
+      });
+
+      const text = res.content?.map(b => b.text || "").join("") || "";
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error("Claude returned non-JSON response");
+
+      const parsed = JSON.parse(jsonMatch[0]);
+      const topIds = parsed.top_candidates || [];
+
+      const top15 = topIds.map(r => ({
         ...products[r.id],
-        _similarity: r.similarity,
+        _similarity: (r.relevance || 0) / 100,
         _rank_id: r.id,
-      }));
+        _filter_reason: r.reason || "",
+      })).filter(Boolean);
 
       setEmbeddingFiltered(top15);
       setProgress({ message: `Top ${top15.length} candidates identified`, pct: 80 });
-      addDiag("ok", "deepdive", "Embedding filter: top " + top15.length + " from " + products.length);
+      addDiag("ok", "deepdive", "Claude pre-filter: top " + top15.length + " from " + products.length);
 
       // Auto-proceed to scoring
       setTimeout(() => runScoring(top15), 500);
     } catch (e) {
-      setError("Embedding filter failed: " + e.message);
-      addDiag("error", "deepdive", "Embedding failed: " + e.message);
+      setError("Pre-filter failed: " + e.message);
+      addDiag("error", "deepdive", "Pre-filter failed: " + e.message);
     }
   };
 
