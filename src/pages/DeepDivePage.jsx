@@ -798,48 +798,50 @@ ${flagsHtml ? '<h2>Red Flags</h2><div class="section">' + flagsHtml + '</div>' :
   // ── Compact product row (used in Step 1.5 selection) ──
   const CompactRow = ({ product, idx, isSelected, onToggle, isAnchor }) => {
     const asin = product.asin;
-    const size = extractSize(product.title || "");
+    const size = extractSize(product.title || product.name || "");
     const isOpen = previewOpen === asin;
     const prevData = previewCache[asin];
+    const displayPrice = product.price || product.price_aed || 0;
 
     return (
-      <div style={{ borderBottom: "1px solid " + c.border, background: isAnchor ? (dark ? "#1a2a1a" : "#f0faf0") : "transparent" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "6px 8px", cursor: "pointer" }} onClick={() => onToggle(asin)}>
-          <input type="checkbox" checked={isSelected} onChange={() => onToggle(asin)} onClick={e => e.stopPropagation()} style={{ width: 16, height: 16, accentColor: c.gold }} />
-          {product.image && <img src={product.image || product.thumbnail} alt="" style={{ width: 36, height: 36, objectFit: "contain", borderRadius: 3, background: "#fff" }} />}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: "11px", color: c.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", ...mono }}>{product.title || "—"}</div>
+      <div style={{ borderBottom: "1px solid " + c.border + "44", background: isAnchor ? (dark ? "#1a2a1a" : "#f0faf0") : isSelected ? (dark ? "#1a2a1a" : "#f0faf0") : "transparent" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "5px 8px" }}>
+          <input type="checkbox" checked={isSelected} onChange={() => onToggle(asin)} style={{ width: 16, height: 16, accentColor: c.gold, cursor: "pointer" }} />
+          {(product.image || product.thumbnail) ? <img src={product.image || product.thumbnail} alt="" style={{ width: 36, height: 36, objectFit: "contain", borderRadius: 3, background: "#fff" }} /> : <div style={{ width: 36, height: 36, background: dark ? "#222" : "#eee", borderRadius: 3 }} />}
+          <div style={{ flex: 1, minWidth: 0, fontSize: "11px", color: c.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", ...mono }}>
+            {product.title || product.name || "\u2014"}
+            {isAnchor && <span style={{ ...pill, marginLeft: 6, background: c.gold + "22", color: c.gold, fontWeight: 700 }}>ANCHOR</span>}
           </div>
-          <div style={{ fontSize: "11px", color: c.gold, fontWeight: 600, whiteSpace: "nowrap", ...mono }}>{product.price ? ("AED " + parseFloat(product.price).toFixed(0)) : "—"}</div>
-          <div style={{ fontSize: "10px", color: c.dim, whiteSpace: "nowrap" }}>{"⭐" + (product.rating || "—")}</div>
-          {size && <span style={{ ...pill, background: dark ? "#1a2a2a" : "#e0f0f0", color: dark ? "#6dd" : "#077" }}>{size}</span>}
-          {product._similarity != null && <span style={{ ...pill, background: dark ? "#2a2a1a" : "#faf0e0", color: c.gold }}>{(product._similarity * 100).toFixed(0)}%</span>}
-          <button onClick={e => { e.stopPropagation(); fetchPreview(asin); }} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: "14px", color: c.dim, padding: "2px 4px" }} title="Preview">👁</button>
-          {isAnchor && <span style={{ ...pill, background: c.gold + "22", color: c.gold, fontWeight: 700 }}>ANCHOR</span>}
+          <div style={{ width: 80, textAlign: "right", fontSize: "11px", color: c.gold, fontWeight: 600, ...mono, flexShrink: 0 }}>{displayPrice ? "AED " + parseFloat(displayPrice).toFixed(0) : "\u2014"}</div>
+          <div style={{ width: 55, textAlign: "center", fontSize: "10px", color: c.dim, flexShrink: 0 }}>{"\u2b50" + (product.rating || "\u2014")}</div>
+          <div style={{ width: 65, textAlign: "center", flexShrink: 0 }}>
+            {size ? <span style={{ ...pill, background: dark ? "#1a2a2a" : "#e0f0f0", color: dark ? "#6dd" : "#077" }}>{size}</span> : <span style={{ fontSize: "9px", color: c.dimmest }}>{"\u2014"}</span>}
+          </div>
+          <button onClick={e => { e.stopPropagation(); fetchPreview(asin); }} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: "14px", color: c.dim, padding: "2px", width: 30, flexShrink: 0 }} title="Preview (5 credits)">{"\ud83d\udc41"}</button>
         </div>
 
         {/* Inline preview */}
         {isOpen && (
-          <div style={{ padding: "8px 16px 12px 60px", background: dark ? "#111" : "#fafafa", borderTop: "1px solid " + c.border }}>
-            {previewLoading && !prevData ? <span style={{ fontSize: "10px", color: c.dim }}>Loading preview...</span> : prevData ? (
-              <div style={{ fontSize: "10px", color: c.text }}>
+          <div style={{ padding: "8px 16px 10px 60px", background: dark ? "#111" : "#fafafa", borderBottom: "1px solid " + c.border, fontSize: "10px" }}>
+            {previewLoading && !prevData ? <span style={{ color: c.dim }}>Loading preview...</span> : prevData ? (
+              <div style={{ color: c.text }}>
                 {prevData.feature_bullets?.length > 0 && (
                   <div style={{ marginBottom: 6 }}>
-                    <span style={labelStyle}>Key Features</span>
+                    <span style={{ fontSize: "9px", color: c.dim, textTransform: "uppercase", letterSpacing: "1px" }}>Key Features</span>
                     <ul style={{ margin: "2px 0 0 16px", padding: 0 }}>
                       {prevData.feature_bullets.slice(0, 5).map((b, i) => <li key={i} style={{ marginBottom: 2, lineHeight: 1.3 }}>{b}</li>)}
                     </ul>
                   </div>
                 )}
                 {prevData.product_information && (
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 16px" }}>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 14px" }}>
                     {Object.entries(prevData.product_information).slice(0, 8).map(([k, v]) => (
                       <span key={k}><span style={{ color: c.dim }}>{k}:</span> {v}</span>
                     ))}
                   </div>
                 )}
               </div>
-            ) : <span style={{ fontSize: "10px", color: c.dim }}>No preview data</span>}
+            ) : <span style={{ color: c.dim }}>No data</span>}
           </div>
         )}
       </div>
@@ -1069,7 +1071,18 @@ ${flagsHtml ? '<h2>Red Flags</h2><div class="section">' + flagsHtml + '</div>' :
 
           {searchLoading && <div style={{ textAlign: "center", padding: "20px", color: c.dim, fontSize: "11px" }}>Searching Amazon.ae...</div>}
 
-          <div style={{ border: "1px solid " + c.border, borderRadius: "4px", maxHeight: "400px", overflowY: "auto" }}>
+          <div style={{ border: "1px solid " + c.border, borderRadius: "4px", overflow: "hidden" }}>
+            {/* Column header — matches Discover list view */}
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "6px 8px", background: dark ? "#111" : "#f5f5f0", borderBottom: "1px solid " + c.border, fontSize: "9px", color: c.dim, fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+              <div style={{ width: 30 }}>{"\u2611"}</div>
+              <div style={{ width: 40 }}>Img</div>
+              <div style={{ flex: 1 }}>Title</div>
+              <div style={{ width: 80, textAlign: "right" }}>Price</div>
+              <div style={{ width: 55, textAlign: "center" }}>Rating</div>
+              <div style={{ width: 65, textAlign: "center" }}>Size</div>
+              <div style={{ width: 36 }}></div>
+            </div>
+            <div style={{ maxHeight: "400px", overflowY: "auto" }}>
             {filtered.map((p, i) => {
               const anchorAsin = anchorRef.current?.asin || anchorRef.current?._asin;
               return (
@@ -1084,6 +1097,7 @@ ${flagsHtml ? '<h2>Red Flags</h2><div class="section">' + flagsHtml + '</div>' :
               );
             })}
             {filtered.length === 0 && !searchLoading && <div style={{ textAlign: "center", padding: "16px", fontSize: "11px", color: c.dim }}>No products match "{selFilter}"</div>}
+            </div>
           </div>
 
           {!canProceed && selectedCount > 0 && selectedCount < 5 && (

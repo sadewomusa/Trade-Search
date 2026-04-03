@@ -730,11 +730,11 @@ export default function App() {
       source: "discover",
       selectedProducts: selected.map(p => ({
         asin: p.asin,
-        title: p.title,
-        price: p.price,
+        title: p.title || p.name || "",
+        price: p.price_aed || p.price || 0,
         rating: p.rating,
-        image: p.image || p.thumbnail,
-        sizeTag: extractSizeTag(p.title),
+        image: p.image || p.thumbnail || "",
+        sizeTag: extractSizeTag(p.title || p.name || ""),
       })),
     });
     setMode("deepdive");
@@ -1018,11 +1018,13 @@ export default function App() {
           const products = (data.results || data.organic_results || data.search_results || data || []);
           const items = (Array.isArray(products) ? products : []).map(p => ({
             name: p.title || p.name || "",
+            title: p.title || p.name || "",
             price_aed: parseFloat(String(p.price || p.extracted_price || "0").replace(/[^0-9.]/g, "")) || 0,
             rating: parseFloat(p.rating || p.stars || 0) || 0,
             reviews: parseInt(String(p.reviews || p.total_reviews || p.ratings_total || "0").replace(/[^0-9]/g, "")) || 0,
             asin: p.asin || "",
             url: p.link || p.url || (p.asin ? "https://www.amazon.ae/dp/" + p.asin : ""),
+            image: p.thumbnail || p.image || "",
             source: "Amazon.ae",
             department: keyword,
             brand: p.brand || ""
@@ -1875,7 +1877,6 @@ export default function App() {
         discHistory={discHistory}
         lookupHistory={history}
         setMode={setMode}
-        normalizeApifyResults={normalizeApifyResults}
       />}
 
       {/* ══════════ LOOKUP TAB ══════════ */}
