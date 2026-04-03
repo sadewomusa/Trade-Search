@@ -44,6 +44,8 @@ export default function DeepDivePage({
   const [searchResults, setSearchResults] = useState([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [selected, setSelected] = useState(new Set());
+  const [selFilter, setSelFilter] = useState(""); // keyword filter for selection list
+  const [selSort, setSelSort] = useState("default"); // default | alpha | price_asc | price_desc | rating
   const [previewOpen, setPreviewOpen] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewCache, setPreviewCache] = useState({});
@@ -922,8 +924,19 @@ ${flagsHtml ? '<h2>Red Flags</h2><div class="section">' + flagsHtml + '</div>' :
       })()}
 
       {/* ══════════ STEP 1.5: Product Selection ══════════ */}
-      {step === 1.5 && (
-        <div style={cardStyle}>
+      {step === 1.5 && (() => {
+        // Apply filter + sort
+        let filtered = searchResults;
+        if (selFilter.trim()) {
+          const q = selFilter.toLowerCase();
+          filtered = filtered.filter(p => (p.title || "").toLowerCase().includes(q));
+        }
+        if (selSort === "alpha") filtered = [...filtered].sort((a, b) => (a.title || "").localeCompare(b.title || ""));
+        else if (selSort === "price_asc") filtered = [...filtered].sort((a, b) => (parseFloat(a.price) || 0) - (parseFloat(b.price) || 0));
+        else if (selSort === "price_desc") filtered = [...filtered].sort((a, b) => (parseFloat(b.price) || 0) - (parseFloat(a.price) || 0));
+        else if (selSort === "rating") filtered = [...filtered].sort((a, b) => (parseFloat(b.rating) || 0) - (parseFloat(a.rating) || 0));
+
+        return <div style={cardStyle}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
             <div>
               <div style={labelStyle}>Select Products for Deep Dive</div>
@@ -940,7 +953,6 @@ ${flagsHtml ? '<h2>Red Flags</h2><div class="section">' + flagsHtml + '</div>' :
               <button
                 onClick={() => {
                   const asins = [...selected];
-                  // Clear entry to avoid re-triggering
                   setDeepDiveEntry(null);
                   runDeepScrape(asins);
                 }}
@@ -955,10 +967,37 @@ ${flagsHtml ? '<h2>Red Flags</h2><div class="section">' + flagsHtml + '</div>' :
             </div>
           </div>
 
+          {/* ── Filter + Sort toolbar ── */}
+          <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
+            <input
+              value={selFilter} onChange={e => setSelFilter(e.target.value)}
+              placeholder="Filter by keyword..."
+              style={{ ...inputStyle, flex: 1, minWidth: "140px", padding: "6px 10px", fontSize: "11px" }}
+            />
+            <div style={{ display: "flex", gap: "3px" }}>
+              {[
+                { id: "default", label: "Relevance" },
+                { id: "alpha", label: "A→Z" },
+                { id: "price_asc", label: "Price ↑" },
+                { id: "price_desc", label: "Price ↓" },
+                { id: "rating", label: "Rating" },
+              ].map(s => (
+                <button key={s.id} onClick={() => setSelSort(s.id)} style={{
+                  padding: "3px 8px", fontSize: "9px", fontFamily: "monospace", cursor: "pointer",
+                  background: selSort === s.id ? c.gold : "transparent",
+                  color: selSort === s.id ? c.btnText : c.dim,
+                  border: "1px solid " + (selSort === s.id ? c.gold : c.border),
+                  borderRadius: "3px",
+                }}>{s.label}</button>
+              ))}
+            </div>
+            {selFilter && <span style={{ fontSize: "9px", color: c.dim, ...mono }}>{filtered.length} / {searchResults.length}</span>}
+          </div>
+
           {searchLoading && <div style={{ textAlign: "center", padding: "20px", color: c.dim, fontSize: "11px" }}>Searching Amazon.ae...</div>}
 
           <div style={{ border: "1px solid " + c.border, borderRadius: "4px", maxHeight: "400px", overflowY: "auto" }}>
-            {searchResults.map((p, i) => {
+            {filtered.map((p, i) => {
               const anchorAsin = anchorRef.current?.asin || anchorRef.current?._asin;
               return (
                 <CompactRow
@@ -971,13 +1010,14 @@ ${flagsHtml ? '<h2>Red Flags</h2><div class="section">' + flagsHtml + '</div>' :
                 />
               );
             })}
+            {filtered.length === 0 && !searchLoading && <div style={{ textAlign: "center", padding: "16px", fontSize: "11px", color: c.dim }}>No products match "{selFilter}"</div>}
           </div>
 
           {!canProceed && selectedCount > 0 && selectedCount < 5 && (
             <div style={{ fontSize: "10px", color: c.gold, marginTop: 6, ...mono }}>Select at least 5 products to proceed ({5 - selectedCount} more needed)</div>
           )}
-        </div>
-      )}
+        </div>;
+      })()}
 
       {/* ══════════ STEP 2: Scrape Summary ══════════ */}
       {step >= 2 && scrapedProducts.length > 0 && (
