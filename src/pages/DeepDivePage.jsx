@@ -323,16 +323,18 @@ Respond ONLY in this exact JSON format with no other text:
 
   // ══════════ STEP 4: Indonesian Source Search ══════════
 
-  // Helper: poll a single Apify actor run to completion (matches App.jsx runApifyActor behavior)
+  // Helper: poll a single Apify actor run to completion
+  // Key difference from Lookup: Deep Dive fires many runs sequentially, so Apify may throttle.
+  // We add retry logic for suspiciously fast empty results.
   const pollApifyRun = async (actorId, input, label) => {
     addDiag("info", "deepdive", label + " starting: " + JSON.stringify(input).slice(0, 200));
+    const startTime = Date.now();
     const rd = await workerCall("apify_run", { actorId, input });
-    addDiag("info", "deepdive", label + " run response: " + JSON.stringify(rd).slice(0, 300));
     const runId = rd.data?.id;
     const dsId = rd.data?.defaultDatasetId;
     if (!runId) { addDiag("warn", "deepdive", label + " no run ID"); return []; }
 
-    // Poll — 36 polls × 5s = 3 min max (matching Lookup behavior)
+    // Poll — 36 polls × 5s = 3 min max
     let status = "RUNNING", polls = 0;
     while ((status === "RUNNING" || status === "READY") && polls < 36) {
       await new Promise(r => setTimeout(r, 5000));
@@ -340,14 +342,31 @@ Respond ONLY in this exact JSON format with no other text:
       try {
         const pr = await workerCall("apify_status", { runId });
         status = pr.data?.status || "RUNNING";
-        if (polls % 4 === 0) addDiag("info", "deepdive", label + " poll " + polls + ": " + status);
+        if (polls % 3 === 0) addDiag("info", "deepdive", label + " poll " + polls + ": " + status);
       } catch {}
     }
 
     if (!dsId) { addDiag("warn", "deepdive", label + " no dataset ID"); return []; }
-    const items = await workerCall("apify_dataset", { datasetId: dsId, limit: 100 });
-    addDiag("info", "deepdive", label + " dataset: " + (Array.isArray(items) ? items.length + " raw items" : "NOT array: " + JSON.stringify(items).slice(0, 200)));
-    if (!Array.isArray(items)) return [];
+
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+    addDiag("info", "deepdive", label + " finished in " + elapsed + "s, status: " + status);
+
+    // Wait 3s before fetching dataset — give Apify time to flush data
+    await new Promise(r => setTimeout(r, 3000));
+
+    let items = await workerCall("apify_dataset", { datasetId: dsId, limit: 100 });
+    if (!Array.isArray(items)) items = [];
+
+    // If run finished suspiciously fast (<30s) with 0 items, wait and retry once
+    if (items.length === 0 && elapsed < 30) {
+      addDiag("warn", "deepdive", label + " finished in " + elapsed + "s with 0 items — likely throttled. Retrying dataset in 15s...");
+      await new Promise(r => setTimeout(r, 15000));
+      items = await workerCall("apify_dataset", { datasetId: dsId, limit: 100 });
+      if (!Array.isArray(items)) items = [];
+      addDiag("info", "deepdive", label + " retry: " + items.length + " items");
+    }
+
+    addDiag("info", "deepdive", label + " dataset: " + items.length + " raw items");
     return items;
   };
 
@@ -386,15 +405,18 @@ Respond ONLY in this exact JSON format with no other text:
     const allResults = [];
     const seenKeys = new Set();
 
-    for (let ki = 0; ki < kws.length; ki++) {
-      const kw = kws[ki];
-      setIndoSearchProgress(`Searching "${kw}" (${ki + 1}/${kws.length})...`);
-      setProgress({ message: `Searching Indonesian marketplaces for "${kw}"...`, pct: Math.round((ki / kws.length) * 70) });
+    // Cap at 3 keywords to avoid Apify throttling (3 kw × 2 platforms = 6 runs)
+    const searchKws = kws.slice(0, 3);
+    if (kws.length > 3) addDiag("info", "deepdive", "Capped from " + kws.length + " to 3 keywords to avoid Apify throttling");
 
-      // Tokopedia
+    for (let ki = 0; ki < searchKws.length; ki++) {
+      const kw = searchKws[ki];
+      setIndoSearchProgress(`Searching "${kw}" (${ki + 1}/${searchKws.length})...`);
+      setProgress({ message: `Searching Indonesian marketplaces for "${kw}"...`, pct: Math.round((ki / searchKws.length) * 70) });
+
+      // Tokopedia — input must match Lookup format: { query: [array], limit: N }
       try {
-        const rawItems = await pollApifyRun("jupri/tokopedia-scraper", { keyword: kw, maxItems: 20 }, `Tokopedia "${kw}"`);
-        // Use the same normalizer as Lookup
+        const rawItems = await pollApifyRun("jupri/tokopedia-scraper", { query: [kw], limit: 30 }, `Tokopedia "${kw}"`);
         const normalized = normalizeApifyResults ? normalizeApifyResults(rawItems, "Tokopedia") : rawItems;
         let added = 0;
         normalized.forEach(item => {
@@ -418,10 +440,21 @@ Respond ONLY in this exact JSON format with no other text:
         addDiag("warn", "deepdive", `Tokopedia "${kw}" failed: ${e.message}`);
       }
 
-      // Shopee
+      // 5s cooldown between actor runs to prevent Apify throttling
+      addDiag("info", "deepdive", "Cooldown 5s before Shopee...");
+      await new Promise(r => setTimeout(r, 5000));
+
+      // Shopee — input must match Lookup format: { searchKeywords: [array], country, maxProducts, scrapeMode, sortBy, shopeeCookies, proxyConfiguration }
       try {
-        const shopeeInput = { keyword: kw, maxItems: 20 };
-        if (shopeeCookie) shopeeInput.shopeeCookies = shopeeCookie;
+        const shopeeInput = {
+          searchKeywords: [kw],
+          country: "ID",
+          maxProducts: 30,
+          scrapeMode: "fast",
+          sortBy: "relevancy",
+          shopeeCookies: shopeeCookie || "[]",
+          proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ["RESIDENTIAL"], apifyProxyCountry: "ID" },
+        };
         const rawItems = await pollApifyRun("fatihtahta/shopee-scraper", shopeeInput, `Shopee "${kw}"`);
         const normalized = normalizeApifyResults ? normalizeApifyResults(rawItems, "Shopee") : rawItems;
         let added = 0;
@@ -447,6 +480,12 @@ Respond ONLY in this exact JSON format with no other text:
       }
 
       setIndoProducts([...allResults]);
+
+      // 5s cooldown between keywords to prevent Apify throttling
+      if (ki < searchKws.length - 1) {
+        addDiag("info", "deepdive", "Cooldown 5s before next keyword...");
+        await new Promise(r => setTimeout(r, 5000));
+      }
     }
 
     setIndoSearchProgress(`Total: ${allResults.length} unique products found`);
