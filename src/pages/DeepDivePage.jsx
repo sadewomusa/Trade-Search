@@ -33,6 +33,9 @@ export default function DeepDivePage({
   lookupHistory,
   setMode,
   normalizeApifyResults,
+  calcMargin, fx, freight,
+  fmtAED, fmtIDR, fmtUSD, marginColor,
+  storeSet, storeGet, userId,
 }) {
   // ── Pipeline state ──
   const [step, setStep] = useState(0); // 0=entry, 1.5=selection, 2=scraping, 3=golden, 4=indoSearch, 4.5=translate, 5=scoring, 6=done
@@ -74,6 +77,54 @@ export default function DeepDivePage({
   // Ref to anchor product (from Lookup entry)
   const anchorRef = useRef(null);
   const existingIndoRef = useRef(null);
+
+  // Deep Dive history
+  const [ddHistory, setDdHistory] = useState([]);
+  const [ddSaved, setDdSaved] = useState(false);
+
+  // Load deep dive history on mount
+  useEffect(() => {
+    if (!storeGet || !userId) return;
+    (async () => {
+      try {
+        const h = await storeGet(userId + ":deepdive:history");
+        if (Array.isArray(h) && h.length) setDdHistory(h);
+      } catch {}
+    })();
+  }, [userId, storeGet]);
+
+  const saveDeepDiveRun = async () => {
+    if (!storeSet || !userId) return;
+    const gt = goldenThread || {};
+    const amazonPrices = scrapedProducts.map(p => parseFloat(p.price) || 0).filter(x => x > 0).sort((a, b) => a - b);
+    const medianAmazonAED = amazonPrices.length > 0 ? amazonPrices[Math.floor(amazonPrices.length / 2)] : 0;
+    const entry = {
+      timestamp: new Date().toISOString(),
+      category: gt.category || "Unknown",
+      summary: gt.summary || "",
+      weight_class: gt.weight_class || "medium",
+      medianAmazonAED,
+      productsAnalyzed: scrapedProducts.length,
+      indoProductsFound: indoProducts.length,
+      scoredResults: scoredResults.slice(0, 15).map(s => ({
+        original_name: s.original_name,
+        translated_name: s.translated_name,
+        marketplace: s.marketplace,
+        price_idr: s.price_idr,
+        seller: s.seller,
+        sold_count: s.sold_count,
+        score: s.score,
+        reasoning: s.reasoning,
+        url: s.url,
+      })),
+      keywords: indoKeywords.split("\n").filter(Boolean).slice(0, 5),
+    };
+    const newHistory = [entry, ...ddHistory].slice(0, 50);
+    setDdHistory(newHistory);
+    await storeSet(userId + ":deepdive:history", newHistory);
+    setDdSaved(true);
+    addDiag("ok", "deepdive", "Saved deep dive run to history");
+  };
 
   // ── Detect entry point on mount ──
   useEffect(() => {
@@ -272,6 +323,7 @@ Respond ONLY in this exact JSON format with no other text:
   "certifications": ["certification 1", "certification 2"],
   "packaging": "Common packaging description",
   "red_flags": ["Thing to avoid based on negative reviews or low-rated products"],
+  "weight_class": "light or medium or heavy (estimate: light=under 500g, medium=0.5-2kg, heavy=over 2kg)",
   "indonesian_keywords": ["broad keyword 1 in Bahasa Indonesia", "keyword 2", "keyword 3", "keyword 4", "keyword 5"],
   "summary": "2-3 sentence executive summary of what a manufacturer needs to know to compete in this category"
 }`;
@@ -524,20 +576,20 @@ Respond ONLY in this exact JSON format with no other text:
       setProgress({ message: "Translation complete", pct: 100 });
       addDiag("ok", "deepdive", "Translation complete: " + withTranslation.length + " products");
 
-      // Auto-proceed to embedding
-      setTimeout(() => runEmbeddingFilter(withTranslation), 500);
+      // Auto-proceed to filter + score (single step)
+      setTimeout(() => runFilterAndScore(withTranslation), 500);
     } catch (e) {
       setError("Translation failed: " + e.message);
       addDiag("error", "deepdive", "Translation failed: " + e.message);
     }
   };
 
-  // ══════════ STEP 5a: Embedding Pre-filter ══════════
+  // ══════════ STEP 5: Combined Pre-filter + Scoring (single Claude call) ══════════
 
-  const runEmbeddingFilter = async (products) => {
+  const runFilterAndScore = async (products) => {
     setStep(5);
-    setProgress({ message: `Pre-filtering ${products.length} products with AI...`, pct: 20 });
-    addDiag("info", "deepdive", "Claude pre-filter starting for " + products.length + " products");
+    setProgress({ message: `Filtering & scoring ${products.length} products with AI...`, pct: 20 });
+    addDiag("info", "deepdive", "Combined filter+score starting for " + products.length + " products");
 
     try {
       const gt = goldenThread || {};
@@ -545,116 +597,49 @@ Respond ONLY in this exact JSON format with no other text:
       const productList = products.map((p, i) => ({
         id: i,
         name: p.translated_name || p.original_name,
+        original_name: p.original_name,
         price_idr: p.price_idr || 0,
         seller: p.seller || "",
         sold_count: String(p.sold_count || "0"),
         marketplace: p.marketplace || "",
+        url: p.url || "",
       }));
 
-      const prompt = `You are a product sourcing pre-filter. Given a target product profile and a list of Indonesian supplier products, pick the TOP 15 most relevant candidates.
+      // Compute median Amazon price from scraped products for context
+      const amazonPrices = scrapedProducts.map(p => parseFloat(p.price) || 0).filter(x => x > 0).sort((a, b) => a - b);
+      const medianAmazonAED = amazonPrices.length > 0 ? amazonPrices[Math.floor(amazonPrices.length / 2)] : 0;
 
-TARGET PROFILE:
+      const prompt = `You are a product sourcing analyst. Given a target product profile (from Amazon.ae bestsellers) and a list of Indonesian supplier products, pick the TOP 15 most relevant candidates AND score each one.
+
+TARGET PROFILE (Golden Thread):
 Category: ${gt.category || "Unknown"}
 Summary: ${gt.summary || ""}
 Must-have specs: ${(gt.must_have_specs || []).join(", ")}
 Winning attributes: ${(gt.winning_attributes || []).join(", ")}
+Amazon.ae median price: AED ${medianAmazonAED.toFixed(0)} (≈ IDR ${Math.round(medianAmazonAED * IDR_PER_AED).toLocaleString()})
 
-CANDIDATES (${productList.length} products):
+CANDIDATES (${productList.length} Indonesian products):
 ${JSON.stringify(productList, null, 1)}
 
-RULES:
-- Pick the 15 most relevant to the target profile
-- Product type match is the #1 priority
-- High sold_count = manufacturing capability signal — prioritize these
-- Price relevance matters but don't exclude solely on price
-- If fewer than 15 are relevant, return only the relevant ones
-
-Respond ONLY in this exact JSON format with no other text:
-{
-  "top_candidates": [
-    { "id": 0, "relevance": 95, "reason": "3-5 word reason" },
-    { "id": 5, "relevance": 88, "reason": "3-5 word reason" }
-  ]
-}
-
-Sort by relevance descending. "relevance" is 0-100.`;
-
-      const res = await workerCall("claude", {
-        data: {
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 2048,
-          messages: [{ role: "user", content: prompt }],
-        },
-      });
-
-      const text = res.content?.map(b => b.text || "").join("") || "";
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error("Claude returned non-JSON response");
-
-      const parsed = JSON.parse(jsonMatch[0]);
-      const topIds = parsed.top_candidates || [];
-
-      const top15 = topIds.map(r => ({
-        ...products[r.id],
-        _similarity: (r.relevance || 0) / 100,
-        _rank_id: r.id,
-        _filter_reason: r.reason || "",
-      })).filter(Boolean);
-
-      setEmbeddingFiltered(top15);
-      setProgress({ message: `Top ${top15.length} candidates identified`, pct: 80 });
-      addDiag("ok", "deepdive", "Claude pre-filter: top " + top15.length + " from " + products.length);
-
-      // Auto-proceed to scoring
-      setTimeout(() => runScoring(top15), 500);
-    } catch (e) {
-      setError("Pre-filter failed: " + e.message);
-      addDiag("error", "deepdive", "Pre-filter failed: " + e.message);
-    }
-  };
-
-  // ══════════ STEP 5b: Similarity Scoring ══════════
-
-  const runScoring = async (top15) => {
-    setProgress({ message: "Scoring top candidates with AI...", pct: 30 });
-    addDiag("info", "deepdive", "Scoring " + top15.length + " candidates");
-
-    const candidatesForPrompt = top15.map(p => ({
-      original_name: p.original_name,
-      translated_name: p.translated_name,
-      price_idr: p.price_idr,
-      seller: p.seller,
-      sold_count: String(p.sold_count),
-      marketplace: p.marketplace,
-      url: p.url,
-    }));
-
-    const prompt = `You are a product sourcing analyst comparing Indonesian supplier products against a target product profile for the UAE market.
-
-TARGET PROFILE (Golden Thread from Amazon.ae bestsellers):
-${JSON.stringify(goldenThread, null, 1)}
-
-INDONESIAN PRODUCTS TO SCORE (top 15 candidates, pre-filtered by embedding similarity):
-${JSON.stringify(candidatesForPrompt, null, 1)}
-
-Score each Indonesian product on a 1-5 scale:
+TASK: Select the 15 most relevant products and score each on a 1-5 scale:
 5 = Near-identical to Amazon bestsellers. Contact this supplier immediately.
 4 = Strong match, minor spec differences. Worth reaching out.
 3 = Decent match, would need customization. Backup option.
 2 = Same category but wrong spec. Skip unless desperate.
 1 = Not relevant.
 
-IMPORTANT SCORING GUIDELINES:
+SCORING GUIDELINES:
 - Product type match is the highest priority factor
-- Size differences are informational, NOT disqualifying. An Indonesian seller listing 100g jars who sells at high volume can likely produce 250g jars. Score based on manufacturing capability, note size difference in reasoning.
-- Convert prices for comparison: 1 AED ≈ 4,300 IDR
-- High sold_count signals manufacturing capability — a seller moving 5,000+ units is likely a producer, not just a reseller
-- Consider: product type match, material/ingredient similarity, size/quantity relevance, price competitiveness, manufacturing capability signals, certification potential, packaging similarity
+- Size differences are informational, NOT disqualifying. A seller with high volume can likely produce different sizes.
+- Convert prices: 1 AED ≈ ${IDR_PER_AED} IDR
+- High sold_count signals manufacturing capability — a seller moving 5,000+ units is likely a producer
+- Consider: product type match, material/ingredient similarity, size/quantity, price competitiveness, manufacturing capability, certification potential
 
 Respond ONLY in this exact JSON format with no other text:
 {
   "scored_products": [
     {
+      "id": 0,
       "original_name": "original Bahasa product name",
       "translated_name": "English translation",
       "marketplace": "tokopedia or shopee",
@@ -662,15 +647,14 @@ Respond ONLY in this exact JSON format with no other text:
       "seller": "seller name",
       "sold_count": "as string from source",
       "score": 5,
-      "reasoning": "1-2 sentence explanation of why this score",
+      "reasoning": "1-2 sentence explanation",
       "url": "original product URL"
     }
   ]
 }
 
-Sort by score descending, then by sold_count descending within same score.`;
+Sort by score descending, then by sold_count descending within same score. Include up to 15 products. If fewer than 15 are relevant, return only the relevant ones (score >= 2).`;
 
-    try {
       const res = await workerCall("claude", {
         data: {
           model: "claude-sonnet-4-20250514",
@@ -686,19 +670,26 @@ Sort by score descending, then by sold_count descending within same score.`;
       const parsed = JSON.parse(jsonMatch[0]);
       const scored = parsed.scored_products || [];
 
-      // Merge similarity scores back
+      // Merge back any data from the translated products list
       scored.forEach(s => {
-        const match = top15.find(p => p.original_name === s.original_name || p.url === s.url);
-        if (match) s._similarity = match._similarity;
+        const src = products[s.id];
+        if (src) {
+          if (!s.original_name) s.original_name = src.original_name;
+          if (!s.translated_name) s.translated_name = src.translated_name;
+          if (!s.url) s.url = src.url;
+          if (!s.marketplace) s.marketplace = src.marketplace;
+          if (!s.seller) s.seller = src.seller;
+          if (!s.price_idr) s.price_idr = src.price_idr;
+        }
       });
 
       setScoredResults(scored);
       setStep(6);
       setProgress({ message: "Deep Dive complete!", pct: 100 });
-      addDiag("ok", "deepdive", "Scoring complete: " + scored.length + " products scored");
+      addDiag("ok", "deepdive", "Filter+Score complete: " + scored.length + " products scored (single call)");
     } catch (e) {
       setError("Scoring failed: " + e.message);
-      addDiag("error", "deepdive", "Scoring failed: " + e.message);
+      addDiag("error", "deepdive", "Filter+Score failed: " + e.message);
     }
   };
 
@@ -869,8 +860,8 @@ ${flagsHtml ? '<h2>Red Flags</h2><div class="section">' + flagsHtml + '</div>' :
       { n: 3, label: "Golden Thread" },
       { n: 4, label: "Indo Search" },
       { n: 4.5, label: "Translate" },
-      { n: 5, label: "Score" },
-      { n: 6, label: "Done" },
+      { n: 5, label: "Filter + Score" },
+      { n: 6, label: "Results + Margins" },
     ];
     return (
       <div style={{ display: "flex", gap: "2px", marginBottom: 16, flexWrap: "wrap" }}>
@@ -922,7 +913,7 @@ ${flagsHtml ? '<h2>Red Flags</h2><div class="section">' + flagsHtml + '</div>' :
         const hasDiscover = discHistory && discHistory.length > 0;
         const lookupEntries = (lookupHistory || []).filter(h => h.uaeProduct?.product_name || h.uaeProduct?.title);
         const hasLookup = lookupEntries.length > 0;
-        const hasAnything = hasDiscover || hasLookup;
+        const hasAnything = hasDiscover || hasLookup || ddHistory.length > 0;
 
         return <div>
           <div style={{ fontSize: "12px", color: c.dim, marginBottom: "16px", lineHeight: 1.5 }}>
@@ -981,6 +972,33 @@ ${flagsHtml ? '<h2>Red Flags</h2><div class="section">' + flagsHtml + '</div>' :
               })}
             </div>
             <div style={{ fontSize: "9px", color: c.dimmest, marginTop: "6px", ...mono }}>Bandar will search for similar bestsellers, then find Indonesian suppliers</div>
+          </div>}
+
+          {/* ── PAST DEEP DIVES ── */}
+          {ddHistory.length > 0 && <div style={{ marginBottom: "16px" }}>
+            <div style={{ fontSize: "9px", color: c.gold, letterSpacing: "1px", fontWeight: 700, marginBottom: "8px", ...mono }}>{"📊"} PAST DEEP DIVES</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+              {ddHistory.slice(0, 6).map((dd, i) => {
+                const topScore = dd.scoredResults?.[0];
+                const topCount = (dd.scoredResults || []).filter(s => s.score >= 4).length;
+                return <div key={i} style={{ padding: "10px 14px", background: c.surface2, border: "1px solid " + c.border, borderRadius: "6px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: "12px", fontWeight: 600, color: c.text }}>{dd.category}</div>
+                    <div style={{ fontSize: "9px", color: c.dimmer, marginTop: "3px", ...mono }}>
+                      {dd.productsAnalyzed} analyzed {" · "} {dd.indoProductsFound} indo {" · "} {(dd.scoredResults || []).length} scored
+                      {topCount > 0 && <span style={{ color: c.green }}>{" · "}{topCount} score ≥4</span>}
+                    </div>
+                    {topScore && <div style={{ fontSize: "9px", color: c.dim, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      Top: {topScore.translated_name || topScore.original_name} (score {topScore.score})
+                    </div>}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0, marginLeft: "10px" }}>
+                    {dd.medianAmazonAED > 0 && <span style={{ fontSize: "9px", color: c.gold, ...mono }}>AED {dd.medianAmazonAED.toFixed(0)}</span>}
+                    <span style={{ fontSize: "9px", color: c.dimmest, ...mono }}>{dd.timestamp?.slice(0, 10)}</span>
+                  </div>
+                </div>;
+              })}
+            </div>
           </div>}
 
           {/* ── EMPTY: no history at all ── */}
@@ -1263,10 +1281,109 @@ ${flagsHtml ? '<h2>Red Flags</h2><div class="section">' + flagsHtml + '</div>' :
         </div>
       )}
 
-      {/* ══════════ STEP 6: Final Scored Results ══════════ */}
-      {step === 6 && scoredResults.length > 0 && (
+      {/* ══════════ STEP 6: Final Scored Results + Margins ══════════ */}
+      {step === 6 && scoredResults.length > 0 && (() => {
+        const gt = goldenThread || {};
+        const weightClass = gt.weight_class || "medium";
+        const amazonPrices = scrapedProducts.map(p => parseFloat(p.price) || 0).filter(x => x > 0).sort((a, b) => a - b);
+        const medianAmazonAED = amazonPrices.length > 0 ? amazonPrices[Math.floor(amazonPrices.length / 2)] : 0;
+
+        return <>
+        {/* ── Margin Summary Panel ── */}
+        {calcMargin && medianAmazonAED > 0 && <div style={cardStyle}>
+          <div style={labelStyle}>Margin Overview</div>
+          <div style={{ fontSize: "10px", color: c.dim, marginBottom: 10, ...mono }}>
+            Amazon.ae median sell price: <span style={{ color: c.gold, fontWeight: 700 }}>AED {medianAmazonAED.toFixed(0)}</span>
+            {" · "}Weight class: <span style={{ color: c.text }}>{weightClass}</span>
+            {" · "}Freight: <span style={{ color: c.text }}>Air</span>
+          </div>
+          {(() => {
+            const indoPrices = scoredResults.filter(s => s.score >= 3 && s.price_idr > 0).map(s => s.price_idr).sort((a, b) => a - b);
+            if (indoPrices.length === 0) return <div style={{ fontSize: "10px", color: c.dim }}>No score ≥3 products to calculate margins</div>;
+            const medIndoIDR = indoPrices[Math.floor(indoPrices.length / 2)];
+            const bestIndoIDR = indoPrices[0];
+            const medM = calcMargin(medianAmazonAED, 1, medIndoIDR, weightClass);
+            const bestM = calcMargin(medianAmazonAED, 1, bestIndoIDR, weightClass);
+            return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+              <div style={{ padding: "10px", background: c.cardBg || c.surface2, border: "1px solid " + c.border, borderRadius: "4px", textAlign: "center" }}>
+                <div style={{ fontSize: "8px", color: c.dimmer, letterSpacing: "1px", marginBottom: 3 }}>MEDIAN SOURCE MARGIN</div>
+                <div style={{ fontSize: "24px", fontWeight: 700, color: marginColor(medM.margin) }}>{medM.margin.toFixed(1)}%</div>
+                <div style={{ fontSize: "9px", color: c.dim, ...mono }}>Sell {fmtAED(medianAmazonAED)} · Source {fmtAED(medM.indoAED)} · Total {fmtAED(medM.totalAED)}</div>
+              </div>
+              <div style={{ padding: "10px", background: c.cardBg || c.surface2, border: "1px solid " + c.border, borderRadius: "4px", textAlign: "center" }}>
+                <div style={{ fontSize: "8px", color: c.dimmer, letterSpacing: "1px", marginBottom: 3 }}>BEST SOURCE MARGIN</div>
+                <div style={{ fontSize: "24px", fontWeight: 700, color: marginColor(bestM.margin) }}>{bestM.margin.toFixed(1)}%</div>
+                <div style={{ fontSize: "9px", color: c.dim, ...mono }}>Sell {fmtAED(medianAmazonAED)} · Source {fmtAED(bestM.indoAED)} · Total {fmtAED(bestM.totalAED)}</div>
+              </div>
+            </div>;
+          })()}
+        </div>}
+
+        {/* ── Importer Cost Breakdown (for median source) ── */}
+        {calcMargin && medianAmazonAED > 0 && (() => {
+          const indoPrices = scoredResults.filter(s => s.score >= 3 && s.price_idr > 0).map(s => s.price_idr).sort((a, b) => a - b);
+          if (indoPrices.length === 0) return null;
+          const medIndoIDR = indoPrices[Math.floor(indoPrices.length / 2)];
+          const m = calcMargin(medianAmazonAED, 1, medIndoIDR, weightClass);
+          const cifUSD = m.indoUSD + m.freightUSD;
+          const vatUSD = (cifUSD + m.dutyUSD) * 0.05;
+          const brokerUSD = 5; // typical flat fee estimate
+          const truckingUSD = 3; // port to warehouse estimate
+          const costRows = [
+            { label: "Freight (all-in, origin → UAE port)", usd: m.freightUSD, aed: m.freightAED, who: "Freight forwarder" },
+            { label: "Customs duty (5% of CIF)", usd: m.dutyUSD, aed: m.dutyAED, who: "UAE customs (via broker)" },
+            { label: "VAT (5% of CIF + duty)", usd: vatUSD, aed: vatUSD / (fx?.AEDUSD || 0.2723), who: "UAE customs (via broker)" },
+            { label: "Broker fee", usd: brokerUSD, aed: brokerUSD / (fx?.AEDUSD || 0.2723), who: "Customs broker" },
+            { label: "Trucking to warehouse", usd: truckingUSD, aed: truckingUSD / (fx?.AEDUSD || 0.2723), who: "Local trucker" },
+            { label: "Last mile (warehouse → customer)", usd: m.lastMileUSD, aed: m.lastMileAED, who: "Courier / you" },
+          ];
+          const totalLanded = m.indoUSD + costRows.reduce((s, r) => s + r.usd, 0);
+          return <div style={cardStyle}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <div style={labelStyle}>Importer Cost Breakdown (per unit, median source)</div>
+            </div>
+            <div style={{ fontSize: "10px", ...mono }}>
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 0.6fr 0.6fr 1.2fr", gap: "4px", padding: "4px 0", borderBottom: "1px solid " + c.border2, color: c.dimmer, fontWeight: 700, fontSize: "9px", textTransform: "uppercase" }}>
+                <div>Line Item</div><div style={{ textAlign: "right" }}>USD</div><div style={{ textAlign: "right" }}>AED</div><div>Who You Pay</div>
+              </div>
+              {/* Source cost */}
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 0.6fr 0.6fr 1.2fr", gap: "4px", padding: "5px 0", borderBottom: "1px solid " + c.border }}>
+                <div style={{ color: c.text }}>Product (Indo source)</div>
+                <div style={{ textAlign: "right", color: c.gold, fontWeight: 600 }}>${m.indoUSD.toFixed(2)}</div>
+                <div style={{ textAlign: "right", color: c.gold, fontWeight: 600 }}>{m.indoAED.toFixed(1)}</div>
+                <div style={{ color: c.dim }}>Supplier</div>
+              </div>
+              {costRows.map((r, i) => (
+                <div key={i} style={{ display: "grid", gridTemplateColumns: "2fr 0.6fr 0.6fr 1.2fr", gap: "4px", padding: "5px 0", borderBottom: "1px solid " + c.border }}>
+                  <div style={{ color: c.text }}>{r.label}</div>
+                  <div style={{ textAlign: "right", color: c.dim }}>${r.usd.toFixed(2)}</div>
+                  <div style={{ textAlign: "right", color: c.dim }}>{r.aed.toFixed(1)}</div>
+                  <div style={{ color: c.dimmest, fontSize: "9px" }}>{r.who}</div>
+                </div>
+              ))}
+              {/* Total landed */}
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 0.6fr 0.6fr 1.2fr", gap: "4px", padding: "6px 0", fontWeight: 700, fontSize: "11px" }}>
+                <div style={{ color: c.red }}>TOTAL LANDED</div>
+                <div style={{ textAlign: "right", color: c.red }}>${totalLanded.toFixed(2)}</div>
+                <div style={{ textAlign: "right", color: c.red }}>{(totalLanded / (fx?.AEDUSD || 0.2723)).toFixed(1)}</div>
+                <div></div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 0.6fr 0.6fr 1.2fr", gap: "4px", padding: "6px 0", fontWeight: 700, fontSize: "11px" }}>
+                <div style={{ color: c.green }}>PROFIT (sell − landed)</div>
+                <div style={{ textAlign: "right", color: c.green }}>${(m.uaeUSD - totalLanded).toFixed(2)}</div>
+                <div style={{ textAlign: "right", color: c.green }}>{(medianAmazonAED - totalLanded / (fx?.AEDUSD || 0.2723)).toFixed(1)}</div>
+                <div></div>
+              </div>
+            </div>
+            <div style={{ fontSize: "8px", color: c.dimmest, marginTop: 6, lineHeight: 1.4 }}>
+              Estimates based on air freight. Broker fee and trucking are indicative flat rates — get quotes for actual costs. VAT applies on (CIF + duty). Duty is 5% CIF for most consumer goods.
+            </div>
+          </div>;
+        })()}
+
+        {/* ── Scored Products List ── */}
         <div style={cardStyle}>
-          <div style={labelStyle}>Results — Scored Indonesian Suppliers</div>
+          <div style={labelStyle}>Scored Indonesian Suppliers</div>
           <p style={{ fontSize: "10px", color: c.dim, margin: "0 0 12px" }}>
             {scoredResults.length} products scored from {indoProducts.length} candidates
           </p>
@@ -1275,6 +1392,8 @@ ${flagsHtml ? '<h2>Red Flags</h2><div class="section">' + flagsHtml + '</div>' :
             const scoreColor = SCORE_COLORS[item.score] || "#888";
             const priceAed = item.price_idr ? (item.price_idr / IDR_PER_AED).toFixed(1) : "—";
             const isExpanded = expandedScore === i;
+            // Inline margin calc
+            const itemMargin = (calcMargin && medianAmazonAED > 0 && item.price_idr > 0) ? calcMargin(medianAmazonAED, 1, item.price_idr, weightClass) : null;
 
             return (
               <div key={i} style={{
@@ -1308,10 +1427,13 @@ ${flagsHtml ? '<h2>Red Flags</h2><div class="section">' + flagsHtml + '</div>' :
                   </div>
 
                   <div style={{ textAlign: "right", flexShrink: 0 }}>
-                    <div style={{ fontSize: "12px", color: c.gold, fontWeight: 600, ...mono }}>
-                      IDR {(item.price_idr || 0).toLocaleString()}
-                    </div>
-                    <div style={{ fontSize: "9px", color: c.dim, ...mono }}>≈ AED {priceAed}</div>
+                    {itemMargin ? <>
+                      <div style={{ fontSize: "14px", fontWeight: 700, color: marginColor(itemMargin.margin), ...mono }}>{itemMargin.margin.toFixed(0)}%</div>
+                      <div style={{ fontSize: "9px", color: c.dim, ...mono }}>AED {priceAed}</div>
+                    </> : <>
+                      <div style={{ fontSize: "12px", color: c.gold, fontWeight: 600, ...mono }}>IDR {(item.price_idr || 0).toLocaleString()}</div>
+                      <div style={{ fontSize: "9px", color: c.dim, ...mono }}>≈ AED {priceAed}</div>
+                    </>}
                   </div>
 
                   <span style={{ fontSize: "10px", color: c.dim }}>{isExpanded ? "▼" : "▶"}</span>
@@ -1327,10 +1449,16 @@ ${flagsHtml ? '<h2>Red Flags</h2><div class="section">' + flagsHtml + '</div>' :
                       {item.reasoning}
                     </div>
 
-                    {/* Similarity score if available */}
-                    {item._similarity != null && (
-                      <span style={{ ...pill, background: c.gold + "22", color: c.gold, marginRight: 8 }}>Similarity: {(item._similarity * 100).toFixed(1)}%</span>
-                    )}
+                    {/* Inline margin breakdown */}
+                    {itemMargin && <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: 8, fontSize: "10px", ...mono }}>
+                      <span style={{ ...pill, background: c.gold + "22", color: c.gold }}>Source: {fmtAED(itemMargin.indoAED)}</span>
+                      <span style={{ ...pill, background: c.surface2, color: c.dim }}>Freight: {fmtAED(itemMargin.freightAED)}</span>
+                      <span style={{ ...pill, background: c.surface2, color: c.dim }}>Duty: {fmtAED(itemMargin.dutyAED)}</span>
+                      <span style={{ ...pill, background: c.surface2, color: c.dim }}>Total: {fmtAED(itemMargin.totalAED)}</span>
+                      <span style={{ ...pill, background: marginColor(itemMargin.margin) + "22", color: marginColor(itemMargin.margin), fontWeight: 700 }}>
+                        Profit: {fmtAED(medianAmazonAED - itemMargin.totalAED)}
+                      </span>
+                    </div>}
 
                     {/* Link */}
                     {item.url && (
@@ -1344,7 +1472,15 @@ ${flagsHtml ? '<h2>Red Flags</h2><div class="section">' + flagsHtml + '</div>' :
             );
           })}
         </div>
-      )}
+
+        {/* ── Save + Actions ── */}
+        <div style={{ display: "flex", justifyContent: "center", gap: "8px", flexWrap: "wrap" }}>
+          <button onClick={saveDeepDiveRun} disabled={ddSaved} style={{ ...btnGreen, padding: "8px 20px", fontSize: "11px", opacity: ddSaved ? 0.6 : 1 }}>
+            {ddSaved ? "✓ Saved" : "💾 Save Deep Dive"}
+          </button>
+        </div>
+        </>;
+      })()}
 
       {/* ══════════ RESET / START OVER ══════════ */}
       {step > 0 && (
@@ -1364,6 +1500,7 @@ ${flagsHtml ? '<h2>Red Flags</h2><div class="section">' + flagsHtml + '</div>' :
             setEmbeddingFiltered([]);
             setScoredResults([]);
             setDeepDiveEntry(null);
+            setDdSaved(false);
             anchorRef.current = null;
             existingIndoRef.current = null;
           }} style={{ ...btnSec, padding: "6px 20px", fontSize: "10px" }}>
