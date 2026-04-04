@@ -605,7 +605,11 @@ export default function App() {
     let s = text.replace(/```json/g, "").replace(/```/g, "").trim();
     const matches = []; let depth = 0, start = -1;
     for (let i = 0; i < s.length; i++) { if (s[i] === "{") { if (depth === 0) start = i; depth++; } if (s[i] === "}") { depth--; if (depth === 0 && start >= 0) { matches.push(s.substring(start, i + 1)); start = -1; } } }
-    for (const m of matches.sort((a, b) => b.length - a.length)) { try { const p = JSON.parse(m); if (p.product_name || p.results || p.clean_name_en || p.similar || p.products || p.subcategories) return p; } catch {} }
+    // Priority: known response shapes
+    const sorted = matches.sort((a, b) => b.length - a.length);
+    for (const m of sorted) { try { const p = JSON.parse(m); if (p.product_name || p.results || p.clean_name_en || p.similar || p.products || p.subcategories || p.clean_name_id || p.search_queries_id || p.scored_products || p.top_candidates) return p; } catch {} }
+    // Fallback: return largest valid JSON object (handles validate, scoring, etc.)
+    for (const m of sorted) { try { return JSON.parse(m); } catch {} }
     try { return JSON.parse(s); } catch {}
     throw new Error("No valid JSON");
   };
@@ -1877,6 +1881,10 @@ export default function App() {
         discHistory={discHistory}
         lookupHistory={history}
         setMode={setMode}
+        normalizeApifyResults={normalizeApifyResults}
+        calcMargin={calcMargin} fx={fx} freight={freight}
+        fmtAED={fmtAED} fmtIDR={fmtIDR} fmtUSD={fmtUSD} marginColor={marginColor}
+        storeSet={storeSet} storeGet={storeGet} userId={userId}
       />}
 
       {/* ══════════ LOOKUP TAB ══════════ */}
